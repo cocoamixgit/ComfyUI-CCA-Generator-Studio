@@ -1,0 +1,12 @@
+[project]
+name = "cca-generator-ui"
+version = "0.1.0"
+description = "A ComfyUI interface for image and video generation with SD1.5, Krea 2, MOSS, LTX-2.5, and more."
+requires-python = ">=3.10"
+license = {text = "GPL-3.0"}
+dependencies = []
+
+[tool.comfy]
+PublisherId = "cocoat"
+DisplayName = "CCA Generator"
+Repository = "https://github.com/cocoamixgit/ComfyUI-cca-generator-ui"

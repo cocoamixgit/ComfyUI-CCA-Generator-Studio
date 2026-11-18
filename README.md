@@ -1,5 +1,7 @@
 # CCA Generator
 
+[日本語版はこちら](README-JP.md)
+
 A ComfyUI interface for image and video generation with SD1.5, Krea 2, MOSS, LTX-2.5, and more. Text-to-video, image-to-video with first/last frame control, and optional audio generation, all from a single panel.
 
 ![CCA Generator panel](assets/screenshot.png)
@@ -17,13 +19,45 @@ A ComfyUI interface for image and video generation with SD1.5, Krea 2, MOSS, LTX
 
 ## Installation
 
-### Via ComfyUI Manager (recommended)
+### Prerequisites
 
-1. Open ComfyUI Manager → Custom Nodes Manager.
-2. Search for **CCA Generator** and install it.
+- ComfyUI installed
+- Git installed
+
+### Step 1: Install ComfyUI Manager V3.42
+
+If you don't have ComfyUI Manager yet, install it first.
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/Comfy-Org/ComfyUI-Manager.git comfyui-manager
+```
+
+Then install its dependencies with the same Python that runs ComfyUI:
+
+**Windows Portable:**
+
+```bash
+.\python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\comfyui-manager\requirements.txt
+```
+
+**Manual install / venv:**
+
+```bash
+pip install -r custom_nodes/comfyui-manager/requirements.txt
+```
+
+Restart ComfyUI. The **Manager** button should appear.
+
+> The folder must be exactly `ComfyUI/custom_nodes/comfyui-manager`. Do not leave a nested folder like `ComfyUI-Manager/ComfyUI-Manager`.
+
+### Step 2: Install CCA Generator
+
+1. Click **Manager** and open **Custom Nodes Manager**.
+2. Search for **CCA Generator** and click **Install**.
 3. Restart ComfyUI.
 
-### Manual install
+### Manual install (alternative)
 
 ```bash
 cd ComfyUI/custom_nodes

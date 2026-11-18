@@ -21,27 +21,48 @@ A ComfyUI interface for image and video generation with SD1.5, Krea 2, MOSS, LTX
 
 ### Prerequisites
 
-- ComfyUI installed
-- Git installed
+- ComfyUI installed. If you don't have ComfyUI yet, see [this setup guide (Japanese)](https://note.com/cocoat/n/n8780c1ca3b1f#e9a103d0-79ce-43a5-b53d-f6ff8fb16a35) — it walks through installing ComfyUI with StabilityMatrix.
+- Git installed. If you don't have Git yet, install it first (see below).
+
+### Installing Git
+
+- **Windows:** Download [Git for Windows](https://git-scm.com/downloads) and run the installer. The default options are fine.
+- **macOS:** Run `xcode-select --install`, or `brew install git` if you use Homebrew.
+- **Linux:** Run `sudo apt install git` (Debian / Ubuntu) or the equivalent for your distribution.
+
+Then verify:
+
+```bash
+git --version
+```
+
+If it prints a version number, you're good to go.
 
 ### Step 1: Install ComfyUI Manager V3.42
 
 If you don't have ComfyUI Manager yet, install it first.
 
+Open a terminal in the `custom_nodes` folder inside **your** ComfyUI installation. The location depends on how you installed ComfyUI:
+
+- Windows Portable: `ComfyUI_windows_portable/ComfyUI/custom_nodes`
+- StabilityMatrix: `C:\StabilityMatrix\Data\Packages\ComfyUI\custom_nodes`
+- Manual install: `custom_nodes` inside the folder where you cloned ComfyUI
+
+Then run:
+
 ```bash
-cd ComfyUI/custom_nodes
 git clone https://github.com/Comfy-Org/ComfyUI-Manager.git comfyui-manager
 ```
 
 Then install its dependencies with the same Python that runs ComfyUI:
 
-**Windows Portable:**
+**Windows Portable** (run from the `ComfyUI_windows_portable` folder):
 
 ```bash
 .\python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\comfyui-manager\requirements.txt
 ```
 
-**Manual install / venv:**
+**Manual install / venv** (run from your ComfyUI folder):
 
 ```bash
 pip install -r custom_nodes/comfyui-manager/requirements.txt
@@ -49,7 +70,7 @@ pip install -r custom_nodes/comfyui-manager/requirements.txt
 
 Restart ComfyUI. The **Manager** button should appear.
 
-> The folder must be exactly `ComfyUI/custom_nodes/comfyui-manager`. Do not leave a nested folder like `ComfyUI-Manager/ComfyUI-Manager`.
+> The folder must be exactly `<your ComfyUI folder>/custom_nodes/comfyui-manager`. Do not leave a nested folder like `ComfyUI-Manager/ComfyUI-Manager`.
 
 ### Step 2: Install CCA Generator
 
@@ -60,11 +81,11 @@ Restart ComfyUI. The **Manager** button should appear.
 ### Manual install (alternative)
 
 ```bash
-cd ComfyUI/custom_nodes
+cd <your ComfyUI folder>/custom_nodes
 git clone https://github.com/cocoamixgit/ComfyUI-cca-generator-ui.git
 ```
 
-Then restart ComfyUI.
+Replace `<your ComfyUI folder>` with the path to your own ComfyUI installation. Then restart ComfyUI.
 
 ## Models
 

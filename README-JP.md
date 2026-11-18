@@ -21,27 +21,48 @@ SD1.5、Krea 2、MOSS、LTX-2.5などを使った画像生成・動画作成を�
 
 ### 必要なもの
 
-- ComfyUIがインストール済みであること
-- Gitがインストール済みであること
+- ComfyUIがインストール済みであること。まだの場合は[こちらの手順書](https://note.com/cocoat/n/n8780c1ca3b1f#e9a103d0-79ce-43a5-b53d-f6ff8fb16a35)（StabilityMatrixでComfyUIを入れる方法）を参考にしてください。
+- Gitがインストール済みであること。まだの場合は先にインストールしてください（下記参照）。
+
+### Gitのインストール方法
+
+- **Windows：** [Git for Windows](https://git-scm.com/downloads) をダウンロードしてインストーラーを実行します。設定はデフォルトのままで大丈夫です。
+- **macOS：** `xcode-select --install` を実行するか、Homebrewを使っている場合は `brew install git` を実行します。
+- **Linux：** `sudo apt install git`（Debian / Ubuntu系）を実行します。ほかのディストリビューションではそれぞれのパッケージマネージャーでインストールしてください。
+
+インストールできたら、以下で確認します。
+
+```bash
+git --version
+```
+
+バージョン番号が表示されればOKです。
 
 ### 手順1：ComfyUI Manager V3.42をインストールする
 
 ComfyUI Managerをまだ入れていない場合は、先にインストールしてください。
 
+**ご自分のComfyUIのインストールフォルダ**にある `custom_nodes` フォルダでターミナルを開いてください。場所はComfyUIの導入方法によって違います。
+
+- Windows Portable版：`ComfyUI_windows_portable/ComfyUI/custom_nodes`
+- StabilityMatrix：`C:\StabilityMatrix\Data\Packages\ComfyUI\custom_nodes`
+- 手動インストール：ComfyUIをcloneした場所の `custom_nodes`
+
+その後、以下を実行します。
+
 ```bash
-cd ComfyUI/custom_nodes
 git clone https://github.com/Comfy-Org/ComfyUI-Manager.git comfyui-manager
 ```
 
 次に、ComfyUIを動かしているのと同じPythonで依存ライブラリをインストールします。
 
-**Windows Portable版：**
+**Windows Portable版**（`ComfyUI_windows_portable` フォルダで実行）：
 
 ```bash
 .\python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\comfyui-manager\requirements.txt
 ```
 
-**手動インストール／venv環境：**
+**手動インストール／venv環境**（ご自分のComfyUIフォルダで実行）：
 
 ```bash
 pip install -r custom_nodes/comfyui-manager/requirements.txt
@@ -49,7 +70,7 @@ pip install -r custom_nodes/comfyui-manager/requirements.txt
 
 ComfyUIを再起動すると、**Manager**ボタンが表示されます。
 
-> フォルダは必ず `ComfyUI/custom_nodes/comfyui-manager` にしてください。`ComfyUI-Manager/ComfyUI-Manager` のような二重フォルダにならないよう注意してください。
+> フォルダは必ず `<ComfyUIのフォルダ>/custom_nodes/comfyui-manager` にしてください。`ComfyUI-Manager/ComfyUI-Manager` のような二重フォルダにならないよう注意してください。
 
 ### 手順2：CCA Generatorをインストールする
 
@@ -60,11 +81,11 @@ ComfyUIを再起動すると、**Manager**ボタンが表示されます。
 ### 手動インストール（代替方法）
 
 ```bash
-cd ComfyUI/custom_nodes
+cd <ComfyUIのフォルダ>/custom_nodes
 git clone https://github.com/cocoamixgit/ComfyUI-cca-generator-ui.git
 ```
 
-その後、ComfyUIを再起動してください。
+`<ComfyUIのフォルダ>` はご自分のComfyUIのインストール先に読み替えてください。その後、ComfyUIを再起動してください。
 
 ## モデルについて
 

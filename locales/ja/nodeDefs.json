@@ -1,0 +1,102 @@
+{
+ "CCAGeneratorPanel": {
+  "display_name": "CCA Generator Panel",
+  "description": "モデル種別を選ぶだけで、対応する処理(サブグラフ)に必要なモデル・設定・画像をまとめて渡す操作パネル。"
+ },
+ "CCAGeneratorRoutes": {
+  "display_name": "CCA Generator Routes",
+  "description": "パネルの route 番号を、各処理のスイッチ用の ON/OFF に変換します。"
+ },
+ "CCAHiresFix": {
+  "display_name": "CCA Hires. fix",
+  "description": "パネルの Hires. fix 設定が有効なときだけ、画像を拡大して 2 回目のサンプリングを行います。無効なら素通し。"
+ },
+ "CCASizeSelect": {
+  "display_name": "CCA 出力サイズの切り替え",
+  "description": "パネルで「倍率指定」のときだけ、画像1 × 倍率の画像に差し替えます。「サイズ指定」なら素通し。"
+ },
+ "CCAMidFrameGuide": {
+  "display_name": "CCA 途中のフレーム(MiniMax H3)",
+  "description": "入力画像3を、動画の指定した位置(%)のフレームとして固定します(MiniMax H3)。画像が無ければ何もしません。"
+ },
+ "CCAEditLatent": {
+  "display_name": "CCA 編集の始まり(マスクが無ければ元の画像)",
+  "description": "MOSS の画像→画像: マスクが無ければ元の画像をそのまま潜在にし(全体を編集)、マスクがあれば塗った所だけ作り直す(VAE Encode (for Inpainting) と同じ)。"
+ },
+ "CCAFlux2Klein": {
+  "display_name": "CCA FLUX.2 Klein",
+  "description": "FLUX.2 Klein(テキスト→画像 / 参照画像 4 枚までの編集)。ComfyUI 公式テンプレートと同じ手順: CFGGuider + Flux2Scheduler + SamplerCustomAdvanced、参照画像は 1MP にして ReferenceLatent。"
+ },
+ "CCAFlux3Klein": {
+  "display_name": "CCA FLUX.3 Klein",
+  "description": "FLUX.3 Klein(テキスト→画像 / 参照画像 10 枚までの編集)。ComfyUI 公式テンプレートと同じ手順: KSampler、参照画像は Set Reference Multi Latent(各 1MP)。プロンプトでは <ref_image_0> から順に指す。"
+ },
+ "CCALTX25": {
+  "display_name": "CCA LTX-2.5",
+  "description": "LTX-2.5(テキスト→動画 / 画像→動画 / 最初と最後の画像→動画、音声付き)。ComfyUI 公式テンプレートと同じ手順: 半分の大きさで生成 → 潜在アップスケーラーで 2 倍 → 仕上げ(最初と最後の画像のときは 1 段)。"
+ },
+ "CCAKandinsky6": {
+  "display_name": "CCA Kandinsky 6",
+  "description": "Kandinsky 6(テキスト→動画 / 画像→動画、音声付き)。配布元のワークフローと同じ手順(追加ノード kandinsky6 が必要)。プロンプトの「Audio:」の行から下が音の説明。"
+ },
+ "CCAObjectRemove": {
+  "display_name": "CCA オブジェクト除去(画像編集)",
+  "description": "画像編集の「オブジェクト除去」。FLUX.2 Klein 4B とオブジェクト除去 LoRA で、四角の中のオブジェクトを除去して周りに合わせて埋めます(四角の外は元のまま)。"
+ },
+ "CCAVideoEdit": {
+  "display_name": "CCA 動画編集の書き出し",
+  "description": "動画編集の書き出し。つなげる・切り取る(時間・画面)・文字・画像・動画を重ねる・動き・トランジション・速さ・背景を透明にする・音声の段。MP4 / WebM / WebP / GIF(PyAV と Pillow だけで処理)。"
+ },
+ "CCAGenModels": {
+  "display_name": "CCA Generator (内部: models)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCAGenPrompt": {
+  "display_name": "CCA Generator (内部: prompt)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCAGenSeed": {
+  "display_name": "CCA Generator (内部: seed)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCAGenSampling": {
+  "display_name": "CCA Generator (内部: sampling)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCAGenRoute": {
+  "display_name": "CCA Generator (内部: route)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCAGenImages": {
+  "display_name": "CCA Generator (内部: images)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCAGenOutput": {
+  "display_name": "CCA Generator (内部: output)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCAGenHires": {
+  "display_name": "CCA Generator (内部: hires)",
+  "description": "CCA Generator Panel の内部ノード(キュー投入時に自動で使われます)。"
+ },
+ "CCALamaRemove": {
+  "display_name": "CCA オブジェクト除去・軽い(LaMa・画像編集)",
+  "description": "画像編集の「オブジェクト除去」の軽い方法。LaMa(big-lama.pt)で、塗った所をまわりに合わせて埋めます(塗った所の外は元のまま)。追加のノードはいりません。"
+ },
+ "CCASaveImage": {
+  "display_name": "CCA 画像を保存(生成情報つき)",
+  "description": "画像を保存する(ComfyUI の Save Image と同じ)。生成パネルの設定から、プロンプト・モデルとハッシュ・LoRA・Hires などを A1111 / Forge と同じ書き方の生成情報(parameters)として PNG に入れる。"
+ },
+ "CCASaveVideoFile": {
+  "display_name": "CCA 動画を保存(MP4)",
+  "description": "動画(VIDEO)を output に MP4(H.264・音声付き)で保存する。"
+ },
+ "CCAFramesAtFps": {
+  "display_name": "CCA コマの速さを変える",
+  "description": "動画のコマを、決まった fps(LatentSync は 25)に並べ直す。"
+ },
+ "CCARVCConvert": {
+  "display_name": "CCA RVC で声を変える",
+  "description": "RVC で声を変える(ボイスチェンジ)。models/rvc の声のモデル(.pth)を使う。HuBERT と RMVPE は初めて使うときに自動でダウンロードする。RVC(RVC-Project、MIT License)の推論を同梱。"
+ }
+}

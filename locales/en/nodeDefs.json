@@ -1,0 +1,102 @@
+{
+ "CCAGeneratorPanel": {
+  "display_name": "CCA Generator Panel",
+  "description": "A control panel: just choose the model type and it passes the models, settings and images needed by the matching process (subgraph)."
+ },
+ "CCAGeneratorRoutes": {
+  "display_name": "CCA Generator Routes",
+  "description": "Converts the panel's route number into ON/OFF values for each process's switch."
+ },
+ "CCAHiresFix": {
+  "display_name": "CCA Hires. fix",
+  "description": "Only when Hires. fix is enabled in the panel, upscales the image and samples a second time. Otherwise passes it through."
+ },
+ "CCASizeSelect": {
+  "display_name": "CCA output size switch",
+  "description": "Only when the panel is set to \"Scale\", replaces the image with image 1 × the factor. With \"Set size\" it passes it through."
+ },
+ "CCAMidFrameGuide": {
+  "display_name": "CCA middle frame (MiniMax H3)",
+  "description": "Fixes input image 3 as the frame at the given position (%) of the video (MiniMax H3). Does nothing without an image."
+ },
+ "CCAEditLatent": {
+  "display_name": "CCA edit start (original image if no mask)",
+  "description": "MOSS image → image: without a mask, encodes the original image as is (edits the whole image); with a mask, redraws only the painted area (same as VAE Encode (for Inpainting))."
+ },
+ "CCAFlux2Klein": {
+  "display_name": "CCA FLUX.2 Klein",
+  "description": "FLUX.2 Klein (text → image / editing with up to 4 reference images). Same steps as the official ComfyUI template: CFGGuider + Flux2Scheduler + SamplerCustomAdvanced; reference images are scaled to 1 MP and passed with ReferenceLatent."
+ },
+ "CCAFlux3Klein": {
+  "display_name": "CCA FLUX.3 Klein",
+  "description": "FLUX.3 Klein (text → image / editing with up to 10 reference images). Same steps as the official ComfyUI template: KSampler; reference images via Set Reference Multi Latent (1 MP each). In the prompt, refer to them in order from <ref_image_0>."
+ },
+ "CCALTX25": {
+  "display_name": "CCA LTX-2.5",
+  "description": "LTX-2.5 (text → video / image → video / first and last image → video, with audio). Same steps as the official ComfyUI template: generate at half size → double with the latent upscaler → finish (one stage with first and last images)."
+ },
+ "CCAKandinsky6": {
+  "display_name": "CCA Kandinsky 6",
+  "description": "Kandinsky 6 (text → video / image → video, with audio). Same steps as the distributor's workflow (requires the add-on node kandinsky6). The lines from \"Audio:\" downward in the prompt describe the sound."
+ },
+ "CCAObjectRemove": {
+  "display_name": "CCA Object removal (image editor)",
+  "description": "\"Object removal\" in the image editor. FLUX.2 Klein 4B with the object removal LoRA removes the object in the box and fills it to match the surroundings (outside the box stays as is)."
+ },
+ "CCAVideoEdit": {
+  "display_name": "CCA video editor export",
+  "description": "Video editor export. Join, trim (time and frame), overlay text, images and videos, motion (keyframes), transitions, speed, transparent backgrounds and audio tracks. MP4 / WebM / WebP / GIF (PyAV and Pillow only)."
+ },
+ "CCAGenModels": {
+  "display_name": "CCA Generator (internal: models)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCAGenPrompt": {
+  "display_name": "CCA Generator (internal: prompt)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCAGenSeed": {
+  "display_name": "CCA Generator (internal: seed)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCAGenSampling": {
+  "display_name": "CCA Generator (internal: sampling)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCAGenRoute": {
+  "display_name": "CCA Generator (internal: route)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCAGenImages": {
+  "display_name": "CCA Generator (internal: images)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCAGenOutput": {
+  "display_name": "CCA Generator (internal: output)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCAGenHires": {
+  "display_name": "CCA Generator (internal: hires)",
+  "description": "Internal node of the CCA Generator Panel (used automatically when queued)."
+ },
+ "CCALamaRemove": {
+  "display_name": "CCA Object removal, light (LaMa, image editor)",
+  "description": "The light \"Object removal\" method of the image editor. LaMa (big-lama.pt) fills the painted area to match the surroundings (outside the painted area stays as is). No add-on nodes are needed."
+ },
+ "CCASaveImage": {
+  "display_name": "CCA Save Image (with generation info)",
+  "description": "Saves images (like ComfyUI's Save Image) and writes generation info in the A1111 / Forge format (prompt, model and hash, LoRAs, Hires and more, taken from the generation panel) into the PNG as \"parameters\"."
+ },
+ "CCASaveVideoFile": {
+  "display_name": "CCA Save video (MP4)",
+  "description": "Saves a VIDEO to output as MP4 (H.264, with audio)."
+ },
+ "CCAFramesAtFps": {
+  "display_name": "CCA Change frame rate",
+  "description": "Resamples video frames to a fixed fps (25 for LatentSync)."
+ },
+ "CCARVCConvert": {
+  "display_name": "CCA Change voice with RVC",
+  "description": "Changes the voice with RVC (voice changer) using a voice model (.pth) in models/rvc. HuBERT and RMVPE are downloaded automatically on first use. Includes the RVC (RVC-Project, MIT License) inference code."
+ }
+}

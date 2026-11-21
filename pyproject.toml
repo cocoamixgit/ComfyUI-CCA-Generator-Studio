@@ -6,7 +6,9 @@ requires-python = ">=3.10"
 license = {text = "GPL-3.0"}
 dependencies = []
 
+[project.urls]
+Repository = "https://github.com/cocoamixgit/ComfyUI-CCA-Generator-Studio"
+
 [tool.comfy]
 PublisherId = "cocoat"
 DisplayName = "CCA Generator"
-Repository = "https://github.com/cocoamixgit/ComfyUI-CCA-Generator-Studio"

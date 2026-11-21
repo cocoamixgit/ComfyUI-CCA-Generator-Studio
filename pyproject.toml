@@ -9,4 +9,4 @@ dependencies = []
 [tool.comfy]
 PublisherId = "cocoat"
 DisplayName = "CCA Generator"
-Repository = "https://github.com/cocoamixgit/ComfyUI-cca-generator-ui"
+Repository = "https://github.com/cocoamixgit/ComfyUI-CCA-Generator-Studio"

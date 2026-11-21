@@ -36,6 +36,11 @@ CCA Generatorは、生成した「その先」のためのComfyUIカスタムノ
 
 
 ## インストール
+### 簡易インストール
+![ダウンロード](assets/image_00032__edit_1.png)
+![ダウンロード](assets/image_00032__edit_2.png)
+![ダウンロード](assets/044552_edit.png)
+![ダウンロード](assets/044552_edit_1.png)
 
 ### 必要なもの
 

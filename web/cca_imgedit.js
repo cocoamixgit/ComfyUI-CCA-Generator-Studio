@@ -2515,11 +2515,17 @@ function endCrop(apply) {
   if (apply && c) {
     const x = Math.round(c.x), y = Math.round(c.y), w = Math.max(1, Math.round(c.w)), h = Math.max(1, Math.round(c.h));
     if (x !== 0 || y !== 0 || w !== st.W || h !== st.H) {
+      // 範囲を切り抜いて、新しい 1 枚の画像にする(今のレイヤーを重ねた見た目の、範囲の中だけ。透明はそのまま)。元に戻せる
       pushUndo(true);
-      setCanvasRect(x, y, w, h);
-      st.dirty = true;
-      st.view.px = 0; st.view.py = 0;
-      ctx.notify(T("キャンバスを {0} × {1} にしました(元に戻せます)", w, h), "info");
+      const cut = canvasOf(w, h);
+      drawLayers(cut.getContext("2d"), 1, -x, -y, false);
+      const nm = `${stem(st.name)}_crop`;
+      newDoc(cut, nm);
+      st.source = ""; st.name = nm; st.bg = null; st.saved = null; st.dirty = true;
+      st.view.z = 1; st.view.px = 0; st.view.py = 0;
+      histNew();
+      fillPick();
+      ctx.notify(T("選んだ範囲を切り抜いて、新しい画像にしました({0} × {1})(元に戻せます)", w, h), "info");
     }
   }
   refresh();

@@ -421,7 +421,13 @@ def save_edit(data, value, prefix=None, name=None, ext=None):
     with open(path, "wb") as f:
         f.write(data)
     rel = f"{sub}/{fname}" if sub else fname
-    return {"filename": fname, "subfolder": sub, "type": typ, "path": path, "value": f"{rel} [{typ}]"}
+    value_out = f"{rel} [{typ}]"
+    try:
+        from .uploads import remember
+        remember(value_out)  # 入力画像のプルダウンの選択肢に出るように
+    except Exception:  # noqa: BLE001
+        pass
+    return {"filename": fname, "subfolder": sub, "type": typ, "path": path, "value": value_out}
 
 
 def temp_cleanup(files):

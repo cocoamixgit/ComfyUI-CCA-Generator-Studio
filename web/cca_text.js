@@ -8,6 +8,41 @@ export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const r3 = (v) => Math.round(v * 1000) / 1000;
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// ---------------------------------------------------------------- Forge 風のウェイト(Ctrl + ↑↓)
+// 選択範囲、無ければカーソルのある「,」区切りの 1 語を (語:1.1) にする。すでに (語:数) なら 0.1 ずつ増減し、1.0 に戻ったらかっこを外す
+export function weightEdit(text, start, end, dir, step = 0.1) {
+  const isSep = (c) => c === "," || c === "\n";
+  if (start === end) {
+    let depth = 0, a = 0;
+    for (let i = 0; i < start; i++) { const c = text[i]; if (c === "(") depth++; else if (c === ")") depth = Math.max(0, depth - 1); else if (isSep(c) && depth === 0) a = i + 1; }
+    let b = text.length; depth = 0;
+    for (let i = a; i < text.length; i++) { const c = text[i]; if (c === "(") depth++; else if (c === ")") depth = Math.max(0, depth - 1); else if (isSep(c) && depth === 0) { b = i; break; } }
+    start = a; end = b;
+  }
+  while (start < end && /\s/.test(text[start])) start++;
+  while (end > start && /\s/.test(text[end - 1])) end--;
+  if (start >= end) return null;
+  let sel = text.slice(start, end);
+  // 選択が (語:数) の中身だけ・かっこごとのどちらでも扱う
+  let s0 = start, e0 = end;
+  if (text[s0 - 1] === "(" && text[e0] === ")" && !/^\(.*\)$/s.test(sel)) { s0--; e0++; sel = text.slice(s0, e0); }
+  const m = /^\((.*):\s*(-?\d+(?:\.\d+)?)\)$/s.exec(sel);
+  let out;
+  if (m) {
+    const w = Math.round((Number(m[2]) + dir * step) * 100) / 100;
+    out = Math.abs(w - 1) < 0.001 ? m[1] : `(${m[1]}:${w.toFixed(2).replace(/0$/, "")})`;
+  } else out = `(${sel}:${(1 + dir * step).toFixed(1)})`;
+  return { text: text.slice(0, s0) + out + text.slice(e0), start: s0, end: s0 + out.length };
+}
+export function weightKey(ta, dir) {
+  const r = weightEdit(ta.value, ta.selectionStart, ta.selectionEnd, dir);
+  if (!r) return false;
+  ta.value = r.text;
+  ta.setSelectionRange(r.start, r.end);
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
 // ---------------------------------------------------------------- コピー・貼り付け(画像編集と動画編集で共通。文字は行き来できる)
 export const clipboard = {
   item: null,
@@ -16,7 +51,7 @@ export const clipboard = {
 };
 // 文字として行き来する項目
 export const TEXT_KEYS = ["text", "font", "size", "color", "stroke", "strokeWidth", "strokeDx", "strokeDy", "strokeAlpha", "strokeBlur", "bg", "bgAlpha", "bgPadX", "bgPadY",
-  "bgOffX", "bgOffY", "bgRadius", "wrap", "x", "y", "rot", "opacity"];
+  "bgOffX", "bgOffY", "bgRadius", "wrap", "align", "x", "y", "rot", "opacity"];
 export const pickText = (o) => Object.fromEntries(TEXT_KEYS.filter((k) => o[k] != null).map((k) => [k, o[k]]));
 // 入力の欄で Ctrl+Z などを、画面の「元に戻す」に使ってよいか(文字を打つ欄では、その欄の元に戻すを使う)
 export const isTextField = (t) => !!t && (t.tagName === "TEXTAREA" || (t.tagName === "INPUT" && /^(text|search|url|email|password|)$/i.test(t.type || "")) || t.isContentEditable);
@@ -74,6 +109,15 @@ export function textLayout(g, o, px, font, wrapW = 0) {
   if (ba > 0) { ex = Math.max(ex, tw / 2 + padx + Math.abs(bgx) + 2); ey = Math.max(ey, th / 2 + pady + Math.abs(bgy) + 2); }
   return { lines, asc, lineH, widths, sw, tw, th, sdx, sdy, sb, ba, padx, pady, bgx, bgy, w: ex * 2, h: ey * 2 };
 }
+// 文字の寄せ(左寄せ・中央寄せ・右寄せ)。枠は一番長い行の幅で、短い行をその中で寄せる。無ければ中央寄せ
+export const ALIGNS = [["left", "左寄せ"], ["center", "中央寄せ"], ["right", "右寄せ"]];
+export const alignOf = (o) => (o?.align === "left" || o?.align === "right" ? o.align : "center");
+export function lineX(L, o, i) {
+  const a = alignOf(o);
+  if (a === "left") return -L.tw / 2 + L.sw;
+  if (a === "right") return L.tw / 2 - L.sw - L.widths[i];
+  return -L.widths[i] / 2;
+}
 // 中心 (0, 0) に描く(呼ぶ側で translate・rotate する)。L は textLayout の結果
 export function drawTextAt(g, o, L, font) {
   g.save();
@@ -89,7 +133,7 @@ export function drawTextAt(g, o, L, font) {
     g.fill();
   }
   const top = -L.th / 2 + L.sw;
-  const pos = L.lines.map((l, i) => [l, -L.widths[i] / 2, top + i * L.lineH + L.asc]);
+  const pos = L.lines.map((l, i) => [l, lineX(L, o, i), top + i * L.lineH + L.asc]);
   const stroke = o.stroke || "#000000", sa = clamp(o.strokeAlpha ?? 1, 0, 1);
   const strokeAll = (gg, dx, dy) => {
     gg.lineWidth = L.sw * 2;
@@ -121,6 +165,39 @@ export function drawTextAt(g, o, L, font) {
 }
 
 // ---------------------------------------------------------------- 右の欄(文字のメイン・縁・背景)
+// ---------------------------------------------------------------- 説明文を ⓘ で折りたたむ(生成ページと同じ)
+const NOTE_SKIP = new Set(["info", "cvinfo", "msel", "outnote", "fmtnote"]);
+export function enhanceNotes(root) {
+  const opened = new Set();
+  const keyOf = (n) => n.textContent.trim();
+  const eligible = (n) => !NOTE_SKIP.has(n.dataset.c) && !n.classList.contains("kfnote") && !n.hasAttribute("style") && keyOf(n).length >= 24 && !/読み込んで/.test(n.textContent);
+  const sync = () => {
+    for (const n of root.querySelectorAll(".note")) {
+      const prev = n.previousElementSibling;
+      let btn = prev && prev.classList.contains("ib") && prev._note === n ? prev : null;
+      if (!eligible(n)) { btn?.remove(); n.classList.remove("nh"); n._ibKey = null; continue; }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button"; btn.className = "ib"; btn.textContent = "ⓘ"; btn.title = T("説明を表示"); btn._note = n;
+        n.before(btn);
+      }
+      const key = keyOf(n);
+      if (n._ibKey !== key) { n._ibKey = key; n.classList.toggle("nh", !opened.has(key)); }
+      btn.classList.toggle("on", !n.classList.contains("nh"));
+    }
+  };
+  let raf = 0;
+  new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; sync(); }); }).observe(root, { childList: true, subtree: true, characterData: true });
+  root.addEventListener("click", (e) => {
+    const b = e.target?.closest?.("button.ib");
+    if (!b || !root.contains(b) || !b._note) return;
+    e.preventDefault(); e.stopPropagation();
+    const n = b._note, open = n.classList.contains("nh");
+    n.classList.toggle("nh", !open); b.classList.toggle("on", open);
+    if (open) opened.add(keyOf(n)); else opened.delete(keyOf(n));
+  }, true);
+  sync();
+}
 export const num = (k, label, v, min, max, step, extra = "") => `<label class="fl">${T(label)}<input type="number" data-k="${k}" value="${v}" min="${min}" max="${max}" step="${step}" ${extra}></label>`;
 export const chk = (k, label, v, extra = "") => `<label class="ck"><input type="checkbox" data-k="${k}" ${v ? "checked" : ""} ${extra}><span>${T(label)}</span></label>`;
 // isOpen(cls) → 開いておくか
@@ -141,11 +218,12 @@ export function textSectionsHtml(o, h) {
   const open = h.open || (() => true);
   return sec("main", T("メイン(文字・フォント・色)"), `<label class="fl">${T("文字")}<textarea data-k="text">${esc(o.text)}</textarea></label>
       ${h.tplHtml || ""}
-      <label class="fl">${T("フォント")}<select data-k="font">${h.fontOptions(o.font)}</select></label>
+      <label class="fl fl-font"><span>${T("フォント")}</span><select data-k="font">${h.fontOptions(o.font)}</select></label>
       ${h.fontButtons || ""}
       ${num("size", h.sizeLabel || "文字の大きさ(%)", r3((h.size ?? o.size ?? 0.08) * 100), 0.5, 100, 0.5)}
       <label class="fl">${T("文字の色")}<input type="color" data-k="color" value="${o.color || "#ffffff"}"></label>
-      ${num("wrap", "折り返す幅(%)", pv(o, "wrap"), 0, 200, 1, `title="${esc(T("0 = 折り返さない。画面(画像)の幅に対しての %。枠の左右の □ をドラッグしても変えられます"))}"`)}`, open("main"))
+      ${num("wrap", "折り返す幅(%)", pv(o, "wrap"), 0, 200, 1, `title="${esc(T("0 = 折り返さない。画面(画像)の幅に対しての %。枠の左右の □ をドラッグしても変えられます"))}"`)}
+      <label class="fl">${T("文字の寄せ")}<select data-k="align">${ALIGNS.map(([v, l]) => `<option value="${v}" ${alignOf(o) === v ? "selected" : ""}>${T(l)}</option>`).join("")}</select></label>`, open("main"))
     + sec("stk", T("縁(ずらすと影)"), `<label class="fl">${T("縁の色")}<input type="color" data-k="stroke" value="${o.stroke || "#000000"}"></label>
       ${num("strokeWidth", "縁の太さ(%)", pv(o, "strokeWidth"), 0, 50, 1)}
       ${num("strokeDx", "ずらす 横(%)", pv(o, "strokeDx"), -100, 100, 1)}${num("strokeDy", "ずらす 縦(%)", pv(o, "strokeDy"), -100, 100, 1)}
@@ -174,6 +252,7 @@ export function applyTextField(o, k, el) {
 export function setTextField(el, o) {
   const k = el.dataset.k;
   if (k === "font") el.value = o.font || "";
+  else if (k === "align") el.value = alignOf(o);
   else if (el.type === "checkbox") el.checked = !!o[k];
   else if (el.type === "color" || k === "text") el.value = o[k] ?? "";
   else el.value = TEXT_PCT.has(k) ? r3((o[k] ?? TEXT_DEFAULTS[k] ?? 0) * 100) : r3(o[k] ?? 0);
@@ -203,6 +282,11 @@ ${scope} .sec.s-eg{--sc:#7b8cff;--sc2:#3fd0e0;--st:#dde1ff}
 ${scope} .sec.s-mk{--sc:#c77dff;--sc2:#ff6fae;--st:#efdcff}
 ${scope} .sec.s-cl{--sc:#ff9ad5;--sc2:#7b8cff;--st:#ffe0f2}
 ${scope} .sec.s-ol{--sc:#ffb84d;--sc2:#ff6f61;--st:#ffe6c7}
+${scope} button.ib{display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;margin:4px 0 2px auto;border-radius:999px!important;font-size:13px!important;line-height:1;background:transparent!important;color:#9fb0c2!important;border:1px solid #4a5566!important;cursor:pointer}
+${scope} button.ib:hover,${scope} button.ib.on{color:#fff!important;border-color:#3db4a6!important}
+${scope} .note.nh{display:none!important}
+${scope} label.fl.fl-font{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}
+${scope} label.fl.fl-font select{flex:1 1 12em;min-width:0}
 ${scope} label.fl{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:6px;align-items:center;font-size:13px;color:#c9d1da;margin-top:4px}
 ${scope} label.ck{display:flex;gap:6px;align-items:center;font-size:13px;color:#c9d1da;margin-top:5px;cursor:pointer}
 ${scope} label.ck input:disabled+span{opacity:.45}
@@ -323,12 +407,31 @@ export function bboxDrag(e, o) {
       r = ((r + 540) % 360) - 180;
       if (ev.shiftKey) r = Math.round(r / 15) * 15;
       res = { rot: r3(r) };
-    } else if (h.length === 2) res = { k: Math.max(0.02, Math.hypot(ev.clientX - o.cx, ev.clientY - o.cy) / d0) };
-    else {
-      // 回した枠の向きで、真ん中からの距離をはかる(左右・上下とも同じだけ広がる)
+    } else {
+      // 大きさ: 反対側の辺(角なら対角の角)を止めて広げる。Alt を押している間は真ん中を止める(res.c = true)。
+      // 止める所が動かないよう、枠の真ん中が動く分(画面の px)を res.dcx・res.dcy で返す(呼ぶ側は位置にこれを足す)。res.handle = 持ち手
       const px = ev.clientX - o.cx, py = ev.clientY - o.cy;
       const lx = px * Math.cos(-th) - py * Math.sin(-th), ly = px * Math.sin(-th) + py * Math.cos(-th);
-      res = h === "e" || h === "w" ? { w: Math.max(8, Math.abs(lx) * 2) } : { h: Math.max(8, Math.abs(ly) * 2) };
+      const hw = o.w / 2, hh = o.h / 2;
+      const scr = (a, b) => [a * Math.cos(th) - b * Math.sin(th), a * Math.sin(th) + b * Math.cos(th)];
+      if (ev.altKey) {
+        if (h.length === 2) res = { k: Math.max(0.02, Math.hypot(px, py) / d0), c: true };
+        else res = h === "e" || h === "w" ? { w: Math.max(8, Math.abs(lx) * 2), c: true } : { h: Math.max(8, Math.abs(ly) * 2), c: true };
+      } else if (h.length === 2) {
+        const sx = h.includes("w") ? -1 : 1, sy = h.includes("n") ? -1 : 1;
+        const k = Math.max(0.02, Math.hypot(lx + sx * hw, ly + sy * hh) / Math.max(4, Math.hypot(o.w, o.h)));
+        const [dcx, dcy] = scr(sx * hw * (k - 1), sy * hh * (k - 1));
+        res = { k, dcx, dcy };
+      } else if (h === "e" || h === "w") {
+        const w = Math.max(8, h === "e" ? lx + hw : hw - lx);
+        const [dcx, dcy] = scr((h === "e" ? 1 : -1) * (w - o.w) / 2, 0);
+        res = { w, dcx, dcy };
+      } else {
+        const hg = Math.max(8, h === "s" ? ly + hh : hh - ly);
+        const [dcx, dcy] = scr(0, (h === "s" ? 1 : -1) * (hg - o.h) / 2);
+        res = { h: hg, dcx, dcy };
+      }
+      res.handle = h;
     }
     o.onMove(res, ev);
   };

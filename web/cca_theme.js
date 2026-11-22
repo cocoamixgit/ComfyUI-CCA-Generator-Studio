@@ -83,6 +83,7 @@ export const THEMES = [
       selectedBg: "#5c361b", selectedFg: "#faf6ee" // 選ばれている項目: 地 / 文字
     },
     onFg: "#ffffff",             // 地が濃いボタン(.on・「開く」など)の文字色
+    secDoneFg: "#2a1a0e",        // 並び替えの「完了」ボタンの文字色(黒茶)
     // 文字・部品の調整(tune)。書いた項目だけ有効。書かない項目は何も出ず、これまで通りの見た目になる
     tune: {
       solid: true,               // 見出し・項目名・説明文を透かさない
@@ -1093,7 +1094,7 @@ function initCustomSelects() {
     wrap.style.flex = cs.flex;
     // 幅が決まっているときはこれまで通り。決まっていない(非表示のうちに作られた)ときだけ中身の幅に合わせ、親からははみ出さない
     wrap.style.minWidth = fixedWidth ? cs.minWidth : "max-content";
-    wrap.style.maxWidth = fixedWidth || cs.maxWidth !== "none" ? cs.maxWidth : "100%";
+    wrap.style.maxWidth = cs.maxWidth !== "none" ? cs.maxWidth : "100%"; // 作ったときの幅(px)のままだと、欄が狭くなったときに隣の部品に重なるので、親の幅までに収める
 
     const button = document.createElement("button");
     button.type = "button";
@@ -1274,6 +1275,12 @@ function initCustomSelects() {
 
     select.addEventListener("change", sync);
     select.addEventListener("input", sync);
+    // プログラムから値・選択肢・無効状態が変わったときも表示を合わせる(change が出ないため、表示が古いままになっていた)
+    new MutationObserver(() => sync()).observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "selected", "label"], characterData: true });
+    for (const prop of ["value", "selectedIndex"]) {
+      const d = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, prop);
+      if (d?.set) Object.defineProperty(select, prop, { configurable: true, get() { return d.get.call(this); }, set(v) { d.set.call(this, v); sync(); } });
+    }
 
     select.before(wrap);
     wrap.append(button, select);
@@ -1344,7 +1351,8 @@ function decoCss(th) {
     .map(([k, prop]) => `${prop}:${th.snapOn[k]} !important`).join(";");
   const onCss = [
     th.onFg != null ? `${ROOTS} button.on.on:not([data-c="snap"]){color:${th.onFg} !important}\nbutton[${ONFG_ATTR}]{color:${th.onFg} !important}` : "",
-    snapOn ? `${ROOTS} button[data-c="snap"].on{${snapOn}}` : ""
+    snapOn ? `${ROOTS} button[data-c="snap"].on{${snapOn}}` : "",
+    th.secDoneFg ? `${ROOTS} button.sec-edit.on.on.on.on{color:${th.secDoneFg} !important}` : ""
   ].filter(Boolean).join("\n");
   const secCss = Object.entries(th.sections || {}).map(([sec, cfg]) => {
     const sel = `:is(#cca-ui [data-sec="${sec}"], #cca-imged [data-sec="${sec}"], #cca-vedit [data-sec="${sec}"], #cca-setio [data-sec="${sec}"], #cca-mask [data-sec="${sec}"])`;

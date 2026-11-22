@@ -14,6 +14,7 @@ import { T, alert, choice as langChoice, confirm, lang as curLang, onLangChange,
 import { openComposer } from "./cca_compose.js";
 import { setupSections, sectionEditBar, SECTIONS_CSS, cardCss } from "./cca_sections.js";
 import { openSettingsIO } from "./cca_settings.js";
+import { weightKey } from "./cca_text.js";
 import { openImageEditor } from "./cca_imgedit.js";
 import { openVideoEditor } from "./cca_videoedit.js";
 import { layoutSummary, openLayoutEditor, parseLayout } from "./cca_layout.js";
@@ -173,7 +174,7 @@ ${cardCss("#cca-ui .col.right", "> .card", {}, "gray")}
 #cca-ui .seg button.on{background:var(--accent-d);border-color:var(--accent);color:#fff}
 #cca-ui .tasksel{flex-wrap:wrap;gap:8px}
 #cca-ui .top .lang{display:flex;align-items:center;gap:4px;color:var(--muted)}
-#cca-ui .top .gear{font-size:16px;line-height:1;padding:5px 9px}
+/* 設定ボタンも、ほかの上部ボタンと同じ見た目 */
 #cca-ui .top .lang select{width:auto;padding:3px 6px}
 #cca-ui .typesel{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}
 #cca-ui .badge{font-size:12px;padding:1px 8px;border-radius:999px;background:#3a2f17;color:var(--warn);border:1px solid #6b5422}
@@ -358,10 +359,10 @@ function build() {
     <!-- 第52版からの並び: 使い方・並べ替え・グラフを表示・動画編集・画像編集・⚙ 設定 -->
     <button id="cca-guide-open" title="今のモデル種別の使い方を表示">? 使い方</button>
     <span class="secbar" id="cca-secbar"></span>
-    <button id="cca-close" title="ノードのグラフに戻る">グラフを表示 ✕</button>
+    <button id="cca-setio-open" class="gear" title="設定(自動で表示・言語・テーマカラー・途中経過の表示・設定の書き出し / 読み込み)">設定</button>
     <button id="cca-vedit-open" title="動画をつなげる・切り取る・文字や画像や動画を重ねる">🎬 動画編集</button>
     <button id="cca-imgedit-open" title="画像を開いて編集する(背景を透明にする・オブジェクト除去)">✏ 画像編集</button>
-    <button id="cca-setio-open" class="gear" title="設定(自動で表示・言語・テーマカラー・途中経過の表示・設定の書き出し / 読み込み)">⚙</button>
+    <button id="cca-close" title="ノードのグラフに戻る">グラフを表示 ✕</button>
   </div>
   <div class="body" id="cca-body">
     <div class="col left">
@@ -930,6 +931,10 @@ function bind() {
       e.preventDefault();
       generate();
     }
+    // Forge 風: プロンプト欄で Ctrl + ↑↓ → (語:1.1)
+    if ((e.ctrlKey || e.metaKey) && (e.key === "ArrowUp" || e.key === "ArrowDown") && e.target?.matches?.('textarea[data-w="positive"], textarea[data-w="negative"]')) {
+      if (weightKey(e.target, e.key === "ArrowUp" ? 1 : -1)) e.preventDefault();
+    }
     e.stopPropagation();
   });
   root.addEventListener("paste", (e) => {
@@ -1459,7 +1464,7 @@ function openImageEditorFor(value) {
         const t = (CCA.SPEC.types_info[mt]?.tasks || []).find((x) => x === "I2I" || x === "I2V");
         if (t) await setW("task", t);
       }
-      await refreshChoices().catch(() => {});
+      await rememberImage(v);
       await setW("image", v);
       refresh();
     },
@@ -2722,7 +2727,16 @@ async function sendToInput() {
     if (!t) { showError(`${mt} には画像を入力するタスクがありません。`); return; }
     await setW("task", t);
   }
+  await rememberImage(current.value);
   await setW("image", current.value);
+}
+// 選択肢に無い画像(生成結果など)を最近の画像に入れて、プルダウンに出るようにする
+async function rememberImage(value) {
+  try {
+    await api.fetchApi("/cca_generator/remember_image", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) });
+    await refreshChoices();
+    helpCache.clear();
+  } catch (e) { console.warn(e); }
 }
 
 // ---------------------------------------------------------------- 拡大表示・フォルダ

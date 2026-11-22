@@ -1669,6 +1669,7 @@ def text_image(o, H, font_path, size=None, reveal=None, W=None):
         asc, desc = int(px * 0.88), int(px * 0.24)
     line_h = asc + desc + spacing
     widths = [font.getlength(l) for l in lines]
+    align = str(o.get("align") or "center")  # 文字の寄せ(left / center / right)
     tw = max(widths + [1.0]) + 2 * sw
     th = len(lines) * line_h - spacing + 2 * sw
     ba = _f(o.get("bgAlpha"), 0)
@@ -1700,7 +1701,13 @@ def text_image(o, H, font_path, size=None, reveal=None, W=None):
     for i, l in enumerate(lines):
         n = max(0, min(len(l), k))
         k -= len(l)
-        shown.append((cx - widths[i] / 2, top + i * line_h + asc, l[:n]))
+        if align == "left":
+            lx = cx - tw / 2 + sw
+        elif align == "right":
+            lx = cx + tw / 2 - sw - widths[i]
+        else:
+            lx = cx - widths[i] / 2
+        shown.append((lx, top + i * line_h + asc, l[:n]))
     fill = (*_rgb(o.get("color")), 255)
     stroke = _rgb(o.get("stroke"), (0, 0, 0))
     shadow = abs(sdx) > 0.5 or abs(sdy) > 0.5 or sb > 0.3

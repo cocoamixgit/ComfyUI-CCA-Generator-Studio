@@ -20,7 +20,7 @@ import { setupSections, sectionEditBar, SECTIONS_CSS, cardCss } from "./cca_sect
 import { saveEntry, openHistory, historyKey, makeThumb, newSid, fmtTime, fileUrl, HIST_EVERY } from "./cca_history.js";
 import { fontApi } from "./cca_videoedit.js";
 import { textLayout, drawTextAt, textSectionsHtml, applyTextField, setTextField, sectionCss, bboxHtml, bboxCss, bboxDrag, num as tnum, sec as tsec, STYLE_RESET, STYLE_KEYS,
-  clipboard, pickText, isField, isTextField, snapLines, snapMove, snapResize, showSnapGuides, rotatedBounds } from "./cca_text.js";
+  clipboard, pickText, isField, isTextField, snapLines, snapMove, snapResize, showSnapGuides, rotatedBounds, lineX, enhanceNotes } from "./cca_text.js";
 
 const MAX_UNDO = 30;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -96,8 +96,8 @@ function css() {
 #cca-imged canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 #cca-imged .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:#9fb0c2;cursor:pointer;padding:20px}
 #cca-imged .empty b{display:block;font-size:17px;color:#cfd5dc;margin-bottom:6px}
-#cca-imged .zoomv{position:absolute;right:10px;bottom:8px;background:#000a;color:#cfd5dc;font-size:12px;padding:2px 8px;border-radius:4px}
-#cca-imged .side{border-left:1px solid #303744;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+#cca-imged .zoomv{position:absolute;right:10px;bottom:8px;background:var(--card,rgba(0,0,0,.7));color:var(--text,#fff);border:1px solid rgba(0,0,0,.35);font-size:12px;line-height:1.5;padding:2px 8px;border-radius:4px;font-variant-numeric:tabular-nums;white-space:pre;pointer-events:none;z-index:20}
+#cca-imged .side{border-left:1px solid #303744;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px;container-type:inline-size}
 #cca-imged section{border:1px solid #303744;border-radius:12px;padding:9px 12px;background:#161a20}
 #cca-imged h4{margin:0 0 6px;font-size:14px;color:#cfd5dc}
 #cca-imged .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
@@ -179,7 +179,8 @@ ${frameHlCss("#cca-imged")}
 ${bboxCss("#cca-imged")}
 ${SECTIONS_CSS("#cca-imged")}
 ${cardCss("#cca-imged .side", "> section[data-sec]", { image: "blue", layers: "teal", canvas: "cyan", output: "yellow", shapes: "pink", text: "orange", watermark: "lime", tools: "purple", bg: "red", remove: "red" })}
-#cca-imged .secbar{gap:6px;margin-bottom:-2px}
+#cca-imged .secbar{gap:6px;order:999;margin-top:6px}
+@container (max-width:300px){#cca-imged label.rg,#cca-imged label.fl{display:flex;flex-wrap:wrap;gap:2px 6px}#cca-imged label.rg::before,#cca-imged label.fl::before{content:"";order:1;flex-basis:100%;height:0}#cca-imged label.rg>*,#cca-imged label.fl>*{order:2}#cca-imged label.rg>input[type=range]{flex:1 1 0;min-width:0}#cca-imged label.rg>input:not([type=range]){width:4.5em}#cca-imged label.fl>*{flex:1 1 100%;min-width:0}}
 #cca-imged .secbar button{font-size:12px;padding:3px 8px}
 `;
   document.head.appendChild(s);
@@ -200,6 +201,7 @@ function build() {
       <button data-c="hist" title="一時保存・自動保存した編集を開き直します">🕘 履歴</button>
       <button class="pri" data-c="save" title="生成パネルの「画像の保存先」と同じフォルダ(output の中)に「元の名前_edit.png」で保存します(同じ名前があれば _edit_1、_edit_2 …)" disabled>💾 保存</button>
       <button data-c="download" title="パソコンに「元の名前_edit.png」でダウンロードします" disabled>⬇ ダウンロード</button>
+      <button data-c="copyimg" title="今の見た目をそのまま、画像としてクリップボードにコピーします(PNG)" disabled>📝クリップボードにコピー</button>
       <button data-c="use" title="保存してから入力画像1にします" disabled>入力画像1に使う</button>
       <button data-c="close">閉じる</button></div>
     <div class="main">
@@ -341,12 +343,13 @@ function build() {
     </div></div>`;
   document.body.appendChild(ui);
   bind();
+  enhanceNotes(ui); // 説明文は ⓘ で折りたたむ
 }
 
 const $ = (sel) => ui.querySelector(sel);
 const $$ = (sel) => [...ui.querySelectorAll(sel)];
 // 画像が要るボタン(読み込み中・処理中は押せない)。refresh と busy で同じものを使う
-const BUSY_KEYS = ["save", "download", "use", "bg", "rm", "rmclear", "wm", "txadd", "hsave"];
+const BUSY_KEYS = ["save", "download", "copyimg", "use", "bg", "rm", "rmclear", "wm", "txadd", "hsave"];
 function busy(text) {
   st.busy = !!text;
   const b = $(".busy");
@@ -390,6 +393,33 @@ function newDoc(cv, name) {
   st.layers = [L];
   st.aimg = L.id; st.isel = null; st.tsel = null; st.msel = [];
 }
+// 何も開いていないときの始まり: 空(透明)のキャンバス。図形・パス・文字はこのまま置ける。
+// 画像を貼り付ける・開くと、空のレイヤーはその画像に替わり、キャンバスはその画像の大きさになる(置いた図形・文字はそのまま)
+const BLANK_SIZE = 1024;
+function startBlank() {
+  newDoc(canvasOf(BLANK_SIZE, BLANK_SIZE), T("空のキャンバス"));
+  st.layers[0].blank = true;
+  st.source = ""; st.name = T("新規");
+  st.undo = []; st.redo = []; st.bg = null; st.dirty = false; st.saved = null;
+  st.view.z = 1; st.view.px = 0; st.view.py = 0;
+  histNew();
+  fillPick();
+  refresh();
+}
+function replaceBlank(bl, cv, name, value = "") {
+  const only = st.layers.every((l) => l === bl);
+  endBg();
+  if (!only) pushUndo(true);
+  const L = imageLayer(cv, name, cv.width / 2, cv.height / 2, cv.width, cv.height);
+  st.layers = [L, ...st.layers.filter((l) => l !== bl)];
+  st.W = cv.width; st.H = cv.height; st.crop = null; st.lcrop = null; st.out.name = "";
+  st.aimg = L.id; st.isel = null; st.tsel = null; st.msel = [];
+  st.source = value; st.name = name; st.bg = null; st.saved = null;
+  st.view.z = 1; st.view.px = 0; st.view.py = 0;
+  if (only) { st.undo = []; st.redo = []; st.dirty = false; histNew(); } else st.dirty = true;
+  fillPick();
+  refresh();
+}
 async function openValue(value) {
   const im = await loadImg(ctx.imageUrl(value));
   newDoc(toCanvas(im), displayName(value));
@@ -402,8 +432,10 @@ async function openValue(value) {
   refresh();
 }
 // 画像を置く(キャンバスの真ん中に、キャンバスの 6 割に収まる大きさで。いちばん前に)
-function placeCanvas(cv, name) {
+function placeCanvas(cv, name, value = "") {
   if (!st.layers.length) { newDoc(cv, name); st.source = ""; st.name = name; histNew(); fillPick(); refresh(); return; }
+  const bl = st.layers.find((l) => l.blank);
+  if (bl) { replaceBlank(bl, cv, name, value); return; }
   endBg();
   pushUndo(true);
   const k = Math.min(1, (st.W * 0.6) / cv.width, (st.H * 0.6) / cv.height);
@@ -417,7 +449,7 @@ function placeCanvas(cv, name) {
 }
 async function placeValue(value) {
   const im = await loadImg(ctx.imageUrl(value));
-  placeCanvas(toCanvas(im), displayName(value));
+  placeCanvas(toCanvas(im), displayName(value), value);
 }
 async function placeFile(file) {
   if (!file || !/^image\//.test(file.type || "image/")) return;
@@ -578,7 +610,7 @@ function draw() {
   const g = cv.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, r.width, r.height);
-  $('[data-c="zoomv"]').textContent = st.layers.length ? `${st.W} × ${st.H}・${Math.round(st.view.k * 100)}%` : "";
+  updZoomv();
   if (!st.layers.length) { placeTextBox(); placeImageBox(); placeCropBox(); placeLayerCropBox(); return; }
   const { k, ox, oy } = st.view;
   // キャンバス(書き出す範囲)の背景。透明なら市松模様のまま
@@ -677,7 +709,7 @@ function caretGeom(t) {
   const ranges = lineRanges(text, L.lines);
   measureG.font = L.font;
   const top = -L.th / 2 + L.sw;
-  const xAt = (r, i) => -L.widths[r] / 2 + measureG.measureText(L.lines[r].slice(0, Math.max(0, Math.min(i, ranges[r][1]) - ranges[r][0]))).width;
+  const xAt = (r, i) => lineX(L, t, r) + measureG.measureText(L.lines[r].slice(0, Math.max(0, Math.min(i, ranges[r][1]) - ranges[r][0]))).width;
   const rowOf = (i) => { let r = 0; for (let j = 0; j < ranges.length; j++) if (ranges[j][0] <= i) r = j; return r; };
   return { L, ranges, top, xAt, rowOf, lh: L.lineH, ch: L.lineH - Math.round(((t.size || 0.08) * st.H) * 0.2) };
 }
@@ -818,9 +850,56 @@ function outBg() {
 // キャンバスの点 → 画像のレイヤーの中の画素(回転・大きさを戻す)
 function docToLayer(L, x, y) {
   const a = (-(L.rot || 0) * Math.PI) / 180, dx = x - L.cx, dy = y - L.cy;
-  const rx = dx * Math.cos(a) - dy * Math.sin(a), ry = dx * Math.sin(a) + dy * Math.cos(a);
+  let rx = dx * Math.cos(a) - dy * Math.sin(a), ry = dx * Math.sin(a) + dy * Math.cos(a);
+  if (L.warp) { const iv = hInv(homog(warpQuad(L)), rx, ry); rx = (iv.u - 0.5) * L.w; ry = (iv.v - 0.5) * L.h; } // ゆがみを戻す
   const c = cropOf(L); // レイヤーの枠 = 切り取った範囲
   return { x: (rx * c.w) / L.w + c.x + c.w / 2, y: (ry * c.h) / L.h + c.y + c.h / 2 };
+}
+// ---------------------------------------------------------------- ゆがみ(自由変形。Ctrl + 辺ドラッグ。画像レイヤー)
+// L.warp = 4 つの角のずれ [[dx, dy] × 4](左上・右上・右下・左下。回す前のレイヤーの座標・キャンバスの px)。無ければ四角のまま
+const warpQuad = (L) => { const w = L.w / 2, h = L.h / 2, o = L.warp; return [[-w + o[0][0], -h + o[0][1]], [w + o[1][0], -h + o[1][1]], [w + o[2][0], h + o[2][1]], [-w + o[3][0], h + o[3][1]]]; };
+// 単位正方形 (u, v) → 四角形 q(左上・右上・右下・左下)の射影変換
+function homog(q) {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q;
+  const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+  let g = 0, h = 0;
+  if (Math.abs(dx3) > 1e-9 || Math.abs(dy3) > 1e-9) { const den = dx1 * dy2 - dx2 * dy1 || 1e-9; g = (dx3 * dy2 - dx2 * dy3) / den; h = (dx1 * dy3 - dx3 * dy1) / den; }
+  return { a: x1 - x0 + g * x1, b: x3 - x0 + h * x3, c: x0, d: y1 - y0 + g * y1, e: y3 - y0 + h * y3, f: y0, g, h };
+}
+const hPt = (m, u, v) => { const w = m.g * u + m.h * v + 1; return [(m.a * u + m.b * v + m.c) / w, (m.d * u + m.e * v + m.f) / w]; };
+// 四角形の中の点 (x, y) → 単位正方形の (u, v)
+function hInv(m, x, y) {
+  const { a, b, c, d, e, f, g, h } = m;
+  const u = (e - f * h) * x + (c * h - b) * y + (b * f - c * e), v = (f * g - d) * x + (a - c * g) * y + (c * d - a * f), w = (d * h - e * g) * x + (b * g - a * h) * y + (a * e - b * d);
+  return { u: u / (w || 1e-9), v: v / (w || 1e-9) };
+}
+// 画像 src を四角形 q にゆがめて描く(細かい三角形に分けて貼る)
+function drawWarped(g, src, q, grow = 0.6) {
+  const m = homog(q), N = 10, sw = src.width, sh = src.height;
+  const tri = (s0, s1, s2, d0, d1, d2) => {
+    const det = (s1[0] - s0[0]) * (s2[1] - s0[1]) - (s2[0] - s0[0]) * (s1[1] - s0[1]);
+    if (Math.abs(det) < 1e-9) return;
+    const a = ((d1[0] - d0[0]) * (s2[1] - s0[1]) - (d2[0] - d0[0]) * (s1[1] - s0[1])) / det;
+    const c = ((d2[0] - d0[0]) * (s1[0] - s0[0]) - (d1[0] - d0[0]) * (s2[0] - s0[0])) / det;
+    const b = ((d1[1] - d0[1]) * (s2[1] - s0[1]) - (d2[1] - d0[1]) * (s1[1] - s0[1])) / det;
+    const d = ((d2[1] - d0[1]) * (s1[0] - s0[0]) - (d1[1] - d0[1]) * (s2[0] - s0[0])) / det;
+    const cx = (d0[0] + d1[0] + d2[0]) / 3, cy = (d0[1] + d1[1] + d2[1]) / 3;
+    const ex = (p) => { const dx = p[0] - cx, dy = p[1] - cy, n = Math.hypot(dx, dy) || 1; return [p[0] + (dx / n) * grow, p[1] + (dy / n) * grow]; }; // すき間が出ないよう、ほんの少し広げる
+    g.save();
+    g.beginPath();
+    for (const [i, p] of [ex(d0), ex(d1), ex(d2)].entries()) { if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }
+    g.closePath();
+    g.clip();
+    g.transform(a, b, c, d, d0[0] - a * s0[0] - c * s0[1], d0[1] - b * s0[0] - d * s0[1]);
+    g.drawImage(src, 0, 0);
+    g.restore();
+  };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const u0 = i / N, u1 = (i + 1) / N, v0 = j / N, v1 = (j + 1) / N;
+    const S = (u, v) => [u * sw, v * sh], D = (u, v) => hPt(m, u, v);
+    tri(S(u0, v0), S(u1, v0), S(u0, v1), D(u0, v0), D(u1, v0), D(u0, v1));
+    tri(S(u1, v0), S(u1, v1), S(u0, v1), D(u1, v0), D(u1, v1), D(u0, v1));
+  }
 }
 // 画像のレイヤーを描く向き(元の画素 → 画面)。描くときは画素の (0, 0) から(切り取った範囲の真ん中がレイヤーの真ん中)
 function layerTransform(g, L, k = st.view.k, ox = st.view.ox, oy = st.view.oy) {
@@ -897,6 +976,14 @@ function drawOne(g, l, k, ox, oy, view) {
       // 画面で大きく拡大したときは画素が見えるように(書き出しはなめらかに)
       g.imageSmoothingEnabled = !view || (k * l.w) / cropOf(l).w < 2;
       g.imageSmoothingQuality = "high";
+      if (l.warp) { // ゆがみ(ふち取りは付きません)
+        g.translate(ox + l.cx * k, oy + l.cy * k);
+        g.rotate(((l.rot || 0) * Math.PI) / 180);
+        g.scale(k, k);
+        drawWarped(g, layerPixels(l), warpQuad(l), 0.6 / k);
+        g.restore();
+        return;
+      }
       layerTransform(g, l, k, ox, oy);
       // 切り取りの範囲を決めているレイヤーは、切り取る外も薄く見せる
       if (view && st.lcrop?.id === l.id) { g.save(); g.globalAlpha *= 0.3; g.drawImage(l.cv, 0, 0); g.restore(); }
@@ -918,6 +1005,15 @@ function renderComposite(scale = 1) {
   return c;
 }
 // 画面の点 → キャンバスの点 / 作業する画像の画素
+// 右下の表示: キャンバスの大きさ・拡大率と、カーソルの位置(アートボードの左上からの x / y)
+function updZoomv() {
+  const el = $('[data-c="zoomv"]');
+  if (!el) return;
+  if (!st.layers.length) { el.textContent = ""; return; }
+  let s = `${st.W} × ${st.H}・${Math.round(st.view.k * 100)}%`;
+  if (st.mouse) { const d = toDoc(st.mouse.x, st.mouse.y); s += `   x:${Math.floor(d.x)} y:${Math.floor(d.y)}`; }
+  el.textContent = s;
+}
 const toDoc = (sx, sy) => ({ x: (sx - st.view.ox) / st.view.k, y: (sy - st.view.oy) / st.view.k });
 const toImg = (sx, sy) => { const d = toDoc(sx, sy), A = activeImg(); return A ? docToLayer(A, d.x, d.y) : d; };
 const panning = () => st.tool === "pan" || st.space || st.drag?.mode === "pan";
@@ -1279,6 +1375,7 @@ function pathDown(p, e) {
     if (e?.shiftKey) sel = sel.includes(i) ? sel.filter((j) => j !== i) : [...sel, i]; // Shift: 選ぶ点を足す / 外す
     else if (!sel.includes(i)) sel = [i];
   } else if (nearPathLine(P, st.path?.closed, d.x, d.y, PATH_HIT / k)) sel = P.map((_, j) => j); // 線をつかむと、パス全体
+  else if (st.path?.closed && (e?.ctrlKey || e?.metaKey)) { st.pathSel = []; return; } // 閉じたパスで Ctrl+クリック: 新しく作らず、未選択にする
   else {
     if (!st.path || st.path.closed) st.path = { pts: [], closed: false };
     st.path.pts.push({ x: r1(d.x), y: r1(d.y) }); // 置いてそのままドラッグすれば動かせる
@@ -1618,14 +1715,15 @@ function startMultiDrag(e) {
       else if (res.k != null) { sx = sy = res.k; }
       else if (res.w != null) sx = res.w / (box0.x1 - box0.x0);
       else if (res.h != null) sy = res.h / (box0.y1 - box0.y0);
+      const mcx = ucx + (res.dcx || 0) / k, mcy = ucy + (res.dcy || 0) / k; // 止める所を動かさないための中心の移動
       for (const o of L0) {
         const l = o.l;
         if (l.kind === "text") {
-          const px = ucx + (o.x * W - ucx) * sx + dx, py = ucy + (o.y * H - ucy) * sy + dy;
+          const px = mcx + (o.x * W - ucx) * sx + dx, py = mcy + (o.y * H - ucy) * sy + dy;
           l.x = r3(px / W); l.y = r3(py / H);
           if (res.k != null) l.size = r3(clamp(o.size * res.k, 0.005, 1));
         } else {
-          l.cx = r1(ucx + (o.cx - ucx) * sx + dx); l.cy = r1(ucy + (o.cy - ucy) * sy + dy);
+          l.cx = r1(mcx + (o.cx - ucx) * sx + dx); l.cy = r1(mcy + (o.cy - ucy) * sy + dy);
           l.w = Math.max(1, o.w * sx); l.h = Math.max(1, o.h * sy);
           if (res.k != null && l.kind === "shape" && isLineShape(l.shape)) l.strokeW = r1(Math.max(0.5, (o.strokeW || 1) * res.k));
         }
@@ -1814,7 +1912,8 @@ function renderLayerInsp() {
     <label class="row" style="font-size:13px;margin-top:4px"><input type="checkbox" data-lk="keep" ${st.keepRatio !== false ? "checked" : ""}> <span>${esc(T("幅・高さを変えるとき、縦横比を保つ"))}</span></label>
     ${L.kind === "shape" ? shapeInspHtml(L) : `<div class="row" style="margin-top:4px"><button data-la="fit" title="${esc(T("縦横比を保って、キャンバスに収まる大きさで真ん中に"))}">${esc(T("キャンバスに収める"))}</button>
       <button data-la="cover" title="${esc(T("縦横比を保って、キャンバスをすき間なく覆う大きさで真ん中に"))}">${esc(T("キャンバスいっぱい"))}</button>
-      <button data-la="one" title="${esc(T("画像の画素 1 つをキャンバスの 1px に"))}">${esc(T("元の大きさ"))}</button></div>
+      <button data-la="one" title="${esc(T("画像の画素 1 つをキャンバスの 1px に"))}">${esc(T("元の大きさ"))}</button>${L.warp ? `<button data-la="bakewarp" title="${esc(T("ゆがんだ形を画像の画素にして、ふつうの四角いレイヤーに戻します(元に戻せます)"))}">${esc(T("変形を適用"))}</button><button data-la="unwarp">${esc(T("ゆがみを戻す"))}</button>` : ""}</div>
+    <div class="note">${esc(T("Ctrl を押しながら枠の辺をドラッグすると、その辺を自由に動かして画像をゆがめられます(Photoshop の「ゆがみ」と同じ)。"))}</div>
     <div class="note">${esc(T("元の画素の大きさ: {0} × {1}", L.cv.width, L.cv.height))}</div>${cropInspHtml(L)}${olInspHtml(L)}`}`;
 }
 // 図形の見た目(塗り・線・角の丸み・矢印)
@@ -1931,6 +2030,8 @@ function layerAction(a) {
   if (a === "lcrop") { if (st.lcrop) endLayerCrop(true); else startLayerCrop(); return; }
   if (a === "lcropok" || a === "lcropno") { endLayerCrop(a === "lcropok"); return; }
   if (a === "bake") { bakeLayer(L); return; }
+  if (a === "bakewarp") { bakeWarp(selObj()); return; }
+  if (a === "unwarp") { pushUndo(true); delete L.warp; st.dirty = true; delete $('[data-c="lyinsp"]').dataset.for; refresh(); return; }
   if (a === "ruleadd" || a === "ruledel") { // 大きさを変える条件を足す / 消す
     const btn = document.activeElement?.closest?.("[data-la]") || null;
     pushUndo(true);
@@ -1985,6 +2086,35 @@ function bakeLayer(L) {
   delete $('[data-c="lyinsp"]').dataset.for;
   refresh();
   ctx.notify(T("切り抜き・ふち取りを画像に適用しました(元に戻せます)"), "info");
+}
+// 変形を適用: ゆがんだ形を画像の画素にして、ふつうの四角いレイヤーに戻す(元に戻せる)
+function bakeWarp(L) {
+  if (!L || L.kind !== "image" || !L.warp) { ctx.notify(T("適用する変形がありません"), "info"); return; }
+  endBg();
+  const src = layerPixels(L), q = warpQuad(L);
+  const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  let s = Math.max(src.width / L.w, src.height / L.h); // 元の画素の細かさを保つ
+  const lim = 8192 / Math.max(1e-6, x1 - x0, y1 - y0);
+  s = Math.min(s, lim);
+  const W2 = Math.max(1, Math.ceil((x1 - x0) * s)), H2 = Math.max(1, Math.ceil((y1 - y0) * s));
+  const out = canvasOf(W2, H2), g = out.getContext("2d");
+  g.imageSmoothingQuality = "high";
+  g.scale(W2 / (x1 - x0), H2 / (y1 - y0));
+  g.translate(-x0, -y0);
+  drawWarped(g, src, q, 0.6 / s);
+  pushUndo(true);
+  const a = ((L.rot || 0) * Math.PI) / 180, dx = (x0 + x1) / 2, dy = (y0 + y1) / 2; // 新しい中心(回す前の座標)
+  L.cx += dx * Math.cos(a) - dy * Math.sin(a);
+  L.cy += dx * Math.sin(a) + dy * Math.cos(a);
+  L.w = x1 - x0; L.h = y1 - y0;
+  L.cv = out; L.orig = copyCanvas(out); L.paint = canvasOf(W2, H2);
+  delete L.crop; delete L.warp;
+  st.pxv = (st.pxv || 0) + 1;
+  st.dirty = true;
+  delete $('[data-c="lyinsp"]').dataset.for;
+  refresh();
+  ctx.notify(T("変形を画像に適用しました(元に戻せます)"), "info");
 }
 // 並べ替え・複製・消す(選んだレイヤー)
 function layerOp(op) {
@@ -2090,7 +2220,7 @@ function placeImageBox() {
   if (!box.firstChild) box.innerHTML = bboxHtml("all");
   if (isMulti() && st.tool === "select" && !st.crop) {
     const u = unionBox(selList().filter((l) => !l.hidden)), { k, ox, oy } = st.view;
-    box.classList.add("multi");
+    box.classList.add("multi"); placeWarpHandles(box, {}, 1);
     if (!u) { box.style.display = "none"; return; }
     Object.assign(box.style, { display: "block", left: `${ox + u.x0 * k}px`, top: `${oy + u.y0 * k}px`, width: `${(u.x1 - u.x0) * k}px`, height: `${(u.y1 - u.y0) * k}px`, transform: "" });
     return;
@@ -2104,6 +2234,29 @@ function placeImageBox() {
     left: `${ox + L.cx * k - (L.w * k) / 2}px`, top: `${oy + L.cy * k - (L.h * k) / 2}px`,
     transform: Math.abs(L.rot || 0) > 0.01 ? `rotate(${L.rot}deg)` : "",
   });
+  placeWarpHandles(box, L, k);
+}
+// ゆがんだレイヤー: 枠の角・辺の点(と回転の丸)を、ゆがんだ四角の角・辺の真ん中に置く。ゆがみが無ければ元の位置に戻す
+function placeWarpHandles(box, L, k) {
+  const bb = box.querySelector(".bb");
+  if (!bb) return;
+  let sv = bb.querySelector(".bb-warp");
+  const els = [...bb.querySelectorAll(".bb-h, .bb-stem, .bb-rot")];
+  if (!(L.warp && L.kind === "image")) {
+    for (const el of els) { el.style.left = ""; el.style.top = ""; }
+    bb.style.borderColor = "";
+    sv?.remove();
+    return;
+  }
+  const q = warpQuad(L).map((p) => [(L.w / 2 + p[0]) * k, (L.h / 2 + p[1]) * k]);
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const at = { nw: q[0], ne: q[1], se: q[2], sw: q[3], n: mid(q[0], q[1]), e: mid(q[1], q[2]), s: mid(q[3], q[2]), w: mid(q[0], q[3]) };
+  for (const [h, p] of Object.entries(at)) { const el = bb.querySelector(`.bb-${h}`); if (el) { el.style.left = `${p[0]}px`; el.style.top = `${p[1]}px`; } }
+  for (const c of [".bb-stem", ".bb-rot"]) { const el = bb.querySelector(c); if (el) { el.style.left = `${at.s[0]}px`; el.style.top = `${at.s[1]}px`; } }
+  bb.style.borderColor = "transparent";
+  if (!sv) { sv = document.createElementNS("http://www.w3.org/2000/svg", "svg"); sv.setAttribute("class", "bb-warp"); sv.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none"; bb.prepend(sv); }
+  const col = getComputedStyle(bb.querySelector(".bb-nw") || bb).borderTopColor || "#4f8bff";
+  sv.innerHTML = `<polygon points="${q.map((p) => p.join(",")).join(" ")}" fill="none" stroke="${col}" stroke-width="1.5"/>`;
 }
 // ---------------------------------------------------------------- 吸い付き(スナップ): キャンバスの端・真ん中と、ほかのレイヤーの端・真ん中にそろえる
 const SNAP_LS = "cca_generator.imgedit.snap";
@@ -2133,15 +2286,71 @@ function snapRes(res, ev, box0, lines, rot, resize = true) {
   let g = null;
   if (st.snap && !ev?.altKey && res.rot == null) {
     if (res.dx != null) { const m = snapMove(box0, res.dx, res.dy, lines); res = { dx: m.dx, dy: m.dy }; g = m; }
-    else if (resize && Math.abs(rot || 0) < 0.01) { const m = snapResize(res, box0, lines); res = m.res; g = m; }
+    else if (resize && res.c && Math.abs(rot || 0) < 0.01) { const m = snapResize(res, box0, lines); res = m.res; g = m; }
+    else if (resize && !res.c && res.handle && Math.abs(rot || 0) < 0.01) { const m = snapAnchorResize(res, box0, lines); res = m.res; g = m; } // 反対側を止めた大きさ変更
   }
   showSnapGuides($(".stage"), g && (g.gx.length || g.gy.length) ? g : null);
   return res;
 }
+// 反対側(対角)の辺・角を止めて広げるとき、動かしている辺・角を線にそろえる
+function snapAnchorResize(res, b, L) {
+  const h = res.handle, T = WARP_SNAP, W = b.x1 - b.x0, H = b.y1 - b.y0;
+  const pick = (v, ts) => { let r = null; for (const t of ts) { const d = t - v; if (Math.abs(d) <= T && (!r || Math.abs(d) < Math.abs(r.d))) r = { d, at: t }; } return r; };
+  if (res.w != null) { const e = h === "e" ? b.x0 + res.w : b.x1 - res.w, s = pick(e, L.xs); return s ? { res: (() => { const w = Math.max(8, res.w + (h === "e" ? s.d : -s.d)); return { ...res, w, dcx: (h === "e" ? 1 : -1) * (w - W) / 2, dcy: 0 }; })(), gx: [s.at], gy: [] } : { res, gx: [], gy: [] }; }
+  if (res.h != null) { const e = h === "s" ? b.y0 + res.h : b.y1 - res.h, s = pick(e, L.ys); return s ? { res: (() => { const hh = Math.max(8, res.h + (h === "s" ? s.d : -s.d)); return { ...res, h: hh, dcx: 0, dcy: (h === "s" ? 1 : -1) * (hh - H) / 2 }; })(), gx: [], gy: [s.at] } : { res, gx: [], gy: [] }; }
+  if (res.k != null && h.length === 2) {
+    const ex = h.includes("e") ? b.x0 + W * res.k : b.x1 - W * res.k, ey = h.includes("s") ? b.y0 + H * res.k : b.y1 - H * res.k;
+    const sx = pick(ex, L.xs), sy = pick(ey, L.ys);
+    const kx = sx ? (res.k * W + (h.includes("e") ? sx.d : -sx.d)) / W : null, ky = sy ? (res.k * H + (h.includes("s") ? sy.d : -sy.d)) / H : null;
+    const useX = sx && (!sy || Math.abs(sx.d) <= Math.abs(sy.d));
+    const k2 = useX ? kx : sy ? ky : null;
+    if (k2 == null) return { res, gx: [], gy: [] };
+    const sxg = h.includes("w") ? -1 : 1, syg = h.includes("n") ? -1 : 1, th = 0;
+    return { res: { ...res, k: Math.max(0.02, k2), dcx: sxg * (W / 2) * (Math.max(0.02, k2) - 1), dcy: syg * (H / 2) * (Math.max(0.02, k2) - 1) }, gx: useX ? [sx.at] : [], gy: useX ? [] : [sy.at] };
+  }
+  return { res, gx: [], gy: [] };
+}
+// Ctrl + 辺・角ドラッグ: その辺(両端の角)・その角を自由に動かして、四角をゆがめる(画像レイヤー。Alt でスナップなし)
+function startWarpDrag(e, L, h) {
+  e.preventDefault();
+  e.stopPropagation();
+  const k = st.view.k, a = ((L.rot || 0) * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+  const w0 = L.warp ? L.warp.map((p) => [...p]) : [[0, 0], [0, 0], [0, 0], [0, 0]];
+  const idx = { n: [0, 1], e: [1, 2], s: [3, 2], w: [0, 3], nw: [0], ne: [1], se: [2], sw: [3] }[h];
+  const q0 = warpQuad({ ...L, warp: w0 }), lines = snapTargets(L);
+  const cr = $(".stage > canvas").getBoundingClientRect(), { ox, oy } = st.view;
+  const scr = (p) => [cr.left + ox + (L.cx + p[0] * ca - p[1] * sa) * k, cr.top + oy + (L.cy + p[0] * sa + p[1] * ca) * k]; // レイヤーの点 → 画面の px
+  const near = (vals, targets, d0) => { let b = null; for (const v of vals) for (const t of targets) { const d = t - v; if (Math.abs(d) <= WARP_SNAP && (!b || Math.abs(d) < Math.abs(b.d))) b = { d, at: t }; } return b ? { d: b.d, at: b.at } : { d: 0, at: null }; };
+  const x0 = e.clientX, y0 = e.clientY;
+  let pushed = false;
+  const move = (ev) => {
+    let dxs = ev.clientX - x0, dys = ev.clientY - y0, g = null;
+    if (st.snap && !ev.altKey) {
+      const pts = idx.map((i) => { const s = scr(q0[i]); return [s[0] + dxs, s[1] + dys]; });
+      const bx = near(pts.map((p) => p[0]), lines.xs), by = near(pts.map((p) => p[1]), lines.ys);
+      dxs += bx.d; dys += by.d;
+      g = { gx: bx.at != null ? [bx.at] : [], gy: by.at != null ? [by.at] : [] };
+    }
+    showSnapGuides($(".stage"), g && (g.gx.length || g.gy.length) ? g : null);
+    const dx = dxs / k, dy = dys / k;
+    const lx = dx * Math.cos(-a) - dy * Math.sin(-a), ly = dx * Math.sin(-a) + dy * Math.cos(-a);
+    if (!pushed) { pushUndo(true); pushed = true; }
+    const nw = w0.map((p) => [...p]);
+    for (const i of idx) { nw[i][0] = r1(w0[i][0] + lx); nw[i][1] = r1(w0[i][1] + ly); }
+    L.warp = nw;
+    st.dirty = true;
+    draw();
+  };
+  const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); showSnapGuides($(".stage"), null); if (pushed) { delete $('[data-c="lyinsp"]').dataset.for; refresh(); } };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+const WARP_SNAP = 8;
 function startImageDrag(e) {
   if (isMulti()) { startMultiDrag(e); return; }
   const L = selObj();
   if (!L || st.busy) return;
+  if ((e.ctrlKey || e.metaKey || L.warp) && L.kind === "image" && ["e", "w", "n", "s", "nw", "ne", "se", "sw"].includes(e.target.dataset?.h)) { startWarpDrag(e, L, e.target.dataset.h); return; }
   const box = $('[data-c="ibox"]'), br = box.getBoundingClientRect();
   const k = st.view.k, L0 = { ...L };
   const box0 = objScreenBounds(L), lines = snapTargets(L);
@@ -2154,10 +2363,12 @@ function startImageDrag(e) {
       if (res.dx != null) { L.cx = r1(L0.cx + res.dx / k); L.cy = r1(L0.cy + res.dy / k); }
       else if (res.rot != null) L.rot = res.rot;
       else if (res.k != null) {
+        L.cx = r1(L0.cx + (res.dcx || 0) / k); L.cy = r1(L0.cy + (res.dcy || 0) / k);
         L.w = Math.max(1, L0.w * res.k); L.h = Math.max(1, L0.h * res.k);
         if (L.kind === "shape" && isLineShape(L.shape)) L.strokeW = r1(Math.max(0.5, (L0.strokeW || 1) * res.k));
-      } else if (res.w != null) { L.w = Math.max(1, res.w / k); if (ev?.shiftKey) L.h = (L0.h * L.w) / L0.w; }
+      } else if (res.w != null) { L.cx = r1(L0.cx + (res.dcx || 0) / k); L.cy = r1(L0.cy + (res.dcy || 0) / k); L.w = Math.max(1, res.w / k); if (ev?.shiftKey) L.h = (L0.h * L.w) / L0.w; }
       else if (res.h != null) {
+        L.cx = r1(L0.cx + (res.dcx || 0) / k); L.cy = r1(L0.cy + (res.dcy || 0) / k);
         L.h = Math.max(1, res.h / k); if (ev?.shiftKey) L.w = (L0.w * L.h) / L0.h;
         // 線・矢印は、上下の辺で太さを変える
         if (L.kind === "shape" && (L.shape === "line" || L.shape === "arrow")) L.strokeW = r1(Math.max(0.5, (L0.strokeW || 1) * (L.h / Math.max(1, L0.h))));
@@ -2423,6 +2634,31 @@ function newText(x = 0.5, y = 0.5) {
   const style = last ? Object.fromEntries(STYLE_KEYS.filter((k) => last[k] != null).map((k) => [k, last[k]])) : {};
   return { id: tuid++, kind: "text", text: T("テキスト"), size: 0.08, color: "#ffffff", stroke: "#000000", strokeWidth: 0.08, bg: "#000000", bgAlpha: 0, rot: 0, opacity: 1, wrap: 0, ...style, x, y };
 }
+// 文字の量に合わせて、画面(90%)に収まるまで文字を小さくする(横は折り返す)
+function fitTextToCanvas(t) {
+  const lim = 0.9, minSize = 0.012;
+  t.wrap = 0;
+  let L = layoutOf(t);
+  if (L.w > st.W * lim) { t.wrap = lim; L = layoutOf(t); }
+  for (let i = 0; i < 40 && (L.h > st.H * lim || L.w > st.W * lim * 1.001) && t.size > minSize; i++) {
+    t.size = r3(Math.max(minSize, t.size * 0.9));
+    L = layoutOf(t);
+  }
+}
+function pasteTextLayer(text) {
+  if (!st.layers.length || st.busy) return false;
+  endBg();
+  pushUndo(true);
+  const t = newText(0.5, 0.5);
+  t.text = text.slice(0, 2000);
+  fitTextToCanvas(t); // 量が多いときは、画面に収まる大きさにする
+  st.layers.push(t);
+  st.tsel = t.id; st.isel = null; st.msel = [];
+  st.tool = "select";
+  st.dirty = true;
+  refresh();
+  return true;
+}
 function addText(x, y) {
   if (!st.layers.length) return;
   endBg();
@@ -2490,8 +2726,8 @@ function pasteText() {
   // 同じ画面からなら少しずらして重ならないように
   if (c.from === "img") { t.x = r3((src.x ?? 0.5) + 0.03); t.y = r3((src.y ?? 0.5) + 0.03); }
   st.layers.push(t);
-  st.tsel = t.id; st.isel = null;
-  st.tool = "text";
+  st.tsel = t.id; st.isel = null; st.msel = [];
+  st.tool = "select"; // 貼り付けたあとは「選択」(文字を置く状態にしない)
   st.dirty = true;
   refresh();
   ctx.notify("貼り付けました", "info");
@@ -2540,8 +2776,8 @@ function startTextDrag(e) {
       if (res.w == null) res = snapRes(res, ev, box0, lines, t0.rot); // 折り返す幅は寄せない
       if (res.dx != null) { t.x = r3(clamp(t0.x + res.dx / (W * k), -0.5, 1.5)); t.y = r3(clamp(t0.y + res.dy / (H * k), -0.5, 1.5)); }
       else if (res.rot != null) t.rot = res.rot;
-      else if (res.k != null) t.size = r3(clamp(t0.size * res.k, 0.005, 1));
-      else if (res.w != null) t.wrap = r3(clamp(res.w / (W * k), 0.05, 2));
+      else if (res.k != null) { t.size = r3(clamp(t0.size * res.k, 0.005, 1)); t.x = r3(t0.x + (res.dcx || 0) / (W * k)); t.y = r3(t0.y + (res.dcy || 0) / (H * k)); }
+      else if (res.w != null) { t.wrap = r3(clamp(res.w / (W * k), 0.05, 2)); t.x = r3(t0.x + (res.dcx || 0) / (W * k)); t.y = r3(t0.y + (res.dcy || 0) / (H * k)); }
       draw();
       syncTextInsp();
     },
@@ -3351,6 +3587,12 @@ async function save(btn) {
   ctx.notify(`保存しました: ${j.path}`, "info", btn, { sticky: true, file: { filename: j.filename, subfolder: j.subfolder || "", type: j.type || "output" } });
   return j;
 }
+async function copyToClipboard() {
+  if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error(T("このブラウザでは画像をクリップボードにコピーできません(https か localhost で開いてください)"));
+  const c = renderComposite();
+  const blob = new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error(T("画像を作れませんでした")))), "image/png"));
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+}
 async function download() {
   const { blob, ext, name } = await exportBlob();
   const a = document.createElement("a");
@@ -3377,6 +3619,11 @@ function bind() {
   };
   $('[data-c="download"]').onclick = async (e) => {
     try { await download(); } catch (err) { ctx.notify(`ダウンロードできませんでした: ${err.message}`, "error", e.currentTarget); }
+  };
+  $('[data-c="copyimg"]').onclick = async (e) => {
+    const b = e.currentTarget;
+    try { await copyToClipboard(); ctx.notify(T("クリップボードにコピーしました"), "info", b); }
+    catch (err) { ctx.notify(`${T("クリップボードにコピーできませんでした")}: ${err.message}`, "error", b); }
   };
   $('[data-c="use"]').onclick = async (e) => {
     const b = e.currentTarget;
@@ -3621,6 +3868,16 @@ function bind() {
     if (st.tool === "select") {
       // 押したレイヤーを選んで、そのまま動かす(何も無い所なら選ぶのをやめる)
       const hit = layerAt(p.x, p.y);
+      // アートボードの外の何も無い所: 選ぶのをやめて、ドラッグで画面を動かす(ハンドモード)
+      if (!hit && !(e.shiftKey || e.ctrlKey || e.metaKey)) {
+        const d0 = toDoc(p.x, p.y);
+        if (d0.x < 0 || d0.y < 0 || d0.x >= st.W || d0.y >= st.H) {
+          selectLayer(null); refresh();
+          st.drag = { mode: "pan", last: p };
+          cv.style.cursor = "grabbing";
+          return;
+        }
+      }
       if (e.shiftKey || e.ctrlKey || e.metaKey) { if (hit) { toggleSelect(hit); refresh(); } return; }
       if (hit && isMulti() && selList().includes(hit)) { startMultiDrag(e); return; }
       selectLayer(hit);
@@ -3656,6 +3913,7 @@ function bind() {
   cv.addEventListener("pointermove", (e) => {
     const p = pos(e);
     st.mouse = p;
+    updZoomv();
     if (!st.drag) { if (BRUSH_TOOLS.includes(st.tool) || (st.tool === "path" && st.path)) draw(); return; }
     if (st.drag.mode === "pan") {
       st.view.px += p.x - st.drag.last.x; st.view.py += p.y - st.drag.last.y;
@@ -3741,11 +3999,13 @@ function bind() {
     if (!ui?.classList.contains("open")) return;
     // この画面でコピーしたレイヤーなら、それを貼る(パソコンのクリップボードの画像より優先)
     const txt = e.clipboardData?.getData("text/plain") || "";
-    if (/^cca-imgedit:/.test(txt) && !isField(e.target)) { if (pasteObjects()) { e.preventDefault(); e.stopPropagation(); } return; }
+    if (/^cca-(imgedit|vedit):/.test(txt) && !isField(e.target)) { if (pasteObjects()) { e.preventDefault(); e.stopPropagation(); } return; }
     const f = [...(e.clipboardData?.files || [])].find((x) => /^image\//.test(x.type));
     if (!f) {
       // 画像でなければ、コピーした文字を貼り付ける(文字を打つ欄の中ではその欄に)
       if (isField(e.target)) return;
+      // クリップボードに文字があれば、その内容を入れた「文字」を置く。無ければ、この画面でコピーしたレイヤーを貼る
+      if (txt.trim() && pasteTextLayer(txt.replace(/\r\n?/g, "\n"))) { e.preventDefault(); e.stopPropagation(); return; }
       if (pasteObjects()) { e.preventDefault(); e.stopPropagation(); }
       return;
     }
@@ -3851,6 +4111,7 @@ function histThumb() {
 function histSave(auto = false, btn = null) {
   const run = async () => {
     if (!st.layers.length) { if (!auto) ctx.notify(T("まだ画像を開いていません"), "info", btn); return null; }
+    if (st.layers.every((l) => l.blank)) { if (!auto) ctx.notify(T("まだ何も置いていません"), "info", btn); return null; }
     const ver = st.ver;
     if (auto && ver === st.hist.ver) return null;
     if (btn) btn.disabled = true;
@@ -3862,7 +4123,7 @@ function histSave(auto = false, btn = null) {
         if (l.orig) files[`L${l.id}_o.png`] = await toBlob(l.orig);
       }
       const layers = st.layers.map((l) => (l.kind === "image"
-        ? { id: l.id, kind: "image", name: l.name, cx: l.cx, cy: l.cy, w: l.w, h: l.h, rot: l.rot || 0, opacity: l.opacity ?? 1, hidden: !!l.hidden, ...(l.gid ? { gid: l.gid } : {}), ...(l.crop ? { crop: l.crop } : {}), ...(l.clip ? { clip: l.clip, clipHide: !!l.clipHide } : {}), ...(l.ol ? { ol: l.ol } : {}) }
+        ? { id: l.id, kind: "image", name: l.name, cx: l.cx, cy: l.cy, w: l.w, h: l.h, rot: l.rot || 0, opacity: l.opacity ?? 1, hidden: !!l.hidden, ...(l.gid ? { gid: l.gid } : {}), ...(l.crop ? { crop: l.crop } : {}), ...(l.warp ? { warp: l.warp } : {}), ...(l.clip ? { clip: l.clip, clipHide: !!l.clipHide } : {}), ...(l.ol ? { ol: l.ol } : {}) }
         : JSON.parse(JSON.stringify(l))));
       const item = await saveEntry("image", {
         data: { v: 2, source: st.source, name: st.name, W: st.W, H: st.H, aimg: st.aimg, out: st.out, layers },
@@ -3975,6 +4236,7 @@ export async function openImageEditor(opts) {
     busy("読み込み中…");
     try { await openValue(opts.value); } catch (e) { ctx.notify(e.message, "error"); } finally { busy(""); refresh(); }
   }
+  if (!st.layers.length) startBlank(); // 何も開いていなければ、空のキャンバスから
   histTimer(true);
 }
 // テスト用(画面の状態を読む)

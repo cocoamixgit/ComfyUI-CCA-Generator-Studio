@@ -82,6 +82,15 @@ def save_upload(data, filename, prefix, sub=""):
     return {"filename": fname, "subfolder": rel, "type": "output", "value": value, "path": path}
 
 
+def remember(value):
+    """保存した画像(画像編集の保存など)を「最近の画像」に入れる。入力画像のプルダウンの選択肢に出る"""
+    if not isinstance(value, str) or not value:
+        return
+    with _lock:
+        recent = [v for v in _read(RECENT_FILE, {}).get("items", []) if isinstance(v, str) and v != value]
+        _write(RECENT_FILE, {"items": [value] + recent[:MAX_RECENT - 1]})
+
+
 def recent_images():
     """最近入れた画像(まだあるもの)。新しい順"""
     out = []

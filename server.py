@@ -240,6 +240,16 @@ def register_routes():
         except Exception as e:  # noqa: BLE001
             return _bad(e)
 
+    # 結果の画像などを、入力画像のプルダウンの選択肢(最近の画像)に入れる
+    @routes.post("/cca_generator/remember_image")
+    async def cca_generator_remember_image(request):
+        try:
+            data = await request.json()
+            uploads.remember(str(data.get("value") or ""))
+            return web.json_response({"ok": True})
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+
     # 処理が終わったら、作業用の画像(temp/cca_edit)と結果の画像(temp の PreviewImage)を消す
     @routes.post("/cca_generator/temp_cleanup")
     async def cca_generator_temp_cleanup(request):

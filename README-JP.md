@@ -35,13 +35,14 @@ CCA Generatorは、生成した「その先」のためのComfyUIカスタムノ
 - [他のプロジェクト](#他のプロジェクト)
 
 
-## インストール
-### 簡易インストール
+## 簡易インストール (Comfyui 0.45.0以降があること)
 ![ダウンロード](assets/image_00032__edit_1.png)
 ![ダウンロード](assets/image_00032__edit_2.png)
 ![ダウンロード](assets/044552_edit.png)
 ![ダウンロード](assets/044552_edit_1.png)
 
+
+## 通常インストール
 ### 必要なもの
 
 - ComfyUI 0.45.0以上がインストール済みであること（動作確認済み：ComfyUI 0.45.0 / フロントエンド 1.59.1）。まだの場合は[こちらの手順書](https://note.com/cocoat/n/n8780c1ca3b1f#e9a103d0-79ce-43a5-b53d-f6ff8fb16a35)（StabilityMatrixでComfyUIを入れる方法）を参考にしてください。

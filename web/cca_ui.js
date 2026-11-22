@@ -1046,7 +1046,7 @@ function fillModelTypes(n) {
   for (const t of CCA.SPEC.types) groups[CCA.SPEC.types_info[t].kind].push(t);
   const label = (t) => (CCA.SPEC.types_info[t].is_turbo ? `${t} ⚡` : t);
   // data-note = 種別の短い説明(プルダウンを開いたときに名前の下に出す)
-  const opt = (t) => `<option value="${esc(t)}" data-note="${esc(CCA.SPEC.types_info[t].note || "")}" data-lic="${esc(CCA.SPEC.types_info[t].license || "")}">${esc(label(t))}</option>`;
+  const opt = (t) => `<option value="${esc(t)}" data-note="${esc(CCA.SPEC.types_info[t].note || "")}" data-lic="${esc(CCA.SPEC.types_info[t].license || "")}" data-lic-html="${esc(licBadge(CCA.SPEC, CCA.SPEC.types_info[t].license))}">${esc(label(t))}</option>`;
   const html = `<optgroup label="画像">${groups.image.map(opt).join("")}</optgroup>`
     + `<optgroup label="動画">${groups.video.map(opt).join("")}</optgroup>`
     + `<optgroup label="音楽・音声">${groups.audio.map(opt).join("")}</optgroup>`;

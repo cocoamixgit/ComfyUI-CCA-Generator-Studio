@@ -51,6 +51,7 @@ RULES = [
     (["clip_l"], [], [("Comfy-Org/HunyuanVideo_repackaged (text_encoders)", HUNYUAN + "text_encoders")]),
     (["hunyuan_video_vae"], [], [("Comfy-Org/HunyuanVideo_repackaged (vae)", HUNYUAN + "vae")]),
     (["moss_image_edit"], [], [
+        ("Comfy-Org/MOSS-Image(Edit LoRA・公式 rank64)", HF + "Comfy-Org/MOSS-Image/tree/main"),
         ("chinoll/Moss-Image-Edit(Edit LoRA)", HF + "chinoll/Moss-Image-Edit"),
         ("MOSS-Image Edit HQ v5 の紹介(物の追加に強い版)", "https://comfyui-wiki.com/en/news/2026-10-25-moss-image-edit-hq"),
     ]),

@@ -1072,6 +1072,17 @@ function initCustomSelects() {
         font-size: .85em;
         font-weight: bold;
       }
+      .cca-select-lic {
+        margin-left: 6px;
+      }
+      .cca-select-note {
+        display: block;
+        margin-top: 1px;
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 1.35;
+        opacity: .75;
+      }
       .cca-select-arrow {
         color: var(--sel-arrow, inherit);
       }
@@ -1167,6 +1178,7 @@ function initCustomSelects() {
     function open() {
       sync();
       menu.replaceChildren();
+      let hasNote = false;
 
       const addOption = (option, index) => {
         const item = document.createElement("button");
@@ -1177,7 +1189,31 @@ function initCustomSelects() {
           "aria-selected",
           String(index === select.selectedIndex)
         );
-        item.textContent = option.textContent;
+        // 説明書き(data-note)・ライセンス表示(data-lic-html)がある選択肢は、名前の下に説明を出す(生成パネルの「利用モデルの種類」)
+        const note = option.dataset?.note || "";
+        const lic = option.dataset?.licHtml || "";
+        if (note || lic) {
+          const name = document.createElement("span");
+          name.className = "cca-select-name";
+          name.textContent = option.textContent;
+          item.appendChild(name);
+          if (lic) {
+            const badge = document.createElement("span");
+            badge.className = "cca-select-lic";
+            badge.innerHTML = lic;
+            item.appendChild(badge);
+          }
+          if (note) {
+            const nt = document.createElement("span");
+            nt.className = "cca-select-note";
+            nt.textContent = note;
+            item.appendChild(nt);
+            item.title = `${option.textContent} — ${note}`;
+            hasNote = true;
+          }
+        } else {
+          item.textContent = option.textContent;
+        }
         item.disabled = option.disabled;
 
         item.addEventListener("click", () => {
@@ -1216,9 +1252,17 @@ function initCustomSelects() {
 
       const r = button.getBoundingClientRect();
       menu.style.minWidth = `${r.width}px`;
-      menu.style.width = "max-content";
-      menu.style.maxWidth = `${Math.max(r.width, window.innerWidth - r.left - 8)}px`;
-      menu.style.left = `${r.left}px`;
+      if (hasNote) {
+        // 説明書きは折り返して表示する(幅は、選択欄の幅か 300px の大きいほう)
+        const nw = Math.min(window.innerWidth - 16, Math.max(r.width, 300));
+        menu.style.width = `${nw}px`;
+        menu.style.maxWidth = `${nw}px`;
+        menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - nw - 8))}px`;
+      } else {
+        menu.style.width = "max-content";
+        menu.style.maxWidth = `${Math.max(r.width, window.innerWidth - r.left - 8)}px`;
+        menu.style.left = `${r.left}px`;
+      }
 
       // 非表示のままでは高さが 0 になり 320 で計算してしまうので、見えない状態で表示して実際の高さを測る
       menu.style.visibility = "hidden";

@@ -41,6 +41,26 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 ![ダウンロード](assets/044552_edit.png)
 ![ダウンロード](assets/044552_edit_1.png)
 
+---
+## Changelog
+- If you installed using the Quick Installer, updating is as simple as overwriting all existing files.
+
+### Version 1.1 – Changes
+* Fixed dropdown menu issues.
+* Adjusted the positioning of the top buttons.
+* Added left, center, and right text alignment options.
+* Added a feature that allows you to hold Ctrl and press the Up/Down arrow keys to convert a single word separated by `,,` or the selected text into `(test:1.1)` format.
+* Enabled editing and drawing even when no image is loaded.
+* Added a Copy to Clipboard output option.
+* Consolidated all help and instructions under the ⓘ (Info) button.
+* Improved the Path Tool.
+* Changed the scaling anchor point for images and other objects from the center to the opposite corner. Hold Alt to switch back to center-based scaling.
+* Moved the reorder buttons to the bottom of the image/video editing interface.
+* Added Hand Mode to image editing: drag anywhere on the empty area outside the artboard to pan the canvas.
+* Added a display showing the current cursor coordinates (`X:` / `Y:`).
+
+---
+
 
 ## Normal Installation
 ### Prerequisites

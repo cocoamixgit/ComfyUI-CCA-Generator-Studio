@@ -106,7 +106,12 @@ export const THEMES = [
     // その他の CSS(1 行 1 規則)
     extraCss: [
       '#cca-vedit button[data-c="stretch"].on.on.on{color:#5c361b !important;background-color:#e3d2bc !important;border-color:#5c361b !important}', // 動画編集: 伸縮(タイムストレッチ)ボタン(茶の文字・薄い茶の地)
-      '#cca-vedit .tl .blk, #cca-vedit .tl .blk *:not(canvas){color:#ffffff !important}' // 動画編集: タイムラインのバーの中の文字を白
+      '#cca-vedit .tl .blk, #cca-vedit .tl .blk *:not(canvas){color:#ffffff !important}', // 動画編集: タイムラインのバーの中の文字を白
+      '.cca-lic.ok{background-color:#4f6b3a !important;color:#ffffff !important}', // ライセンスのタグ「商用可」: 地の色と白い文字
+      '.cca-lic.cond{background-color:#8a6a1c !important;color:#ffffff !important}', // ライセンスのタグ「条件付き」: 地の色と白い文字
+      '.cca-lic.out{background-color:#7a5535 !important;color:#ffffff !important}', // ライセンスのタグ「生成物のみ商用可」: 地の色と白い文字
+      '.cca-lic.no{background-color:#5c361b !important;color:#ffffff !important}', // ライセンスのタグ「非商用のみ」: 地の色と白い文字
+      '.cca-lic.unknown{background-color:#5b5148 !important;color:#ffffff !important}' // ライセンスのタグ「不明」: 地の色と白い文字
     ].join("\n"),
     snapOn: { bg: "#aebd94", fg: "#2e3a1e", border: "#3b4a29" }, // スナップがオンの時: 地 / 文字 / 枠
     // 項目ごとの色(グラデーションもここから作る): accent=見出し・強調 / tint=グラデーションの地 / border=枠
@@ -1072,6 +1077,17 @@ function initCustomSelects() {
         font-size: .85em;
         font-weight: bold;
       }
+      .cca-select-lic {
+        margin-left: 6px;
+      }
+      .cca-select-note {
+        display: block;
+        margin-top: 1px;
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 1.35;
+        opacity: .75;
+      }
       .cca-select-arrow {
         color: var(--sel-arrow, inherit);
       }
@@ -1167,6 +1183,7 @@ function initCustomSelects() {
     function open() {
       sync();
       menu.replaceChildren();
+      let hasNote = false;
 
       const addOption = (option, index) => {
         const item = document.createElement("button");
@@ -1177,7 +1194,31 @@ function initCustomSelects() {
           "aria-selected",
           String(index === select.selectedIndex)
         );
-        item.textContent = option.textContent;
+        // 説明書き(data-note)・ライセンス表示(data-lic-html)がある選択肢は、名前の下に説明を出す(生成パネルの「利用モデルの種類」)
+        const note = option.dataset?.note || "";
+        const lic = option.dataset?.licHtml || "";
+        if (note || lic) {
+          const name = document.createElement("span");
+          name.className = "cca-select-name";
+          name.textContent = option.textContent;
+          item.appendChild(name);
+          if (lic) {
+            const badge = document.createElement("span");
+            badge.className = "cca-select-lic";
+            badge.innerHTML = lic;
+            item.appendChild(badge);
+          }
+          if (note) {
+            const nt = document.createElement("span");
+            nt.className = "cca-select-note";
+            nt.textContent = note;
+            item.appendChild(nt);
+            item.title = `${option.textContent} — ${note}`;
+            hasNote = true;
+          }
+        } else {
+          item.textContent = option.textContent;
+        }
         item.disabled = option.disabled;
 
         item.addEventListener("click", () => {
@@ -1216,9 +1257,17 @@ function initCustomSelects() {
 
       const r = button.getBoundingClientRect();
       menu.style.minWidth = `${r.width}px`;
-      menu.style.width = "max-content";
-      menu.style.maxWidth = `${Math.max(r.width, window.innerWidth - r.left - 8)}px`;
-      menu.style.left = `${r.left}px`;
+      if (hasNote) {
+        // 説明書きは折り返して表示する(幅は、選択欄の幅か 300px の大きいほう)
+        const nw = Math.min(window.innerWidth - 16, Math.max(r.width, 300));
+        menu.style.width = `${nw}px`;
+        menu.style.maxWidth = `${nw}px`;
+        menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - nw - 8))}px`;
+      } else {
+        menu.style.width = "max-content";
+        menu.style.maxWidth = `${Math.max(r.width, window.innerWidth - r.left - 8)}px`;
+        menu.style.left = `${r.left}px`;
+      }
 
       // 非表示のままでは高さが 0 になり 320 で計算してしまうので、見えない状態で表示して実際の高さを測る
       menu.style.visibility = "hidden";

@@ -1,6 +1,6 @@
 [project]
 name = "cca-generator-ui"
-version = "1.1.0"
+version = "1.1.1"
 description = "A ComfyUI interface for image and video generation with SD1.5, Krea 2, MOSS, LTX-2.5, and more."
 requires-python = ">=3.10"
 license = {text = "GPL-3.0"}

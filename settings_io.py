@@ -12,7 +12,7 @@
   - 「足す」は今ある物をそのまま残し、無い物だけ足す(同じ名前は上書きしない)。「置き換える」はその種類を読み込んだ物にする
 一時保存の履歴・透かしの画像・ハッシュの覚え書き(model_hashes.json)は大きい / 作り直せるので入れない。
 
-第28版: Stable Diffusion WebUI Forge / A1111 のスタイル(styles.csv)も読み込める。forge_styles が
+第28版: Stable Diffusion WebUI Forge / A1111 のスタイル(styles.csv)も読み込める。styles_csv が
 プロンプトのプリセットだけを入れた上の形にするので、読み込み(足す / 置き換える)は設定ファイルと同じ道を通る。
 """
 import csv
@@ -39,7 +39,7 @@ SERVER_ITEMS = {
                 ("prompt_presets_hidden.json", "hidden")],       # 消したおすすめ(★)
     "styles": [("text_styles.json", "styles")],                  # 文字の書式のテンプレート
     "wildcards": [("wildcards.json", "styles")],                 # 第29版: ワイルドカード(形は書式と同じ user / hidden)
-    "folders": [("model_dirs.json", "lists")],                   # モデルフォルダ設定
+    "folders": [("model_dirs.json", "lists"), ("media_dirs.json", "lists")],                   # モデルフォルダ設定
 }
 # 古い形式 → 今の形式(format_version ごと)。今は 1 だけ
 MIGRATIONS = {}
@@ -154,7 +154,7 @@ def import_all(data, mode="merge", cats=None):
 
 
 # ---------------------------------------------------------------- 第28版: Forge / A1111 のスタイル(styles.csv)
-FORGE_MAX_BYTES = 20 * 1024 * 1024
+STYLES_MAX_BYTES = 20 * 1024 * 1024
 
 
 def _decode(raw):
@@ -177,12 +177,12 @@ def _drop_prompt_tag(t):
     return t
 
 
-def forge_styles(raw):
+def styles_csv(raw):
     """styles.csv(1 行目が name,prompt,negative_prompt …の見出し。中身に改行や , があれば " で囲む)を読み、
     プロンプトのプリセットだけを入れた設定ファイルの形にする。戻り値: (data, info)"""
     if not isinstance(raw, (bytes, bytearray)) or not raw:
         raise ValueError(tr('ファイルが空です'))
-    if len(raw) > FORGE_MAX_BYTES:
+    if len(raw) > STYLES_MAX_BYTES:
         raise ValueError(tr('ファイルが大きすぎます'))
     text = _decode(bytes(raw)).replace("\r\n", "\n").replace("\r", "\n")
     try:
@@ -225,7 +225,7 @@ def forge_styles(raw):
         raise ValueError(tr('読み込めるスタイルがありませんでした'))
     info["count"] = len(presets)
     data = {"format": FORMAT, "format_version": FORMAT_VERSION, "app_version": APP_VERSION, "exported": "",
-            "source": "forge_styles", "server": {"presets": {"prompt_presets.json": presets}}}
+            "source": "styles_csv", "server": {"presets": {"prompt_presets.json": presets}}}
     return data, info
 
 

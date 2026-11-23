@@ -85,7 +85,7 @@
  },
  "CCASaveImage": {
   "display_name": "CCA Save Image (with generation info)",
-  "description": "Saves images (like ComfyUI's Save Image) and writes generation info in the A1111 / Forge format (prompt, model and hash, LoRAs, Hires and more, taken from the generation panel) into the PNG as \"parameters\"."
+  "description": "Saves images (like ComfyUI's Save Image) and writes generation info in a widely used format (prompt, model and hash, LoRAs, refine settings and more, taken from the generation panel) into the PNG as \"parameters\"."
  },
  "CCASaveVideoFile": {
   "display_name": "CCA Save video (MP4)",

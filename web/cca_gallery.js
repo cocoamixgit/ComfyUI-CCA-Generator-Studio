@@ -22,8 +22,8 @@ function css() {
 #cca-zoom .nav{position:absolute;top:50%;margin-top:-28px;width:44px;height:56px;border-radius:8px;border:1px solid #fff4;background:#0008;color:#fff;font-size:26px;cursor:pointer;z-index:2}
 #cca-zoom .nav.p{left:12px}#cca-zoom .nav.n{right:12px}
 #cca-zoom .nav[disabled]{opacity:.25;cursor:default}
-#cca-zoom .tip{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:#000a;color:#d9dee5;border-radius:6px;padding:4px 12px;font-size:13px;z-index:2;white-space:nowrap}
-#cca-zoom .pct{position:absolute;left:16px;top:18px;background:#000a;border-radius:6px;padding:3px 10px;font-size:13px;z-index:2}
+#cca-zoom .tip{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);border-radius:4px;background:var(--card,rgba(0,0,0,.7)) !important;color:var(--text,#fff) !important;border:1px solid rgba(0,0,0,.35);padding:2px 8px;font-size:12px;line-height:1.5;z-index:2;white-space:nowrap}
+#cca-zoom .pct{position:absolute;left:16px;top:18px;background:var(--card,rgba(0,0,0,.7)) !important;color:var(--text,#fff) !important;border:1px solid rgba(0,0,0,.35);border-radius:4px;padding:2px 8px;font-size:12px;line-height:1.5;z-index:2}
 #cca-zoom .play{position:absolute;left:50%;top:50%;width:84px;height:84px;margin:-42px 0 0 -42px;border-radius:50%;background:#000a;display:none;z-index:1;pointer-events:none}
 #cca-zoom .play::after{content:"";position:absolute;left:33px;top:24px;border-left:28px solid #fff;border-top:18px solid transparent;border-bottom:18px solid transparent}
 #cca-zoom.paused .play{display:block}
@@ -46,6 +46,7 @@ function css() {
 #cca-gal .it{position:relative;border:1px solid #303744;border-radius:8px;overflow:hidden;background:#0b0d10;cursor:pointer;display:flex;flex-direction:column}
 #cca-gal .it:hover{border-color:#3db4a6}
 #cca-gal .it.on{border-color:#3db4a6;box-shadow:0 0 0 2px #3db4a6}
+#cca-gal .pdfb{position:absolute;left:6px;bottom:6px;background:#c0392b;color:#fff;border-radius:4px;padding:0 6px;font-size:11px;font-weight:700;line-height:1.6}
 #cca-gal .th{position:relative;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;background:#0b0d10}
 #cca-gal .th img,#cca-gal .th video{width:100%;height:100%;object-fit:contain;pointer-events:none}
 #cca-gal .cap{font-size:12px;color:#b8c0cc;padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -259,7 +260,7 @@ export function openGallery(items, opts = {}) {
     const grid = gal.querySelector(".grid");
     grid.innerHTML = list.length ? list.map(({ it, i }) => `<div class="it${it === opts.current ? " on" : ""}" data-i="${i}">
         <button class="zoom" title="拡大表示">🔍</button>
-        <div class="th">${it.isVideo ? videoThumb(it.url, true) : `<img src="${esc(it.url)}" loading="lazy" alt="">`}</div>
+        <div class="th">${it.isVideo ? videoThumb(it.url, true) : `<img src="${esc(it.url)}" loading="lazy" alt="">`}${it.pdf ? '<span class="pdfb">PDF</span>' : ""}</div>
         <div class="cap">${esc(opts.caption ? opts.caption(it) : "")}</div></div>`).join("")
       : '<div class="none">まだ結果がありません。</div>';
     for (const el of grid.querySelectorAll(".it")) {

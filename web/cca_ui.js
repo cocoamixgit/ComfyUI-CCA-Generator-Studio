@@ -5,13 +5,14 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import {
   CCA, IMG_KEYS, NONE, W, currentKey, deletePreset, emit, ensureLoaded, fileCheck, fileHelp, findPanel, guardComfyKeys, imageUrl,
-  BUILTIN_MARK, appendPreset, findPreset, hiddenCount, hidePreset, isMissingFile, loraFiles, modelDirs, openFolder,
+  BUILTIN_MARK, appendPreset, findPreset, hiddenCount, hidePreset, isMissingFile, loraFiles, mediaDirs, modelDirs, openFolder, pickFolder,
   restoreHidden,
   parseImageValue, parseLoras, presetEntries, presetGroup, refreshChoices, resetToDefaults, saveNodeIds, savePreset, setLoras, setWidget,
   uploadImage, visibleSet,
 } from "./cca_generator.js";
 import { T, alert, choice as langChoice, confirm, lang as curLang, onLangChange, packs as langPacks, prompt, ready as i18nReady, recheck as recheckLang, setChoice as setLangChoice } from "./cca_i18n.js";
 import { openComposer } from "./cca_compose.js";
+import { openPngInfo } from "./cca_pnginfo.js";
 import { setupSections, sectionEditBar, SECTIONS_CSS, cardCss } from "./cca_sections.js";
 import { openSettingsIO } from "./cca_settings.js";
 import { weightKey } from "./cca_text.js";
@@ -20,12 +21,14 @@ import { openVideoEditor } from "./cca_videoedit.js";
 import { layoutSummary, openLayoutEditor, parseLayout } from "./cca_layout.js";
 import { openGallery, openZoom, videoThumb } from "./cca_gallery.js";
 import { ensureCss as ensureGuideCss, licBadge, openModelGuide } from "./cca_modelguide.js";
-import { TILE_CSS, refreshTile, resumeTileJobs, setupTile, tileActive, tileCombine, tileGenerate, tileHtml } from "./cca_tile.js";
+import { TILE_CSS, applyTileSettings, refreshTile, resumeTileJobs, setupTile, tileActive, tileCombine, tileGenerate, tileHtml } from "./cca_tile.js";
 import { WILDCARD_CSS, setupWildcards, unknownWildcards, wildcardHtml } from "./cca_wildcards.js";
 import { METER_CSS, attachMeter, primeAudio } from "./cca_meter.js";
 import { THEMES, setTheme, themeChoice } from "./cca_theme.js";
 import { sideSplitter } from "./cca_shapes.js";
 
+// 入力画像の透過(アルファ)を使えるモデル種別(ここに入れたモデルでは「⚠透過画像は使えません。」を出さない)
+const ALPHA_OK = new Set([]); // モデル種別名(model_type)
 const PRESET_NEW = "(プリセットを選択)";
 const PRESET_RESTORE = "__cca_restore_builtin__";
 const SIZE_SCALE = "倍率指定";
@@ -36,7 +39,7 @@ const INFO = {
   edit_format: "「自動」のままにします。選んだ Edit LoRA のファイルから読み方を決めます。",
   ref_size: "「自動」のままにします(出力と同じ約 100 万画素で参照します。ComfyUI 公式の MOSS 編集と同じ)。小さくすると、画像を読み取りにくくなります。",
   size_scale: "画像1の大きさにこの倍率を掛けた大きさで出力します(×0.5 で半分、×1.1 で 1.1 倍)。",
-  resize_mode: "「今まで通り」は大きさを変えません。「そのまま拡大縮小」は縦横比を変えて幅・高さに合わせます。「切り抜いて拡大縮小」ははみ出た所を切り取ります。「余白を埋めて拡大縮小」は足りない所を端の色で埋めます(埋めた所は描き直されます)。",
+  resize_mode: "「画像1のサイズ」は大きさを変えません。「そのまま拡大縮小」は縦横比を変えて幅・高さに合わせます。「切り抜いて拡大縮小」ははみ出た所を切り取ります。「余白を埋めて拡大縮小」は足りない所を端の色で埋めます(埋めた所は描き直されます)。",
   video_length: "動画のコマ数です。長さ(秒)はフレーム数 ÷ fps です。増やすほど時間とメモリが掛かります。",
   video_fps: "1 秒あたりのコマ数です。変えると再生の速さが変わります。",
   video_shift: "生成の進み方を決める値(ModelSamplingSD3 の shift)です。ComfyUI 公式テンプレートでは、通常 8、Wan2.2 14B の Turbo(4 ステップ LoRA)は 5 です。",
@@ -90,6 +93,8 @@ function injectStyles() {
 #cca-ui details>summary::before{content:"▸";color:var(--muted)}
 #cca-ui details[open]>summary::before{content:"▾"}
 #cca-ui .hint{color:var(--muted);font-size:13px;font-weight:400}
+/* 設定カード内の説明文(マイナスプロンプト・範囲別指定など)は、テーマの太さ指定に関わらず通常の太さにする */
+#cca-ui details.card :is(div.hint,div.ibox){font-weight:400 !important}
 .ib{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0!important;border-radius:999px!important;
   font-size:13px!important;line-height:1;background:transparent!important;color:#9fb0c2!important;border:1px solid #4a5566!important;cursor:pointer;flex:0 0 auto}
 .ib:hover,.ib.on{color:#fff!important;border-color:#3db4a6!important}
@@ -104,13 +109,16 @@ function injectStyles() {
 .inl-msg.info{background:#1d2f2c;border:1px solid #3db4a6;color:#d2f2ee}
 #cca-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:1005;display:flex;flex-direction:column;gap:8px;
   width:min(720px,calc(100vw - 32px));pointer-events:none;font:14px/1.5 system-ui,"Segoe UI","Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif}
-#cca-toast .t{pointer-events:none;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;box-shadow:0 8px 24px #000a;
+#cca-toast .t{pointer-events:auto;user-select:text;cursor:auto;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;box-shadow:0 8px 24px #000a;
   white-space:pre-wrap;word-break:break-word;color:#f1f3f5}
 #cca-toast .t.error{background:#3a1d1d;border:1px solid #e06c6c}
 #cca-toast .t.info{background:#1d2f2c;border:1px solid #3db4a6}
 #cca-toast .t span{flex:1}
 #cca-toast .t button{background:transparent;border:none;color:#f1f3f5;font-size:16px;cursor:pointer;padding:0 4px}
 #cca-toast .t button{pointer-events:auto}
+#cca-toast .t a{color:#8fd8ff;text-decoration:underline}
+#cca-toast .t .tp{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0}
+#cca-toast .t .tp button.tb{border:1px solid #ffffff55;border-radius:6px;font-size:12px;padding:1px 8px;color:#f1f3f5}
 /* 知らせの文字は下の画面の操作をじゃましない(押せるのは × と 📂 だけ)。編集の画面では、上のボタンの並びより下に出す */
 body:has(#cca-imged.open) #cca-toast,body:has(#cca-vedit.open) #cca-toast,body:has(#cca-comp.open) #cca-toast{top:78px}
 #cca-toast .t button.tf{font-size:13px;border:1px solid #3db4a6;border-radius:6px;padding:2px 8px;white-space:nowrap;align-self:center}
@@ -303,7 +311,7 @@ ${METER_CSS}
 #cca-ui .info .txt{white-space:pre-wrap;word-break:break-word;background:#0e1115;border:1px solid var(--line);border-radius:6px;padding:6px 8px}
 #cca-ui .info .meta{display:flex;flex-wrap:wrap;gap:4px 14px}
 #cca-ui .viewer .live{position:relative}
-#cca-ui .viewer .tag{position:absolute;left:8px;top:8px;background:#000a;color:#fff;font-size:12px;padding:2px 8px;border-radius:4px}
+#cca-ui .viewer .live .tag{position:absolute;left:8px;top:8px;background:var(--card,rgba(0,0,0,.7)) !important;color:var(--text,#fff) !important;border:1px solid rgba(0,0,0,.35);font-size:12px;line-height:1.5;padding:2px 8px;border-radius:4px;font-variant-numeric:tabular-nums}
 #cca-pop{position:fixed;z-index:1002;background:#1a1e25;border:1px solid #3db4a6;border-radius:8px;box-shadow:0 10px 30px #000c;display:none;flex-direction:column;
   font:13px system-ui,"Segoe UI","Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:#e4e7eb;overflow:hidden}
 #cca-pop.open{display:flex}
@@ -341,6 +349,55 @@ function rangeField(name, min, max, step) {
   return field(name, `<div class="rng"><input type="range" data-range="${name}" min="${min}" max="${max}" step="${step}">${num(name, step)}</div>`);
 }
 
+// ---- おすすめ設定(マイナスプロンプトと範囲別指定は、それぞれ別に「おすすめ / 自分の設定」を持つ)
+const ADV_PRESET_REC = "おすすめ", ADV_PRESET_CUSTOM = "自分の設定";
+const ADV_KEYS = {
+  negw: ["negw_method", "negw_strength", "negw_turbo_gain"],
+  regional: ["regional_common", "regional_switch", "regional_feather", "regional_margin"],
+};
+const advKeysOf = (g) => CCA.SPEC?.adv_keys?.[g] || ADV_KEYS[g];
+const advRead = (g, mt) => { try { return JSON.parse(localStorage.getItem(`cca_adv_${g}_${mt}`) || "null"); } catch { return null; } };
+const advWrite = (g, mt, o) => { try { localStorage.setItem(`cca_adv_${g}_${mt}`, JSON.stringify(o)); } catch { /* 保存できなくても動く */ } };
+// 履歴・PNGinfo から値を戻したあと: 値がそのモデルのおすすめと同じなら「おすすめ」、違えば「自分の設定」にして保存する
+async function advCommit() {
+  const n = node(), mt = n && W(n, "model_type")?.value, rec = CCA.SPEC?.adv_presets?.[mt];
+  if (!n || !mt || !rec) return;
+  n._ccaAdvBusy = true;
+  try {
+    for (const g of Object.keys(ADV_KEYS)) {
+      const cur = advValues(n, g), same = Object.entries(rec[g] || {}).every(([k, v]) => cur[k] === v);
+      if (!same) advWrite(g, mt, cur);
+      const want = same ? ADV_PRESET_REC : ADV_PRESET_CUSTOM;
+      if (W(n, `${g}_preset`)?.value !== want) await setW(`${g}_preset`, want);
+    }
+  } finally { n._ccaAdvBusy = false; }
+}
+const advValues = (n, g) => Object.fromEntries(advKeysOf(g).map((k) => [k, W(n, k)?.value]));
+async function advApply(n, g, vals, preset) {
+  n._ccaAdvBusy = true;
+  try {
+    for (const [k, v] of Object.entries(vals || {})) if (v !== undefined && W(n, k)) await setW(k, v);
+    await setW(`${g}_preset`, preset);
+  } finally { n._ccaAdvBusy = false; }
+}
+// モデルの種別が変わったとき: 保存した「自分の設定」があればそれ、無ければそのモデルのおすすめを選ぶ(初回は、おすすめが自動で選ばれる)
+async function syncAdv(n) {
+  const mt = W(n, "model_type")?.value, recAll = CCA.SPEC?.adv_presets?.[mt];
+  if (!recAll || n._ccaAdvBusy || n._ccaAdvModel === mt) return;
+  const first = n._ccaAdvModel === undefined;
+  n._ccaAdvModel = mt;
+  for (const g of Object.keys(ADV_KEYS)) {
+    if (!recAll[g]) continue;
+    if (first) {
+      if (W(n, `${g}_preset`)?.value === ADV_PRESET_CUSTOM) advWrite(g, mt, advValues(n, g));
+      else await advApply(n, g, recAll[g], ADV_PRESET_REC);
+    } else {
+      const saved = advRead(g, mt);
+      await advApply(n, g, saved || recAll[g], saved ? ADV_PRESET_CUSTOM : ADV_PRESET_REC);
+    }
+  }
+}
+
 function build() {
   ensureGuideCss();
   injectStyles();
@@ -360,6 +417,7 @@ function build() {
     <button id="cca-guide-open" title="今のモデル種別の使い方を表示">? 使い方</button>
     <span class="secbar" id="cca-secbar"></span>
     <button id="cca-setio-open" class="gear" title="設定(自動で表示・言語・テーマカラー・途中経過の表示・設定の書き出し / 読み込み)">設定</button>
+    <button id="cca-pnginfo-open" title="画像(PNG・JPEG・WebP)に入っているプロンプト・設定などを読み取る(コピー・生成ページへの反映)">PNGinfo</button>
     <button id="cca-vedit-open" title="動画をつなげる・切り取る・文字や画像や動画を重ねる">🎬 動画編集</button>
     <button id="cca-imgedit-open" title="画像を開いて編集する(背景を透明にする・オブジェクト除去)">✏ 画像編集</button>
     <button id="cca-close" title="ノードのグラフに戻る">グラフを表示 ✕</button>
@@ -387,7 +445,7 @@ function build() {
         </div>
         <div class="hint hide" id="cca-slots-more" style="margin-top:6px"></div>
         <div style="margin-top:10px;max-width:320px">${field("mid_frame_pos", num("mid_frame_pos", 1, 'min="0" max="100"'))}</div>
-        <div class="row" style="margin-top:10px"><button id="cca-comp-open">🧩 画像を合成する(切り抜いて重ねる)</button></div>
+        <div class="row" style="margin-top:10px"><button id="cca-comp-open">🧩 画像を合成する(背景を塗りつぶす)</button></div>
         <div class="editinfo hide" id="cca-editinfo"></div>
       </section>
 
@@ -404,11 +462,6 @@ function build() {
           <div class="row" style="gap:6px"><b>🔊 音も一緒に作ります</b>${ib("audio")}
             <span class="sp"></span><button id="cca-audio-ex" title="音の書き方の例をプロンプトの最後に入れる">例を入れる</button></div>
           ${ibox("audio", '<div id="cca-audio-text"></div>')}
-        </div>
-        <div class="layoutrow hide" id="cca-layout-row">
-          <div class="row" style="gap:6px"><button id="cca-layout-open">▭ 枠で配置を指定する</button>${ib("layout")}
-            <span class="hint grow" id="cca-layout-sum">枠はまだありません</span><button id="cca-layout-clear" class="hide">枠を外す</button></div>
-          ${ibox("layout", '<div id="cca-layout-text"></div>')}
         </div>
         <div class="row wordbar" style="margin-top:6px">
           <button class="fold" id="cca-words-btn" aria-expanded="false" title="よく使う言葉の一覧を開く / 閉じる(押すとプロンプトのカーソルの位置に入ります)">💬 サンプルワード</button>
@@ -468,7 +521,33 @@ ${wildcardHtml()}
         </div>
       </details>
 
-${tileHtml(ib, ibox)}
+<details class="card" id="cca-sec-neg" data-sec="neg" data-remember>
+        <summary>マイナスプロンプト<span> (beta)</span>${ib("neg")}</summary>${ibox("neg", "プロンプトの中に (red:-1.0) のように「単語:-数字」と書くと、その要素を絵から外そうとします。ネガティブプロンプトとは別に、プロンプトの中だけで指定できます。数字と「打ち消しの強さ」が大きいほど強く外します。")}
+        <label class="row" style="margin-bottom:8px" data-field="negw_enable"><input type="checkbox" data-w="negw_enable"> <b>マイナスプロンプトを使う</b></label>
+        ${field("negw_preset", sel("negw_preset"))}
+        <div class="hint" style="margin:4px 0 8px">「おすすめ」は、このモデルの標準の処理方法と数値です。下の項目を変えると「自分の設定」になり、モデルごとに保存されます(書き出し・生成情報にも入ります)。「おすすめ」を選ぶと、このモデルのおすすめに戻ります。</div>
+        <div class="grid">${field("negw_method", sel("negw_method"))}${rangeField("negw_strength", 0, 3, 0.05)}${rangeField("negw_turbo_gain", 0, 10, 0.1)}</div>
+        <div class="hint" style="margin:6px 0 0">処理方法の「UNet 系」は、SD1.5・SDXL・Illustrious(「チェックポイント」で読み込む、従来の方式のモデル)のことです。「拡散モデル (UNet)」で読み込む MOSS・Qwen Image・FLUX.2 Klein・Wan2.2 などは UNet 系ではなく、どれを選んでも「予測の差を引く」で処理します。</div>
+      </details>
+
+      <details class="card" id="cca-sec-reg" data-sec="reg" data-remember>
+        <summary>範囲別指定${ib("reg")}</summary>${ibox("reg", "画像に範囲(四角・円・三角)を枠で描き、範囲ごとに別のプロンプトを使います。通常のプロンプトは、どの範囲にも入っていない部分を埋めます。")}
+        <label class="row" style="margin-bottom:8px" data-field="regional_enable"><input type="checkbox" data-w="regional_enable"> <b>範囲別指定を使う</b></label>
+        <div class="layoutrow hide" id="cca-layout-row">
+          <div class="row" style="gap:6px"><button id="cca-layout-open">▭ 枠で配置を指定する</button>${ib("layout")}
+            <span class="hint grow" id="cca-layout-sum">枠はまだありません</span><button id="cca-layout-clear" class="hide">枠を外す</button></div>
+          ${ibox("layout", '<div id="cca-layout-text"></div>')}
+          <label class="row" style="margin:6px 0" data-field="layout_native"><input type="checkbox" data-w="layout_native"> <span>枠を配置の指定として使う(MOSS / FLUX.3 専用の書き方。範囲別指定を使うときは、チェックが無くても使います)</span></label>
+        </div>
+        <div class="hint" style="margin:4px 0 8px">上の「▭ 枠で配置を指定する」で範囲を描き、範囲ごとに「そこに描きたいもの」を書いてください(範囲の形は四角・円・三角から選べます)。通常のプロンプトは、枠で指定していない部分を埋めます。何も書いていない範囲は使われません。「範囲別指定を使う」のチェックを外すと、枠があっても領域としては使われません。</div>
+        ${field("regional_preset", sel("regional_preset"))}
+        <div class="hint" style="margin:4px 0 8px">「おすすめ」は、このモデルの標準の処理方法と数値です。下の項目を変えると「自分の設定」になり、モデルごとに保存されます(書き出し・生成情報にも入ります)。「おすすめ」を選ぶと、このモデルのおすすめに戻ります。</div>
+        <label class="row" style="margin-bottom:8px" data-field="regional_common"><input type="checkbox" data-w="regional_common"> <span>各場所のプロンプトの前に、メインのプロンプトを付ける</span></label>
+        <div class="grid">${rangeField("regional_switch", 0, 100, 1)}${rangeField("regional_feather", 0.5, 32, 0.5)}${field("regional_margin", num("regional_margin", 1, 'min="0" max="64"'))}</div>
+        <div class="hint" style="margin:4px 0 8px">枠の中に収める強さ: 100 にすると、領域ごとに最後まで枠の中だけを見て描くので、物が枠からはみ出しません(初期値)。小さくすると、途中から画像全体を見て仕上げるので、枠の境目が自然になりますが、物が枠からはみ出しやすくなります。0 は最初から画像全体を見て描きます。物が枠からはみ出すときは数字を上げ、境目が不自然なときは数字を下げてください。</div>
+      </details>
+
+      ${tileHtml(ib, ibox)}
 
       <section class="card" id="cca-sec-size" data-sec="size">
         <h3>サイズ</h3>
@@ -594,6 +673,7 @@ function slotHtml(name, n) {
   return `<div class="slot" data-field="${name}" data-slot="${name}">
     <div class="st"><span data-iname="${name}">入力画像${n}</span><small data-role="${name}"></small></div>
     <div class="drop" data-drop="${name}"><span>クリックして選ぶ<br>またはここにドロップ</span></div>
+    ${name === "image" ? `<div class="hint hide" id="cca-noalpha" style="margin:4px 0;font-size:11px;line-height:1.4;opacity:.65"></div>` : ""}
     <div class="row">
       <select data-w="${name}" class="grow" title="input フォルダの画像から選ぶ"></select><button data-relist title="保存先(output)と input のファイルの一覧を読み直して、最新にします">更新</button>
     </div>
@@ -686,6 +766,30 @@ function bind() {
     });
   }
 
+  // おすすめ設定: 項目を変えたら「自分の設定」にして、モデルごとに保存する(値を入れる処理のあとに動かす)
+  const advAll = Object.values(ADV_KEYS).flat();
+  const advChanged = async (g) => {
+    const n = node(); const mt = n && W(n, "model_type")?.value;
+    if (!n || !mt || n._ccaAdvBusy) return;
+    advWrite(g, mt, advValues(n, g));
+    if (W(n, `${g}_preset`)?.value !== ADV_PRESET_CUSTOM) await setW(`${g}_preset`, ADV_PRESET_CUSTOM);
+  };
+  for (const el of $$("[data-w], [data-range]")) {
+    const name = el.dataset.w || el.dataset.range;
+    const pg = Object.keys(ADV_KEYS).find((g) => name === `${g}_preset`);
+    if (pg) {
+      el.addEventListener("change", async () => {
+        const n = node(); const mt = n && W(n, "model_type")?.value;
+        if (!n || !mt) return;
+        if (el.value === ADV_PRESET_REC) await advApply(n, pg, CCA.SPEC.adv_presets?.[mt]?.[pg], ADV_PRESET_REC);
+        else { const s = advRead(pg, mt); if (s) await advApply(n, pg, s, ADV_PRESET_CUSTOM); else await advChanged(pg); }
+      });
+    } else if (advAll.includes(name)) {
+      const g = Object.keys(ADV_KEYS).find((x) => ADV_KEYS[x].includes(name));
+      el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", () => advChanged(g));
+    }
+  }
+
   $("#cca-refresh").onclick = async () => {
     const b = $("#cca-refresh");
     b.disabled = true;
@@ -764,6 +868,7 @@ function bind() {
 
   // 画像の合成・画像からプロンプト
   $("#cca-comp-open").onclick = () => openComp();
+  $("#cca-pnginfo-open").onclick = () => openPngInfoUi();
   // プロンプト・ネガティブのカーソルの位置を覚える(画像の呼び名・サンプルワード・ワイルドカードをそこに入れる)
   for (const ta of $$('textarea[data-w="positive"], textarea[data-w="negative"]')) {
     for (const ev of ["keyup", "mouseup", "select", "blur", "input"]) ta.addEventListener(ev, () => rememberCaret(ta));
@@ -789,7 +894,7 @@ function bind() {
   rtop(lsGet(LS_RTOP, false));
   rbtn.onclick = () => { const on = !root.classList.contains("rtop"); lsSet(LS_RTOP, on); rtop(on); }; // 幅が狭くて 1 列のときの並び
   const prefs = $("#cca-prefs");
-  $("#cca-setio-open").onclick = () => { prefs.hidden = false; openSettingsIO(prefs); }; // 自動で表示・言語・テーマカラーは設定の中に
+  $("#cca-setio-open").onclick = () => { prefs.hidden = false; openSettingsIO(prefs, mediaDirsPanel()); }; // 自動で表示・言語・テーマカラーは設定の中に
   // 生成の履歴(結果の小さな絵の列): ホイールで横に動かす
   $("#cca-hist").addEventListener("wheel", (e) => {
     const el = e.currentTarget;
@@ -903,7 +1008,7 @@ function bind() {
   $("#cca-go").onclick = () => generate();
   $("#cca-stop").onclick = () => { if (audioJob) audioJob.cancel = true; else api.interrupt?.() ?? api.fetchApi("/interrupt", { method: "POST" }); };
   $("#cca-send").onclick = () => sendToInput();
-  $("#cca-open").onclick = () => current && window.open(current.url, "_blank");
+  $("#cca-open").onclick = () => current && window.open(current.pdfUrl || current.url, "_blank");
   $("#cca-zoom-btn").onclick = () => zoomCurrent();
   $("#cca-folder").onclick = (e) => openOutputFolder(e.currentTarget);
   $("#cca-gallery").onclick = () => openGallery(history, {
@@ -1015,12 +1120,31 @@ async function uploadTo(name, file) {
 }
 
 // ---------------------------------------------------------------- refresh
+// 設定の「画像・動画を読み込む場所」で追加したフォルダのファイル: cca_links/<フォルダ名>_<6桁>/<ファイル名>[ [input]]
+const LINK_RE = /^cca_links\/(.+)_[0-9a-f]{6}\/(.+?)( \[input\])?$/;
+// 追加フォルダごとのグループ(optgroup)にする。mk(v) は 1 つ分の <option>
+function linkGroups(values, mk) {
+  const groups = new Map();
+  for (const v of values) {
+    const g = LINK_RE.exec(v)?.[1] || "";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(v);
+  }
+  return [...groups].map(([g, vs]) => `<optgroup label="${esc(`${T("追加フォルダ")}: ${g}`)}">${vs.map(mk).join("")}</optgroup>`).join("");
+}
 function fillSelect(el, values, value, labelFn) {
   const list = Array.isArray(values) ? [...values] : [];
   const missing = value !== undefined && value !== null && value !== "" && !list.includes(value);
-  const opts = (missing ? [value, ...list] : list)
-    .map((v) => `<option value="${esc(v)}">${esc(labelFn ? labelFn(v) : v)}${missing && v === value ? "(見つかりません)" : ""}</option>`);
-  const html = opts.join("");
+  const all = missing ? [value, ...list] : list;
+  const mk = (v) => `<option value="${esc(v)}">${esc(LINK_RE.test(v) ? v.replace(LINK_RE, "$2") : labelFn ? labelFn(v) : v)}${missing && v === value ? "(見つかりません)" : ""}</option>`;
+  const linked = all.filter((v) => LINK_RE.test(v));
+  let html;
+  if (!linked.length) html = all.map(mk).join("");
+  else { // 追加フォルダがあるときだけ、どこの場所か分かるようにグループに分ける
+    const plain = all.filter((v) => !LINK_RE.test(v));
+    const head = plain.filter((v) => v === NONE || (missing && v === value)), std = plain.filter((v) => !head.includes(v));
+    html = head.map(mk).join("") + (std.length ? `<optgroup label="${esc(T("標準の場所"))}">${std.map(mk).join("")}</optgroup>` : "") + linkGroups(linked, mk);
+  }
   if (el._ccaHtml !== html) { el.innerHTML = html; el._ccaHtml = html; }
   el.value = value ?? "";
 }
@@ -1398,6 +1522,21 @@ function refreshImageNames(n, vis) {
 }
 
 // ---------------------------------------------------------------- 画像の合成
+function openPngInfoUi() {
+  const n = node();
+  if (!n) return;
+  guardComfyKeys();
+  openPngInfo({
+    get: (k) => W(n, k)?.value,
+    set: (k, v) => setW(k, v),
+    advCommit: () => advCommit(),
+    applyTile: (o) => applyTileSettings(o),
+    options: (k) => [...(W(n, k)?.options?.values || [])],
+    modelWidget: () => (CCA.SPEC.types_info[W(n, "model_type").value]?.loader === "ckpt" ? "ckpt_name" : "unet_name"),
+    notify,
+  });
+}
+
 function openComp() {
   const n = node();
   if (!n) return;
@@ -1434,7 +1573,7 @@ function openImageEditorFor(value) {
   const n = node();
   openImageEditor({
     value,
-    images: () => [...new Set([...(n ? W(n, "image")?.options?.values || [] : [])].filter((v) => v && v !== NONE))],
+    images: () => [...new Set([...galleryValues("image"), ...(n ? W(n, "image")?.options?.values || [] : [])].filter((v) => v && v !== NONE))],
     imageUrl: (v) => imageUrl(v),
     upload: (file) => uploadImage(file, ""),
     notify,
@@ -1472,10 +1611,16 @@ function openImageEditorFor(value) {
 }
 
 // ---------------------------------------------------------------- 動画編集(第15版)
+// 生成履歴(ギャラリー)のファイル。設定の「生成履歴(ギャラリー)のファイルを一番上に足す」がオンのとき、画像・動画の挿入の一覧の先頭に出す
+let histTopOpt = true;
+const refreshHistOpt = () => mediaDirs().then((d) => { histTopOpt = !!(d.options || {}).history_top; }).catch(() => {});
+setTimeout(refreshHistOpt, 1500);
+const galleryValues = (kind) => (!histTopOpt ? [] : [...new Set(history.filter((h) => h.value && !h.pdf && (kind === "video" ? h.isVideo : kind === "audio" ? h.isAudio : !h.isVideo && !h.isAudio)).map((h) => h.value))]);
 function openVideoEditorFor(value) {
   guardComfyKeys(); // 開いている間は ComfyUI 本体の「元に戻す」を動かさない
   openVideoEditor({
     value,
+    galleryFiles: galleryValues,
     upload: (file) => uploadImage(file, ""),
     notify,
     // 生成パネルの「見つかりません」と同じ箱(フォントの案内に使う)
@@ -1609,7 +1754,7 @@ function refreshSize(n, vis) {
   for (const b of $$("[data-size]")) b.classList.toggle("on", (W(n, "size_mode")?.value || "サイズ指定") === b.dataset.size);
   $("#cca-scale-box").classList.toggle("hide", !scaleOn);
   const hasResize = vis.has("resize_mode");
-  const resizeOn = hasResize && !scaleOn && (W(n, "resize_mode")?.value || "今まで通り") !== "今まで通り";
+  const resizeOn = hasResize && !scaleOn && (W(n, "resize_mode")?.value || "画像1のサイズ") !== "画像1のサイズ";
   $("#cca-resize-box").classList.toggle("hide", !hasResize || scaleOn);
   root.querySelector('[data-group="size"]').classList.toggle("hide", !vis.has("width") || scaleOn || (hasResize && !resizeOn));
   root.querySelector('[data-field="auto_image_size"]')?.classList.toggle("hide", !vis.has("auto_image_size") || scaleOn);
@@ -1780,9 +1925,9 @@ function maskPreview(n, value) {
 }
 
 // フォルダを開く(実体のパス)。結果はボタンのすぐ下と画面上部に出す
-async function openWithMessage(btn, path) {
+async function openWithMessage(btn, path, keep = false) {
   try {
-    const r = await openFolder(path);
+    const r = await openFolder(path, keep);
     notify(`エクスプローラーで開くよう指示しました: ${r.path || path}\n画面に出ないときは、タスクバーのエクスプローラーを確認するか、「📋 パスをコピー」でコピーしてエクスプローラーのアドレス欄に貼り付けてください。`, "info", btn, { toast: false });
   } catch (e) {
     notify(`フォルダを開けませんでした: ${e.message}`, "error", btn);
@@ -1840,11 +1985,21 @@ function openDirs() {
       <div id="cca-dirs-list" style="display:flex;flex-direction:column;gap:8px"></div>
       <details class="add"><summary>フォルダを追加する</summary>
         <div class="row"><select id="cca-dirs-kind"></select><input id="cca-dirs-path" placeholder="フォルダのパス(例: D:\\AI\\models\\loras)">
-        <button class="pri" id="cca-dirs-add">追加</button></div></details></div>`;
+        <button id="cca-dirs-browse" title="フォルダを選ぶ画面を開きます(ComfyUI を動かしているパソコンで開きます)">📁 参照</button><button class="pri" id="cca-dirs-add">追加</button></div></details></div>`;
     document.body.appendChild(m);
     bindInfo(m);
     m.addEventListener("keydown", (e) => e.stopPropagation());
     m.querySelector("#cca-dirs-close").onclick = () => m.classList.remove("open");
+    let downOutside = false; // 外(暗い所)をクリックしたら閉じる。中から外へドラッグして離したときは閉じない
+    m.addEventListener("mousedown", (e) => { downOutside = e.target === m; });
+    m.addEventListener("click", (e) => { if (e.target === m && downOutside) m.classList.remove("open"); });
+    m.querySelector("#cca-dirs-browse").onclick = async (e) => {
+      const inp = m.querySelector("#cca-dirs-path");
+      e.target.disabled = true;
+      try { const r = await pickFolder(inp.value, T("追加するフォルダを選んでください")); if (r.path) inp.value = r.path; }
+      catch (err) { notify(`フォルダを選べませんでした: ${err.message}`, "error", e.target); }
+      finally { e.target.disabled = false; }
+    };
     m.querySelector("#cca-dirs-add").onclick = async (e) => {
       const kind = m.querySelector("#cca-dirs-kind").value;
       const path = m.querySelector("#cca-dirs-path").value;
@@ -1860,6 +2015,7 @@ function openDirs() {
   renderDirs(m);
 }
 async function afterDirsChange(m) {
+  mediaCache = null; // 動画の選択肢も読み直す
   await renderDirs(m);
   try { await refreshChoices(); helpCache.clear(); refresh(); } catch (e) { console.warn(e); }
 }
@@ -1888,7 +2044,7 @@ async function renderDirs(m) {
     <div class="k"><div class="kh"><b>${esc(v.label)}</b>${v.help ? ib(`k_${k}`) : ""}</div>${v.help ? ibox(`k_${k}`, esc(v.help)) : ""}
     ${v.paths.length ? v.paths.map((p, i) => `<div class="p"><code>${esc(p.path)}</code>
       <span class="cnt">${p.count === undefined ? "" : p.more ? `${p.count} 個以上` : `${p.count} 個`}</span>
-      <button data-open="${k}|${i}">📂 開く</button><button data-copy="${esc(p.path)}">📋 パスをコピー</button>${p.custom ? `<button data-del="${k}|${i}">外す</button>` : ""}</div>`).join("")
+      <button data-open="${k}|${i}">📂 開く</button><button data-copy="${esc(p.path)}">📋 パスをコピー</button>${p.custom ? `<button data-del="${k}|${i}">外す</button>` : ""}</div>${dirSub(p)}`).join("")
     : '<div class="p"><span class="tag">フォルダがありません</span></div>'}</div>`).join("");
   for (const b of list.querySelectorAll("[data-open]")) {
     const [k, i] = b.dataset.open.split("|");
@@ -1905,6 +2061,72 @@ async function renderDirs(m) {
   }
 }
 
+// ---- 画像・動画を読み込む場所(設定の中。モデルフォルダとは別)
+let mediaBox = null;
+function mediaDirsPanel() {
+  if (mediaBox) return mediaBox;
+  const m = mediaBox = document.createElement("div");
+  m.id = "cca-mediadirs";
+  m.innerHTML = `<style>#cca-mediadirs,#cca-mediadirs [data-list]{display:contents}#cca-mediadirs h4{margin:12px 0 4px}#cca-mediadirs .p{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
+#cca-mediadirs label.ck{display:flex !important;flex-direction:row;justify-content:flex-start;align-items:center;gap:8px;margin:4px 0;width:auto;text-align:left}#cca-mediadirs label.ck input{width:auto !important;flex:0 0 auto;margin:0}#cca-mediadirs code{word-break:break-all}#cca-mediadirs .cnt{color:#959eab;font-size:12px}
+#cca-mediadirs input:not([type=checkbox]){flex:1 1 12em;min-width:10em;background:#12151a;color:#e4e7eb;border:1px solid #303744;border-radius:6px;padding:4px 8px}
+#cca-mediadirs select{flex:0 0 auto;min-width:11em;max-width:100%;background:#12151a;color:#e4e7eb;border:1px solid #303744;border-radius:6px;padding:4px 8px}</style>
+    <div class="sec"><label class="ck"><input type="checkbox" data-opt="history_top"> ${esc(T("生成履歴(ギャラリー)のファイルを一番上に足す"))}</label>
+      <label class="ck"><input type="checkbox" data-opt="recursive"> ${esc(T("サブフォルダを検索対象に入れる"))}</label>
+      <div class="note">${esc(T("サブフォルダを含めた場合などで大量のファイルを並べると重くなる可能性があります。"))}</div></div>
+    <div data-list></div>
+    <details class="sec"><summary>${esc(T("フォルダを追加する"))}</summary><div class="row" style="margin-top:6px"><select data-kind></select>
+      <input data-path placeholder="${esc(T("フォルダのパス(例: D:\\AI\\images)"))}"><button data-browse title="${esc(T("フォルダを選ぶ画面を開きます(ComfyUI を動かしているパソコンで開きます)"))}">📁 ${esc(T("参照"))}</button>
+      <button class="pri" data-add>${esc(T("追加"))}</button></div></details>`;
+  m.addEventListener("keydown", (e) => e.stopPropagation());
+  const after = async () => { // 画像・動画の選択肢も読み直す
+    mediaCache = null;
+    await m._render();
+    try { await refreshChoices(); helpCache.clear(); refresh(); } catch (e) { console.warn(e); }
+  };
+  m._render = async () => {
+    const md = await mediaDirs();
+    histTopOpt = !!(md.options || {}).history_top;
+    const info = md.kinds || {};
+    for (const c of m.querySelectorAll("[data-opt]")) {
+      c.checked = !!(md.options || {})[c.dataset.opt];
+      c.onchange = async () => { try { await mediaDirs("option", c.dataset.opt, c.checked); await after(); } catch (e) { notify(e.message, "error", c); } };
+    }
+    const sel = m.querySelector("[data-kind]");
+    if (!sel.options.length) sel.innerHTML = Object.entries(info).map(([k, v]) => `<option value="${k}">${esc(T(v.label))}</option>`).join("");
+    const list = m.querySelector("[data-list]");
+    list.innerHTML = Object.entries(info).map(([k, v]) => `<div class="sec"><h4>${esc(T(v.label))} <span title="${esc(T(v.help))}">ⓘ</span></h4><div class="note" style="margin:0 0 4px">${esc(T(v.help))}</div>`
+      + v.paths.map((p, i) => `<div class="p"><code>${esc(p.path)}</code><span class="cnt">${p.count} ${esc(T("個"))}</span>
+        <button data-open="${k}|${i}">📂 ${esc(T("開く"))}</button><button data-copy="${esc(p.path)}">📋 ${esc(T("パスをコピー"))}</button>${p.custom ? `<button data-del="${k}|${i}">${esc(T("外す"))}</button>` : ""}</div>${dirSub(p)}`).join("") + "</div>").join("");
+    for (const b of list.querySelectorAll("[data-open]")) { const [k, i] = b.dataset.open.split("|"); b.onclick = () => openWithMessage(b, info[k].paths[Number(i)].path, true); }
+    for (const b of list.querySelectorAll("[data-copy]")) b.onclick = () => copyPath(b, b.dataset.copy);
+    for (const b of list.querySelectorAll("[data-del]")) {
+      const [k, i] = b.dataset.del.split("|");
+      b.onclick = async () => {
+        try { await mediaDirs("remove", k, info[k].paths[Number(i)].registered || info[k].paths[Number(i)].path); await after(); }
+        catch (e) { notify(`外せませんでした: ${e.message}`, "error", b); }
+      };
+    }
+  };
+  m.querySelector("[data-browse]").onclick = async (e) => {
+    const inp = m.querySelector("[data-path]");
+    e.target.disabled = true;
+    try { const r = await pickFolder(inp.value, T("追加するフォルダを選んでください")); if (r.path) inp.value = r.path; }
+    catch (err) { notify(`フォルダを選べませんでした: ${err.message}`, "error", e.target); }
+    finally { e.target.disabled = false; }
+  };
+  m.querySelector("[data-add]").onclick = async (e) => {
+    const inp = m.querySelector("[data-path]");
+    try {
+      const r = await mediaDirs("add", m.querySelector("[data-kind]").value, inp.value);
+      inp.value = "";
+      await after();
+      notify(`追加しました: ${r.path}`, "info", e.target, { toast: false });
+    } catch (err) { notify(`追加できませんでした: ${err.message}`, "error", e.target); }
+  };
+  return m;
+}
+
 // 表示項目・選択肢も含めて全部更新
 function refresh() {
   if (!root) return;
@@ -1912,8 +2134,10 @@ function refresh() {
   $("#cca-body").classList.toggle("hide", !n);
   $("#cca-nopanel").classList.toggle("hide", !!n);
   if (!n || !CCA.SPEC) return;
+  { const rw = W(n, "resize_mode"); if (rw && rw.value === "今まで通り") rw.value = "画像1のサイズ"; } // 以前の保存・設定の値を新しい名前にする
   const vis = visibleSet(n);
   const key = currentKey(n);
+  syncAdv(n);
   fillModelTypes(n);
   fillTasks(n);
   // 第42版: 声・音楽の種別は、欄の名前を種別・タスクに合わせる(LatentSync の「リップシンクの強さ」など)
@@ -1960,6 +2184,8 @@ function refresh() {
       : `プロンプトでは画像1を「${names[0]}」と書きます。`;
   }
   $("#cca-sec-hires").classList.toggle("hide", !vis.has("hires_enable"));
+  $("#cca-sec-neg").classList.toggle("hide", !vis.has("negw_enable"));
+  $("#cca-sec-reg").classList.toggle("hide", !vis.has("regional_enable"));
   // モデル・LoRA の ⓘ: この種別・タスクの標準的なファイル名
   const std = CCA.SPEC.standard_files?.[key] || {};
   for (const k of MODEL_INFO_KEYS) {
@@ -2001,6 +2227,11 @@ function refresh() {
   refreshTile();
   $("#cca-caption-row").classList.toggle("hide", !vis.has("image"));
   $("#cca-comp-open").closest(".row").classList.toggle("hide", !vis.has("image"));
+  {
+    const mt = String(W(n, "model_type").value || ""), na = $("#cca-noalpha");
+    na.textContent = T(/^(Qwen|FLUX\.3)/i.test(mt) ? "⚠透過画像で上手くいかない場合、「画像を合成」から背景を塗りつぶして試してください。" : "⚠透過画像は使えないモデルがあります。下の「画像を合成」から背景を塗りつぶして試してください。");
+    na.classList.toggle("hide", !vis.has("image") || ALPHA_OK.has(mt)); // 透過 PNG の注意書き(常時表示)
+  }
   root.querySelector("[data-mask]")?.classList.toggle("hide", !CCA.SPEC.mask[key]);
   const sizes = CCA.SPEC.size_presets.map(([w, h]) => `<option value="${w}x${h}">${w} × ${h}</option>`).join("");
   $("#cca-size").innerHTML = `<option value="">選ぶ…</option>${sizes}`;
@@ -2035,6 +2266,46 @@ function showError(msg) {
 }
 // お知らせ: 画面上部(固定表示)と、押したボタンのすぐ下。エラーは × で閉じるまで残る、それ以外は 5 秒で消える
 // opt: { toast: false(上に出さない), sticky: true(× を押すまで消さない), file: { filename, subfolder, type }(📂 フォルダを開く を付ける) }
+// お知らせの本文: URL はリンクに、フォルダのパスの行には「開く・パスをコピー」を付ける(文字は選べる)
+function fillToast(span, msg) {
+  const urlRe = /https?:\/\/[^\s<>"'）)」。、]+/g;
+  const pathRe = /^\s+((?:[A-Za-z]:[\\/]|\/)\S.*?)(?:\s+\((.+)\))?\s*$/;
+  for (const line of String(msg).split("\n")) {
+    const d = document.createElement("div");
+    const pm = pathRe.exec(line);
+    if (pm) {
+      d.className = "tp";
+      const path = pm[1], sp = document.createElement("span");
+      sp.textContent = `  ${path}${pm[2] ? `  (${pm[2]})` : ""}`;
+      const ob = document.createElement("button"), cb = document.createElement("button");
+      ob.className = cb.className = "tb"; ob.type = cb.type = "button";
+      ob.textContent = T("📂 開く"); cb.textContent = T("📋 パスをコピー");
+      const flash = (b, t) => { const o = b.dataset.o || b.textContent; b.dataset.o = o; b.textContent = t; setTimeout(() => { b.textContent = o; }, 1500); };
+      ob.onclick = async () => {
+        try {
+          const r = await api.fetchApi("/cca_generator/open_folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || j.ok === false) throw new Error(j.error || r.status);
+          flash(ob, T("✓ 開くよう指示しました"));
+        } catch (e) { flash(ob, `${T("フォルダを開けませんでした")}: ${e.message}`); }
+      };
+      cb.onclick = async () => { try { await navigator.clipboard.writeText(path); flash(cb, T("コピーしました")); } catch { flash(cb, path); } };
+      d.append(sp, ob, cb);
+    } else {
+      if (!line.trim()) d.style.height = "0.6em";
+      let last = 0, m;
+      urlRe.lastIndex = 0;
+      while ((m = urlRe.exec(line))) {
+        if (m.index > last) d.append(line.slice(last, m.index));
+        const a = document.createElement("a");
+        a.href = m[0]; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = m[0];
+        d.append(a); last = m.index + m[0].length;
+      }
+      if (last < line.length) d.append(line.slice(last));
+    }
+    span.append(d);
+  }
+}
 function notify(msg, kind = "error", anchor = null, opt = {}) {
   if (opt.toast !== false) {
     let box = document.getElementById("cca-toast");
@@ -2042,7 +2313,7 @@ function notify(msg, kind = "error", anchor = null, opt = {}) {
     const t = document.createElement("div");
     t.className = `t ${kind}`;
     t.innerHTML = `<span></span>${opt.file ? `<button class="tf" data-tf title="保存したファイルを選んだ状態で、フォルダを開きます">📂 フォルダを開く</button>` : ""}<button data-tx title="閉じる">×</button>`;
-    t.querySelector("span").textContent = msg;
+    fillToast(t.querySelector("span"), msg);
     t.querySelector("[data-tx]").onclick = () => t.remove();
     if (opt.file) t.querySelector("[data-tf]").onclick = (e) => openFileFolder(opt.file, e.currentTarget, t);
     box.appendChild(t);
@@ -2272,7 +2543,7 @@ async function renderAudioOpts(n, force = false) {
   box._sig = sig;
   box._json = json;
   $("#cca-audiogen-note").textContent = T(AUDIO_NOTES[ti.gen === "qwen_tts" || ti.gen === "latentsync" ? task : ti.gen] || "");
-  const opt = (f, v) => `<option value="${esc(v)}" ${String(v) === String(o[f.k] ?? "") ? "selected" : ""}>${esc(f.lab?.[v] ? T(f.lab[v]) : v)}</option>`;
+  const opt = (f, v) => `<option value="${esc(v)}" ${String(v) === String(o[f.k] ?? "") ? "selected" : ""}>${esc(f.lab?.[v] ? T(f.lab[v]) : String(v).replace(LINK_RE, "$2"))}</option>`;
   const control = (f) => {
     const v = o[f.k];
     if (f.t === "check") return `<label class="row"><input type="checkbox" data-ao="${f.k}" ${v ? "checked" : ""}> <span>${esc(T(f.label))}</span></label>`;
@@ -2287,7 +2558,7 @@ async function renderAudioOpts(n, force = false) {
       return `<div class="row" style="gap:6px"><select class="grow" data-ao="${f.k}"><option value="">${esc(T("(選んでください)"))}</option>`
         + `${known ? "" : `<option value="${esc(v)}" selected>${esc(v)}</option>`}`
         + `${gens.length ? `<optgroup label="${esc(T("生成した結果"))}">${gens.map((x) => opt(f, x)).join("")}</optgroup>` : ""}`
-        + `<optgroup label="${esc(T("ファイル(output・input)"))}">${files.map((x) => opt(f, x)).join("")}</optgroup></select>`
+        + `<optgroup label="${esc(T("ファイル(output・input)"))}">${files.filter((x) => !LINK_RE.test(x)).map((x) => opt(f, x)).join("")}</optgroup>${linkGroups(files.filter((x) => LINK_RE.test(x)), (x) => opt(f, x))}</select>`
         + `<button data-aorf title="${esc(T("保存先(output)と input のファイルの一覧を読み直して、最新にします"))}">${esc(T("更新"))}</button>`
         + `<button data-aoup="${f.k}" data-media="${f.media}" title="${esc(T("PC のファイルを入れます(「動画の保存先」のフォルダに入ります)"))}">📂 ${esc(T("ファイルを入れる"))}</button></div>`
         + (url ? (f.media === "audio" ? `<audio controls preload="none" src="${esc(url)}"></audio>` : `<video controls preload="metadata" src="${esc(url)}"></video>`) : "");
@@ -2608,6 +2879,8 @@ function extractInfo(prompt) {
     turbo: g("CCAGenModels", "turbo_lora_name"), edit: g("CCAGenModels", "edit_lora_name"),
     positive: g("CCAGenPrompt", "positive_text") ?? g("CCAGenPrompt", "positive"), negative: g("CCAGenPrompt", "negative"),
     template: byClass.CCAGenPrompt?.wildcard_template || "",
+    layoutRaw: g("CCAGenPrompt", "layout_boxes") || "", negwRaw: g("CCAGenPrompt", "negw_settings") || "", regionalRaw: g("CCAGenPrompt", "regional_settings") || "",
+    negw: (() => { try { return (JSON.parse(g("CCAGenPrompt", "negw_settings") || "{}").terms || []).map(([w, x]) => `${w}:-${x}`).join(", "); } catch { return ""; } })(),
     layout: (() => { const b = parseLayout(g("CCAGenPrompt", "layout_boxes") ?? ""); return b.length ? layoutSummary(b) : ""; })(),
     seed: g("CCAGenSeed", "seed"), steps: g("CCAGenSampling", "steps"), cfg: g("CCAGenSampling", "cfg"),
     sampler: g("CCAGenSampling", "sampler_name"), scheduler: g("CCAGenSampling", "scheduler"),
@@ -2648,17 +2921,30 @@ function renderInfo(entry) {
   const kv = (k, v) => (v === undefined || v === null || v === "" || v === NONE ? "" : `<span><span class="k">${esc(k)}</span>${esc(v)}</span>`);
   box.innerHTML = `
     <div class="meta">${kv("種別", `${i.model_type} / ${task}`)}${kv("モデル", model)}</div>
-    <div class="meta">${kv("Seed", i.seed)}${kv("Steps", i.steps)}${kv("CFG", i.cfg)}${kv("Sampler", `${i.sampler} / ${i.scheduler}`)}${kv("Denoise", i.denoise)}${kv("サイズ", i.size_mode === SIZE_SCALE ? `画像1 × ${i.size_scale}` : i.task === "I2I" && (!i.resize_mode || i.resize_mode === "今まで通り") ? "" : i.width && i.height ? `${i.width}×${i.height}${i.resize_mode && i.resize_mode !== "今まで通り" && i.task === "I2I" ? `(${i.resize_mode})` : ""}` : "")}</div>
+    <div class="meta">${kv("Seed", i.seed)}${kv("Steps", i.steps)}${kv("CFG", i.cfg)}${kv("Sampler", `${i.sampler} / ${i.scheduler}`)}${kv("Denoise", i.denoise)}${kv("サイズ", i.size_mode === SIZE_SCALE ? `画像1 × ${i.size_scale}` : i.task === "I2I" && (!i.resize_mode || ["画像1のサイズ", "今まで通り"].includes(i.resize_mode)) ? "" : i.width && i.height ? `${i.width}×${i.height}${i.resize_mode && !["画像1のサイズ", "今まで通り"].includes(i.resize_mode) && i.task === "I2I" ? `(${i.resize_mode})` : ""}` : "")}</div>
     ${CCA.SPEC.types_info?.[i.model_type]?.kind === "video" ? `<div class="meta">${kv("フレーム数", i.video_length)}${kv("fps", CCA.SPEC.types_info?.[i.model_type]?.base === "MiniMax H3" ? 24 : i.video_fps)}</div>` : ""}
     ${i.loras?.length ? `<div class="meta">${kv("LoRA", i.loras.join(", "))}</div>` : ""}
     <div class="meta">${kv("Turbo LoRA", i.turbo)}${kv("Edit LoRA", i.edit)}${kv("Hires. fix", i.hires)}</div>
-    ${i.layout ? `<div class="meta">${kv("枠", i.layout)}</div>` : ""}
+    ${i.negw ? `<div class="meta">${kv("マイナスプロンプト", i.negw)}</div>` : ""}
+    ${i.layout ? `<div class="meta">${kv("範囲別指定", i.layout)}</div>` : ""}
     <div class="meta">${kv("入力画像", (i.images || [i.image, i.image_2, i.image_3]).filter((x) => x && x !== NONE).join(" / "))}</div>
     <div><span class="k">プロンプト</span></div><div class="txt">${esc(i.positive || "")}</div>
     ${i.negative ? `<div><span class="k">ネガティブ</span></div><div class="txt">${esc(i.negative)}</div>` : ""}
     ${i.template ? `<div><span class="k">ワイルドカードを置き換える前</span></div><div class="txt">${esc(i.template)}</div>` : ""}
     <div class="row"><button data-reuse="prompt">プロンプトを入力欄に戻す</button>${i.template ? '<button data-reuse="template" title="__名前__ の入った、置き換える前の文を入力欄に戻す">置き換える前の文を戻す</button>' : ""}<button data-reuse="seed">このシードを使う</button>
+      ${i.negwRaw ? '<button data-reuse="negw" title="マイナスプロンプトの設定を入力欄に戻す">マイナスプロンプトを戻す</button>' : ""}
+      ${i.layoutRaw ? '<button data-reuse="range" title="範囲(枠とそのプロンプト)と範囲別指定の設定を入力欄に戻す">範囲別指定を戻す</button>' : ""}
       <button data-reuse="copy">プロンプトをコピー</button></div>`;
+  const setAll = async (o) => { for (const [k, v] of Object.entries(o || {})) { if (/_preset$/.test(k)) continue; try { await setW(k, v); } catch { /* 無い項目は飛ばす */ } } };
+  const nb = box.querySelector('[data-reuse="negw"]');
+  if (nb) nb.onclick = async () => {
+    try { await setAll(JSON.parse(i.negwRaw).settings); await advCommit(); } catch { /* 読めない設定は戻さない */ }
+  };
+  const rb = box.querySelector('[data-reuse="range"]');
+  if (rb) rb.onclick = async () => {
+    await setW("layout_boxes", i.layoutRaw);
+    try { await setAll(JSON.parse(i.regionalRaw || "{}")); await advCommit(); } catch { /* 読めない設定は戻さない */ }
+  };
   box.querySelector('[data-reuse="prompt"]').onclick = async () => {
     await setW("positive", i.positive || "");
     await setW("negative", i.negative || "");
@@ -2700,9 +2986,9 @@ function show(entry) {
   } else {
     v.innerHTML = `<img src="${esc(entry.url)}" alt="">`;
   }
-  $("#cca-send").disabled = !entry || entry.isVideo || entry.isAudio;
+  $("#cca-send").disabled = !entry || entry.isVideo || entry.isAudio || entry.pdf;
   const ed = $("#cca-edit-img");
-  ed.disabled = !entry || entry.isAudio;
+  ed.disabled = !entry || entry.isAudio || entry.pdf;
   ed.textContent = entry?.isVideo ? "🎬 この動画を編集する" : "✏ この画像を編集する";
   ed.title = entry?.isVideo ? "表示中の動画を動画編集で開く(つなげる・切り取る・文字などを重ねる)" : "表示中の画像を画像編集で開く(背景を透明にする・オブジェクト除去)";
   $("#cca-open").disabled = !entry;
@@ -2714,7 +3000,7 @@ function show(entry) {
 function renderHistory() {
   if (!root) return;
   const box = $("#cca-hist");
-  box.innerHTML = history.map((h, i) => `<div class="t" data-i="${i}" data-ts="${h.ts}" data-url="${esc(h.url)}" title="${h.isAudio ? `音声: ${esc(audioName(h))}` : h.isVideo ? "動画" : "画像"}">${h.isAudio ? `<div class="au">🎵<span>${esc(audioName(h))}</span></div>` : h.isVideo ? videoThumb(h.url) : `<img src="${esc(h.url)}" loading="lazy" alt="">`}</div>`).join("");
+  box.innerHTML = history.map((h, i) => `<div class="t" data-i="${i}" data-ts="${h.ts}" data-url="${esc(h.url)}" title="${h.isAudio ? `音声: ${esc(audioName(h))}` : h.isVideo ? "動画" : h.pdf ? "PDF" : "画像"}">${h.isAudio ? `<div class="au">🎵<span>${esc(audioName(h))}</span></div>` : h.isVideo ? videoThumb(h.url) : `<img src="${esc(h.url)}" loading="lazy" alt="">`}</div>`).join("");
   for (const t of box.querySelectorAll(".t")) t.onclick = () => show(history[Number(t.dataset.i)]);
 }
 async function sendToInput() {
@@ -2748,7 +3034,7 @@ function zoomCurrent() {
 }
 function fileOf(entry) {
   try {
-    const q = new URL(entry.url, location.href).searchParams;
+    const q = new URL(entry.pdfUrl || entry.url, location.href).searchParams;
     return { filename: q.get("filename") || "", subfolder: q.get("subfolder") || "", type: q.get("type") || "output" };
   } catch { return null; }
 }
@@ -2827,6 +3113,7 @@ async function insertAudioExample() {
 
 // ---------------------------------------------------------------- 枠(バウンディングボックス)
 const LAYOUT_HELP = {
+  region: "画像に範囲を描くと、範囲ごとに別のプロンプトを使えます(範囲別指定)。「▭ 枠で配置を指定する」を押し、白紙の上をドラッグして範囲を描き、範囲ごとに「そこに描きたいもの」を書いてください。範囲の形は四角・円・三角から選べます。通常のプロンプトは、どの範囲にも入っていない部分を埋めます。範囲が重なった所は、後から描いた範囲が優先です。マイナスプロンプトも使えます(範囲の中に (red:-1.0) のように書く)。",
   flux3: "画像のどこに何を置くかを、枠で指定できます(FLUX.3 Klein)。「▭ 枠で配置を指定する」を押し、画像の上をドラッグして枠を作り、枠ごとに何を置くかを英語で書きます。"
     + "プロンプトでは枠を &lt;obj_1&gt;、&lt;obj_2&gt; … と番号で指せます(例: In &lt;ref_image_0&gt;, change the dress &lt;obj_1&gt; to red.)。"
     + "画像→画像では画像1の上に、テキスト→画像では出力の大きさの白紙の上に枠を描きます。",
@@ -2858,6 +3145,7 @@ function openLayout() {
   if (useImage && (!img || img === NONE)) { notify("先に入力画像1を入れてください(画像の上に枠を描きます)。", "error", $("#cca-layout-open")); return; }
   openLayoutEditor({
     kind,
+    regional: !!W(n, "regional_enable")?.value,
     background: useImage ? imageUrl(img) : null,
     width: Number(W(n, "width")?.value) || 1024,
     height: Number(W(n, "height")?.value) || 1024,
@@ -3428,3 +3716,12 @@ app.registerExtension({
   },
 });
 emit(null, "ui-ready");
+
+// モデルフォルダの件数の内訳(直下・サブフォルダ・数えなかったファイル)
+function dirSub(p) {
+  if (p.count === undefined || p.direct === undefined) return "";
+  const parts = [T("直下 {0} 個 + サブフォルダ {1} 個", p.direct, p.count - p.direct)];
+  if (p.kinds?.length === 1) parts.push(T("使われる所: {0}だけ", T(p.kinds[0] === "checkpoints" ? "チェックポイント" : "拡散モデル")));
+  if (p.skipped?.length) parts.push(T("モデルとして数えないファイル: {0}", p.skipped.map(([e, c]) => `${e || T("(拡張子なし)")} ${c}`).join("・")));
+  return `<div style="color:#9fb0c2;font-size:11.5px;margin:-2px 0 4px 6px;word-break:break-all">${esc(parts.join(" / "))}</div>`;
+}

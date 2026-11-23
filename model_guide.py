@@ -337,3 +337,20 @@ def type_license(name, info):
         return TYPE_LICENSE[name]
     key = guide_key(info)
     return GUIDES[key]["license"] if key else "unknown"
+
+
+def missing_help(model_type, info, field, tr=lambda x: x):
+    """ファイルが見つからないときのエラー文に足す、そのモデルの案内(どのファイルを使うか・配布元)。無ければ空文字"""
+    key = guide_key(info) if info else None
+    if not key or not field:
+        return ""
+    g = GUIDES[key]
+    rows = [r for r in g["rows"] if r.get("field") == field and (not r.get("types") or model_type in r["types"])]
+    if not rows:
+        return ""
+    out = [tr("このモデルの案内(★ はおすすめ):")]
+    for r in rows[:8]:
+        size = f" / {r['size']} GB" if r.get("size") else ""
+        out.append(f"  {'★ ' if r.get('star') else ''}{r['file']} ({tr(r['tag'])}{size}) {tr(r['use'])}")
+        out.append(f"    {r.get('src') or g.get('source', '')}")
+    return "\n".join(out)

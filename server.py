@@ -6,15 +6,16 @@ import os
 import folder_paths
 
 from .i18n import tr
-from . import addons, audiogen, history, i18n, imgedit, model_dirs, model_guide, store, tile, uploads, videoedit, wildcards
+from . import addons, audiogen, history, i18n, imgedit, media_dirs, model_dirs, model_guide, store, tile, uploads, videoedit, wildcards
 from .downloads import links_for
+from .regional import PRESET_KEYS, adv_presets
 from .panel import NODE_INSTALL_HELP, choice_lists, edit_format_info, node_installed, parse_loras
 from .specs import (
     ALL_WIDGETS, COMMON_TASK_DEFAULTS, COMMON_TYPE_DEFAULTS, IMAGE_WIDGETS, LABELS, MODEL_TYPES, NONE,
     SIZE_MODES, VISIBLE_TYPES,
     size_step,
     TASK_DEFAULTS, TASK_LABELS, TASKS_ALL, TYPE_DEFAULTS, TYPE_INFO, Hint, builtin_presets,
-    image_names, image_roles, keys_for, standard_files, uses_mask, visible_widgets,
+    image_names, image_roles, keys_for, layout_kind, standard_files, uses_mask, visible_widgets,
 )
 
 FILE_KEYS = {
@@ -129,7 +130,7 @@ def build_spec():
             "max_images": dict(info["max_images"]), "negative": info["negative"],
             "cfg": info["cfg"], "size_step": size_step(name), "hidden": info["hidden"],
             # 第10版: 種別の短い説明・枠で配置を指定できるタスク・音声も作るか
-            "note": info.get("note", ""), "layout": dict(info.get("layout") or {}), "audio": bool(info.get("audio")),
+            "note": info.get("note", ""), "layout": {t_: layout_kind(name, t_) for t_ in info["tasks"] if layout_kind(name, t_)}, "audio": bool(info.get("audio")),
             "needs_node": need or "",
             # 第11版: モデルの選び方の案内のキーと、この種別の(公式の)モデルのライセンス
             "guide": model_guide.guide_key(info) or "", "license": model_guide.type_license(name, info),
@@ -149,6 +150,7 @@ def build_spec():
         "tasks_all": list(TASKS_ALL), "task_labels": TASK_LABELS,
         "types_info": types_info, "visible": visible, "defaults": defaults, "keys": keys,
         "image_roles": roles, "image_names": names, "builtin_presets": presets,
+        "adv_presets": adv_presets(), "adv_keys": {k: list(v) for k, v in PRESET_KEYS.items()},
         "mask": mask, "labels": LABELS, "widgets": list(ALL_WIDGETS), "standard_files": std,
         "file_keys": FILE_KEYS, "list_keys": LIST_KEYS, "list_kind": LIST_KIND, "size_presets": SIZE_PRESETS,
         "preset_file": os.path.join(store._base_dir(), store.PRESET_FILE),
@@ -327,13 +329,13 @@ def register_routes():
         except Exception as e:  # noqa: BLE001
             return _bad(e)
 
-    @routes.post("/cca_generator/settings/forge_styles")
-    async def cca_generator_settings_forge_styles(request):
+    @routes.post("/cca_generator/settings/styles_csv")
+    async def cca_generator_settings_styles_csv(request):
         """第28版: Forge / A1111 の styles.csv(ファイルの中身そのもの)を、読み込める設定の形にして返す(まだ保存はしない)"""
         try:
             from . import settings_io
-            raw = await request.content.read(settings_io.FORGE_MAX_BYTES + 1)
-            data, info = settings_io.forge_styles(raw)
+            raw = await request.content.read(settings_io.STYLES_MAX_BYTES + 1)
+            data, info = settings_io.styles_csv(raw)
             return web.json_response({"ok": True, "data": data, "info": info})
         except Exception as e:  # noqa: BLE001
             return _bad(e)
@@ -536,7 +538,7 @@ def register_routes():
             sm = model_dirs.find_stability_matrix()
         except Exception:  # noqa: BLE001
             sm = None
-        return web.json_response({"kinds": model_dirs.info(), "stability_matrix": sm})
+        return web.json_response({"kinds": model_dirs.info_merged(), "stability_matrix": sm})
 
     @routes.post("/cca_generator/model_dirs")
     async def cca_generator_model_dirs_edit(request):
@@ -559,7 +561,7 @@ def register_routes():
     async def cca_generator_open_folder(request):
         try:
             data = await request.json()
-            path = model_dirs.open_folder(data.get("path"))
+            path = model_dirs.open_folder(data.get("path"), follow_links=not data.get("keep"))
         except Exception as e:  # noqa: BLE001
             return _bad(e)
         return web.json_response({"ok": True, "path": path})
@@ -577,6 +579,38 @@ def register_routes():
         try:
             data = await request.json()
             path = addons.open_output(data.get("filename", ""), data.get("subfolder", ""), data.get("type", "output"))
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+        return web.json_response({"ok": True, "path": path})
+
+    @routes.get("/cca_generator/media_dirs")
+    async def cca_generator_media_dirs(request):
+        return web.json_response({"kinds": media_dirs.info(), "options": media_dirs.options()})
+
+    @routes.post("/cca_generator/media_dirs")
+    async def cca_generator_media_dirs_edit(request):
+        try:
+            data = await request.json()
+            if data.get("action") == "add":
+                path = media_dirs.add(data.get("kind"), data.get("path"))
+            elif data.get("action") == "option":
+                media_dirs.set_option(data.get("kind"), data.get("path"))
+                path = ""
+            elif data.get("action") == "remove":
+                media_dirs.remove(data.get("kind"), data.get("path"))
+                path = data.get("path")
+            else:
+                raise ValueError(tr("action が不正です"))
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+        return web.json_response({"ok": True, "path": path})
+
+    @routes.post("/cca_generator/pick_folder")
+    async def cca_generator_pick_folder(request):
+        # フォルダを選ぶ画面を開く(モデルフォルダ・画像/動画フォルダの追加用)
+        try:
+            data = await request.json()
+            path = await media_dirs.pick_folder(data.get("initial") or "", data.get("title") or "")
         except Exception as e:  # noqa: BLE001
             return _bad(e)
         return web.json_response({"ok": True, "path": path})

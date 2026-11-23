@@ -355,7 +355,7 @@ def probe(value):
                 "height": vs.codec_context.height, "audio": has_audio, "video": True, "alpha": alpha}
 
 
-def media_list(limit=300):
+def media_list(limit=1000):
     """選べる動画・画像: input の動画・画像と、output の動画(新しい順)"""
     out = {"videos": [], "images": [], "audios": []}
     seen = set()
@@ -365,7 +365,14 @@ def media_list(limit=300):
         if not base or not os.path.isdir(base):
             return
         items = []
-        for root, _, files in os.walk(base):
+        try:
+            from . import media_dirs as _md
+            deep = _md.options()["recursive"]
+        except Exception:  # noqa: BLE001
+            deep = False
+        for root, dirs, files in os.walk(base):
+            if not deep:
+                dirs[:] = []  # サブフォルダを探さない(既定)
             for f in files:
                 if f.lower().endswith(exts):
                     p = os.path.join(root, f)
@@ -379,12 +386,29 @@ def media_list(limit=300):
                 seen.add(v)
                 out[key].append(v)
 
-    walk("output", VIDEO_EXTS, "videos", limit)
-    walk("input", VIDEO_EXTS, "videos", limit)
-    walk("input", IMAGE_EXTS, "images", limit)
-    walk("output", IMAGE_EXTS, "images", limit)
+    try:  # 設定で外した標準の場所(input・output)は出さない
+        from . import media_dirs
+        shows = media_dirs.shows
+    except Exception:  # noqa: BLE001
+        def shows(kind, which):
+            return True
+    if shows("videos", "output"):
+        walk("output", VIDEO_EXTS, "videos", limit)
+    if shows("videos", "input"):
+        walk("input", VIDEO_EXTS, "videos", limit)
+    if shows("images", "output"):
+        walk("output", IMAGE_EXTS, "images", limit)
     walk("input", AUDIO_EXTS, "audios", limit)
     walk("output", AUDIO_EXTS, "audios", limit)
+    try:  # 設定の「動画・画像を読み込む場所」で追加したフォルダ(input の中のリンク経由)
+        from . import media_dirs
+        for key in ("videos", "images"):
+            for v in media_dirs.list_files(key, " [input]"):
+                if v not in seen:
+                    seen.add(v)
+                    out[key].append(v)
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 

@@ -94,6 +94,10 @@ const CSS = `
 #cca-setio .prefs select{background:#12151a;color:#e4e7eb;border:1px solid #303744;border-radius:6px;padding:4px 8px;min-width:0}
 #cca-setio .bx{background:#1a1e25;border:1px solid #303744;border-radius:10px;width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;padding:16px 18px}
 #cca-setio h3{margin:0 0 10px;font-size:17px}
+#cca-setio .sec{border:1px solid var(--border,#303744);border-radius:10px;padding:10px 12px;margin:10px 0;background:var(--sec-a,#171b21)}
+#cca-setio .sec[data-alt="1"]{background:var(--sec-b,#232932)}
+#cca-setio .sec > h4:first-child{margin-top:0}
+#cca-setio .sec .prefs{border:0;padding:0;margin:0}
 #cca-setio h4{margin:14px 0 6px;font-size:14px;color:#cfd5dc}
 #cca-setio button{background:#20252e;color:#e4e7eb;border:1px solid #3a4250;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
 #cca-setio button.pri{background:#2b8f84;border-color:#3db4a6;color:#fff;font-weight:700}
@@ -107,6 +111,7 @@ const CSS = `
 #cca-setio [data-info]{white-space:pre-wrap}
 `;
 let ui = null;
+const paintSecs = () => ui && ui.querySelectorAll(".sec").forEach((el, i) => { el.dataset.alt = String(i % 2); });
 let loaded = null; // 読み込もうとしている設定ファイル
 function build() {
   const st = document.createElement("style");
@@ -116,7 +121,8 @@ function build() {
   ui.id = "cca-setio";
   ui.innerHTML = `<div class="bx">
     <div class="row"><h3>⚙ ${T("設定")}</h3><span style="flex:1"></span><button data-x>${T("閉じる")}</button></div>
-    <div data-prefs></div>
+    <div class="sec" data-prefs></div>
+    <div class="sec" data-export>
     <h4>${T("設定の書き出し / 読み込み")}</h4>
     <div class="note">${T("生成パネルの設定・プロンプトのプリセット・文字のテンプレート・編集画面の設定・項目の並び・モデルフォルダ設定を 1 つのファイルにまとめます。一時保存の履歴・結果の一覧・透かしの画像は入りません。")}</div>
     <h4>${T("書き出す")}</h4>
@@ -131,9 +137,11 @@ function build() {
         <label class="ck"><input type="radio" name="cca-setio-mode" value="merge" checked> ${T("足す(今ある物はそのまま。無い物だけ足す)")}</label>
         <label class="ck"><input type="radio" name="cca-setio-mode" value="replace"> ${T("置き換える(選んだ種類を、読み込んだ物にする)")}</label></div>
       <div class="row" style="margin-top:8px"><button class="pri" data-imp-go>${T("読み込む")}</button></div>
-    </div>
+    </div></div>
     <div class="msg" data-msg hidden></div></div>`;
   document.body.appendChild(ui);
+  // 欄(.sec)ごとに交互の色(data-alt 0 / 1)。中身が変わるたびに付け直す
+  new MutationObserver(paintSecs).observe(ui, { childList: true, subtree: true });
   const $ = (s) => ui.querySelector(s);
   const msg = (t, err = false) => { const m = $("[data-msg]"); m.hidden = !t; m.textContent = t || ""; m.classList.toggle("err", err); };
   $("[data-x]").onclick = () => ui.classList.remove("open");
@@ -149,30 +157,30 @@ function build() {
     e.target.value = "";
     if (!f) return;
     try {
-      let data, forge = null;
+      let data, styleInfo = null;
       if (/\.csv$/i.test(f.name) || f.type === "text/csv") {
         // Forge / A1111 のスタイル: 中身はサーバーで読む(改行・, の入った欄、BOM、Shift_JIS も)
-        const r = await api.fetchApi("/cca_generator/settings/forge_styles", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: await f.arrayBuffer() });
+        const r = await api.fetchApi("/cca_generator/settings/styles_csv", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: await f.arrayBuffer() });
         const j = await r.json();
         if (!r.ok || !j.ok) throw new Error(j.error || `${r.status}`);
         data = j.data;
-        forge = j.info;
+        styleInfo = j.info;
       } else {
         data = JSON.parse(await f.text());
         if (!data || data.format !== FORMAT) throw new Error(T("CCA Generator の設定ファイルではありません"));
       }
       loaded = data;
       const cats = catsIn(data);
-      if (forge) {
+      if (styleInfo) {
         const notes = [];
-        if (forge.prompt_tag) notes.push(T("{0} の入ったスタイル {1} 件は、{0} を外して読み込みます(この画面のプリセットは、今のプロンプトの後ろに足して使います)。", "{prompt}", forge.prompt_tag));
-        if (forge.dup) notes.push(T("同じ名前が {0} 件あったので、最初の物を使います。", forge.dup));
-        if (forge.empty) notes.push(T("名前か中身が空の {0} 行は読み込みません。", forge.empty));
-        if (forge.over) notes.push(T("プリセットは {0} 件までなので、残りの {1} 件は読み込みません。", forge.count, forge.over));
-        if (forge.cut_name) notes.push(T("長い名前 {0} 件は 80 文字までにします。", forge.cut_name));
-        $("[data-info]").textContent = [T("{0}(Stable Diffusion WebUI Forge / A1111 のスタイル・{1} 件)", f.name, forge.count), ...notes,
+        if (styleInfo.prompt_tag) notes.push(T("{0} の入ったスタイル {1} 件は、{0} を外して読み込みます(この画面のプリセットは、今のプロンプトの後ろに足して使います)。", "{prompt}", styleInfo.prompt_tag));
+        if (styleInfo.dup) notes.push(T("同じ名前が {0} 件あったので、最初の物を使います。", styleInfo.dup));
+        if (styleInfo.empty) notes.push(T("名前か中身が空の {0} 行は読み込みません。", styleInfo.empty));
+        if (styleInfo.over) notes.push(T("プリセットは {0} 件までなので、残りの {1} 件は読み込みません。", styleInfo.count, styleInfo.over));
+        if (styleInfo.cut_name) notes.push(T("長い名前 {0} 件は 80 文字までにします。", styleInfo.cut_name));
+        $("[data-info]").textContent = [T("{0}(Stable Diffusion WebUI Forge / A1111 のスタイル・{1} 件)", f.name, styleInfo.count), ...notes,
           T("「置き換える」は、今のプリセットを消して、このファイルのスタイルだけにします(おすすめ ★ はそのまま)。")].join("\n");
-        $("[data-cats]").innerHTML = `<label class="ck"><input type="checkbox" data-cat="presets" checked> ${T("プロンプトのプリセット(スタイル {0} 件)", forge.count)}</label>`;
+        $("[data-cats]").innerHTML = `<label class="ck"><input type="checkbox" data-cat="presets" checked> ${T("プロンプトのプリセット(スタイル {0} 件)", styleInfo.count)}</label>`;
       } else {
         $("[data-info]").textContent = T("{0}(第{1}版で書き出し・{2})", f.name, data.app_version ?? "?", data.exported || "")
           + (Number(data.format_version) > 1 ? ` ${T("新しい版で書き出したファイルです。分かる所だけ読み込みます。")}` : "");
@@ -208,9 +216,13 @@ function build() {
   };
 }
 // prefs: 生成パネルの 自動で表示・言語・テーマカラー の欄(題名のすぐ下に入れる)
-export function openSettingsIO(prefs = null) {
+// extra: 画像・動画を読み込む場所の欄(prefs の下に入れる。開くたびに _render() で読み直す)
+export function openSettingsIO(prefs = null, extra = null) {
   if (!ui) build();
   if (prefs && prefs.parentElement !== ui.querySelector("[data-prefs]")) ui.querySelector("[data-prefs]").appendChild(prefs);
+  if (extra && extra.parentElement !== ui.querySelector(".bx")) ui.querySelector("[data-export]").before(extra); // 言語・テーマの欄と、書き出しの欄の間
+  try { extra?._render?.(); } catch { /* 無視 */ }
+  paintSecs();
   ui.classList.add("open");
 }
 // テスト用

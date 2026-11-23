@@ -43,7 +43,7 @@ SIZE_MODE_KEEP = "サイズ指定"       # 今まで通り(幅・高さ、また
 SIZE_MODE_SCALE = "倍率指定"        # 画像1の大きさ × 倍率
 SIZE_MODES = [SIZE_MODE_KEEP, SIZE_MODE_SCALE]
 # 画像→画像の「サイズ指定」での変え方(Forge の Resize mode と同じ)。既定は今まで通り(変えない)
-RESIZE_KEEP = "今まで通り"
+RESIZE_KEEP = "画像1のサイズ"
 RESIZE_JUST = "そのまま拡大縮小"
 RESIZE_CROP = "切り抜いて拡大縮小"
 RESIZE_FILL = "余白を埋めて拡大縮小"
@@ -278,7 +278,11 @@ for _t, _i in TYPE_INFO.items():
 def layout_kind(model_type, task):
     """枠(バウンディングボックス)で配置を指定できるなら "flux3" / "moss"、できなければ None"""
     info = TYPE_INFO.get(model_type)
-    return (info or {}).get("layout", {}).get(task) if info else None
+    native = (info or {}).get("layout", {}).get(task) if info else None
+    if native:
+        return native
+    from .regional import adv_supported  # 専用の枠が無い対象モデルは、枠を 領域プロンプト の領域に使う
+    return "region" if adv_supported(model_type, task) else None
 # パネルで選べる種別(hidden のもの = MiniMax は、ワークフローには残すが一覧に出さない)
 VISIBLE_TYPES = [t for t in MODEL_TYPES if not TYPE_INFO[t]["hidden"]]
 
@@ -628,6 +632,10 @@ ALL_WIDGETS = [
     "layout_boxes",
     # 第42版で追加: 音楽・音声の設定(JSON)と音声の保存先
     "audio_opts", "audio_output_prefix",
+    # マイナス重み 相当 / 領域プロンプト 相当(対応する種別・T2I だけ表示)
+    "negw_enable", "negw_strength", "regional_enable", "regional_mode", "regional_ratio",
+    "regional_common", "regional_prompts", "regional_negatives", "regional_crop", "regional_switch", "layout_native",
+    "negw_preset", "negw_method", "negw_turbo_gain", "regional_feather", "regional_margin", "regional_preset",
 ]
 
 LABELS = {
@@ -654,6 +662,13 @@ LABELS = {
     **{f"image_{i}": f"入力画像{i} (任意)" for i in range(4, MAX_IMAGE_SLOTS + 1)},
     "clip_name_2": "テキストエンコーダー 2(CLIP-L)", "latent_upscale_name": "潜在アップスケーラー",
     "layout_boxes": "枠で配置を指定",
+    "negw_enable": "マイナスプロンプトを使う", "negw_strength": "打ち消しの強さ",
+    "regional_enable": "範囲別指定を使う", "regional_mode": "区切り方",
+    "regional_ratio": "区切りの比率", "regional_common": "各場所のプロンプトの前に、メインのプロンプトを付ける",
+    "regional_prompts": "場所ごとのプロンプト", "regional_negatives": "場所ごとのネガティブ",
+    "regional_crop": "領域の描き方(使わない)", "regional_switch": "枠の中に収める強さ(%)", "layout_native": "枠を配置の指定として使う",
+    "negw_preset": "おすすめ設定", "regional_preset": "おすすめ設定", "negw_method": "マイナスの処理方法", "negw_turbo_gain": "CFG が無いモデルでの倍率",
+    "regional_feather": "範囲の縁のぼかし", "regional_margin": "範囲の外側の余白",
     "mid_frame_pos": "途中のフレームの位置(%)",
     "image_output_prefix": "画像の保存先", "video_output_prefix": "動画の保存先",
     "audio_opts": "音楽・音声の設定", "audio_output_prefix": "音声の保存先",
@@ -767,6 +782,14 @@ def visible_widgets(model_type, task):
         v.append("mid_frame_pos")
     if layout_kind(model_type, task):
         v.append("layout_boxes")
+    if layout_kind(model_type, task) in ("moss", "flux3"):
+        v.append("layout_native")  # 専用の枠の書き方があるモデルだけ
+    from .regional import adv_supported  # 対応する種別(Anima / MOSS / Krea2 / Illustrious / FLUX.3 / FLUX.2 / SDXL / SD1.5)だけ
+    if adv_supported(model_type, task):
+        # 範囲別指定は枠だけで指定する(regional_mode / ratio / prompts / negatives は、保存済みのワークフローとの互換のため
+        # ノードには残すが、画面には出さず使わない)
+        v += ["negw_preset", "negw_enable", "negw_method", "negw_strength", "negw_turbo_gain", "regional_enable", "regional_preset", "regional_common",
+              "regional_switch", "regional_feather", "regional_margin"]
     # 保存先は両方出す(編集した画像・動画、パネルや編集画面に入れた画像・動画も、ここに保存する)
     v += ["image_output_prefix", "video_output_prefix"]
     return v

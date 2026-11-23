@@ -72,19 +72,17 @@ def _core_combo(node_name, key, fallback, section="required"):
 
 
 def _image_files():
-    """画像の選択肢: パネル・編集画面から入れた画像(保存先に保存したもの。新しい順)と、input フォルダの画像"""
+    """画像の選択肢: output フォルダの画像と、設定で追加したフォルダの画像(input と「最近入れた画像」は出さない)。ギャラリーの分はパネル側で先頭に足す"""
+    out = []
     try:
-        from .uploads import recent_images
-        recent = recent_images()
+        from . import media_dirs
+        if media_dirs.shows("images", "output"):
+            d = folder_paths.get_output_directory()
+            out += [f"{n} [output]" for n in media_dirs._scan(d, "images")]
+        out += [f for f in media_dirs.list_images() if f not in out]  # 設定の「画像を読み込む場所」で追加したフォルダ
     except Exception:
-        recent = []
-    try:
-        d = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
-        files = sorted(folder_paths.filter_files_content_types(files, ["image"]))
-    except Exception:
-        files = []
-    return recent + [f for f in files if f not in recent]
+        pass
+    return out
 
 
 def choice_lists():
@@ -167,7 +165,16 @@ def require_node(model_type):
         raise ValueError(f"[{model_type}] " + tr(NODE_INSTALL_HELP.get(need) or "追加ノード {need} が必要です。", need=need))
 
 
-def _require_file(name, folder, label, model_type):
+def _guide_text(model_type, field):
+    try:
+        from . import model_guide
+        t = model_guide.missing_help(model_type, TYPE_INFO.get(model_type), field, tr)
+    except Exception:
+        t = ""
+    return ("\n\n" + t) if t else ""
+
+
+def _require_file(name, folder, label, model_type, field=None):
     label = label.replace("((none)でオフ)", "").strip()
     if not _on(name):
         raise ValueError(tr('[{model_type}] {label} が未選択です。パネルでファイルを選んでください。', model_type=model_type, label=tr(label)))
@@ -178,8 +185,16 @@ def _require_file(name, folder, label, model_type):
             where = "\n".join("  " + d for d in folder_paths.get_folder_paths(folder))
         except Exception:
             where = "  ComfyUI/" + FOLDER_LABEL.get(folder, folder)
+        try:  # パネルの「入れる場所」と同じ一覧(追加したフォルダ・ファイルの数つき)
+            from . import model_dirs
+            ps = (model_dirs.info().get(folder) or {}).get("paths") or []
+            if ps:
+                where = "\n".join(f"  {x['path']}" + (f"  ({tr('{n} 個', n=x['count'])})" if x.get("count") is not None else "") for x in ps)
+        except Exception:
+            pass
+        where += "\n" + tr("入れたら一番上の 🔄 を押してください。")
         raise ValueError(
-            tr('[{model_type}] {label} のファイルが見つかりません: {name}\n次のどれかのフォルダに置くか、パネルで別のファイルを選んでください(生成パネルにダウンロード先の案内があります):\n{where}', model_type=model_type, label=tr(label), name=name, where=where))
+            tr('[{model_type}] {label} のファイルが見つかりません: {name}\n入れる場所({label}):\n{where}', model_type=model_type, label=tr(label), name=name, where=where) + _guide_text(model_type, field))
     check_not_broken(name, folder_paths.get_full_path(folder, name), label, model_type)
 
 
@@ -418,7 +433,7 @@ def load_models(model_type, task, p):
     loader = info["loader"]
 
     if loader == "ckpt":
-        _require_file(p["ckpt_name"], "checkpoints", LABELS["ckpt_name"], mt)
+        _require_file(p["ckpt_name"], "checkpoints", LABELS["ckpt_name"], mt, field="ckpt_name")
         loras = _active_loras(p.get("loras"))
         for i, l in enumerate(loras, 1):
             _require_file(l["name"], "loras", f"LoRA {i}", mt)
@@ -428,17 +443,17 @@ def load_models(model_type, task, p):
         return model, model, clip, vae, vae
 
     require_node(model_type)
-    _require_file(p["clip_name"], "text_encoders", LABELS["clip_name"], mt)
+    _require_file(p["clip_name"], "text_encoders", LABELS["clip_name"], mt, field="clip_name")
     if loader == "k6":
-        _require_file(p.get("clip_name_2"), "text_encoders", LABELS["clip_name_2"], mt)
-    _require_file(p["vae_name"], "vae", LABELS["vae_name"], mt)
+        _require_file(p.get("clip_name_2"), "text_encoders", LABELS["clip_name_2"], mt, field="clip_name_2")
+    _require_file(p["vae_name"], "vae", LABELS["vae_name"], mt, field="vae_name")
     if info["loader"] == "wan14":
-        _require_file(p["wan_high_unet"], "diffusion_models", LABELS["wan_high_unet"], mt)
-        _require_file(p["wan_low_unet"], "diffusion_models", LABELS["wan_low_unet"], mt)
+        _require_file(p["wan_high_unet"], "diffusion_models", LABELS["wan_high_unet"], mt, field="wan_high_unet")
+        _require_file(p["wan_low_unet"], "diffusion_models", LABELS["wan_low_unet"], mt, field="wan_low_unet")
     else:
-        _require_file(p["unet_name"], "diffusion_models", LABELS["unet_name"], mt)
+        _require_file(p["unet_name"], "diffusion_models", LABELS["unet_name"], mt, field="unet_name")
     if info["audio_vae"]:
-        _require_file(p["audio_vae_name"], "vae", LABELS["audio_vae_name"], mt)
+        _require_file(p["audio_vae_name"], "vae", LABELS["audio_vae_name"], mt, field="audio_vae_name")
     loras = _active_loras(p.get("loras"))
     for i, l in enumerate(loras, 1):
         _require_file(l["name"], "loras", f"LoRA {i}", mt)
@@ -876,10 +891,11 @@ class CCAGenPrompt(_Part):
     def INPUT_TYPES(cls):
         t = super().INPUT_TYPES()
         t["optional"] = {"positive_text": ("STRING", {}), "layout_boxes": ("STRING", {}),
-                         "wildcard_template": ("STRING", {})}
+                         "wildcard_template": ("STRING", {}), "negw_settings": ("STRING", {}), "regional_settings": ("STRING", {})}
         return t
 
-    def run(self, positive, negative, positive_text=None, layout_boxes=None, wildcard_template=None):
+    def run(self, positive, negative, positive_text=None, layout_boxes=None, wildcard_template=None, negw_settings=None,
+            regional_settings=None):
         return (positive, negative)
 
 
@@ -1056,6 +1072,26 @@ class CCAGeneratorPanel:
                 # 第42版で追加: 音楽・音声の設定(JSON。生成パネルの「音楽・音声の設定」で編集する)と音声の保存先
                 "audio_opts": ("STRING", {"default": "{}", "multiline": False}),
                 "audio_output_prefix": ("STRING", {"default": "comfyui/%date:yyyy%-%date:M%-%date:d%/audio"}),
+                # マイナス重み 相当 / 領域プロンプト 相当(regional.py。対応する種別・T2I だけ使う)
+                "negw_enable": ("BOOLEAN", {"default": True}),
+                "negw_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.05}),
+                "regional_enable": ("BOOLEAN", {"default": False}),
+                "regional_mode": (["横分割", "縦分割", "グリッド", "枠で指定"], {"default": "横分割"}),
+                "regional_ratio": ("STRING", {"default": "1,1", "multiline": False}),
+                "regional_common": ("BOOLEAN", {"default": False}),
+                "regional_prompts": ("STRING", {"default": "", "multiline": True}),
+                "regional_negatives": ("STRING", {"default": "", "multiline": True}),
+                "regional_crop": (["領域の範囲だけを見て描く", "前半は領域の範囲だけ、後半は全体を見て描く", "画像全体を見て描き、領域でつなぐ"], {"default": "領域の範囲だけを見て描く"}),
+                "regional_switch": ("INT", {"default": 100, "min": 0, "max": 100, "step": 1}),
+                "layout_native": ("BOOLEAN", {"default": False}),
+                # マイナスプロンプト・範囲別指定の共通設定(おすすめ設定 / 処理方法 / 各種数値)
+                "negw_preset": (["おすすめ", "自分の設定"], {"default": "おすすめ"}),
+                "negw_method": (["自動(モデルに合わせる)", "Value に負の重みを掛ける(UNet 系だけ)", "予測の差を引く"],
+                                {"default": "自動(モデルに合わせる)"}),
+                "negw_turbo_gain": ("FLOAT", {"default": 3.0, "min": 0.0, "max": 10.0, "step": 0.1}),
+                "regional_feather": ("FLOAT", {"default": 3.0, "min": 0.5, "max": 32.0, "step": 0.5}),
+                "regional_margin": ("INT", {"default": 8, "min": 0, "max": 64, "step": 1}),
+                "regional_preset": (["おすすめ", "自分の設定"], {"default": "おすすめ"}),
             }
         }
 
@@ -1065,7 +1101,7 @@ class CCAGeneratorPanel:
                         turbo_lora_low_name, edit_lora_name, image, image_2, hires_upscaler,
                         image_3=None, ref_size=None, clip_name_2=None, latent_upscale_name=None,
                         image_4=None, image_5=None, image_6=None, image_7=None, image_8=None,
-                        image_9=None, image_10=None):
+                        image_9=None, image_10=None, **_adv):
         # 使わないファイル項目が未設定・欠損でも弾かない(使う項目は実行時に確認して分かりやすく伝える)
         return True
 

@@ -36,23 +36,31 @@ let cfg = sets.image;
 let jobs = lsGet(LS_JOBS, []);
 let timer = null;
 
-// ---------------------------------------------------------------- 文字の置き換え(「,」で区切る。「,」を含む言葉は "..." で囲む)
+// ---------------------------------------------------------------- 文字の置き換え(「,」で区切る。「,」を含む言葉は " で囲む)
+// 空の言葉も 1 つの言葉(元の言葉を消す): 「a,,b」の真ん中・「a,」の最後・「a, ,b」・「""」。改行だけの空の行は数えない
 export function parseSR(text) {
   const out = [];
-  let cur = "", inQ = false, quoted = false;
+  let cur = "", inQ = false, quoted = false, lastSep = false;
   const s = String(text || "");
-  const push = () => { const v = quoted ? cur : cur.trim(); if (v !== "") out.push(v); cur = ""; quoted = false; };
+  const push = (sep) => {
+    const v = quoted ? cur : cur.trim();
+    if (v !== "" || quoted || sep === ",") out.push(v);
+    cur = ""; quoted = false;
+  };
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
+    lastSep = false;
     if (inQ) {
       if (c === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else inQ = false; } else cur += c;
     } else if (c === '"' && !cur.trim() && !quoted) { inQ = true; quoted = true; cur = ""; }
-    else if (c === "," || c === "\n") push();
+    else if (c === "," || c === "\n") { push(c); lastSep = c === ","; }
     else if (!(quoted && /\s/.test(c))) cur += c;
   }
-  push();
+  if (cur !== "" || quoted || lastSep) push(lastSep ? "," : "");
   return out;
 }
+// 見出し・表示では、空の言葉は「(なし)」
+export const srLabel = (x) => (x === "" ? T("(なし)") : x);
 const replaceAll = (s, a, b) => String(s ?? "").split(a).join(b);
 
 // ---------------------------------------------------------------- 画面
@@ -68,7 +76,7 @@ export function tileHtml(ib, ibox) {
             <div class="seg" id="cca-tile-mode"><button data-tmode="count">そのまま作る</button><button data-tmode="sr">文字を置き換えて作る(Prompt S/R)</button></div></div>
         </div>
         <div class="tilebox hide" id="cca-tile-sr">
-          <div class="f"><label class="l">置き換える言葉(「,」で区切ります。「,」を含む言葉は "..." で囲みます)</label>
+          <div class="f"><label class="l">置き換える言葉(「,」で区切ります。「,」を含む言葉は " で囲みます。空にすると元の言葉を消します)</label>
             <textarea data-tk="sr" rows="2" placeholder='on the beach, in a forest, "on a rooftop, at night"'></textarea></div>
           <div class="hint" id="cca-tile-srinfo" style="margin-top:4px"></div>
         </div>
@@ -260,9 +268,10 @@ export function refreshTile() {
     const v = p.values;
     info.classList.remove("bad");
     if (v.length < 2) info.textContent = T("1 つ目の言葉をプロンプトから探して、2 つ目からの言葉に置き換えます(1 つ目のままの 1 枚も作ります)。言葉を 2 つ以上書いてください。");
+    else if (v[0] === "") { info.textContent = T("⚠ 1 つ目は置き換える元の言葉です。空にできません"); info.classList.add("bad"); }
     else if (!pos.includes(v[0]) && !neg.includes(v[0])) { info.textContent = T("⚠ プロンプトに「{0}」がありません(置き換える所がありません)", v[0]); info.classList.add("bad"); }
     else info.textContent = T(isVideo() ? "「{0}」を {1} 通りに置き換えます: {2} × 生成回数 {3} = {4} 本生成予定" : "「{0}」を {1} 通りに置き換えます: {2} × 生成回数 {3} = {4} 枚生成予定",
-      v[0], v.length, v.map((x) => T("「{0}」", x)).join(" "), p.N, p.total);
+      v[0], v.length, v.map((x) => T("「{0}」", srLabel(x))).join(" "), p.N, p.total);
   }
   // 生成ボタンの文字: 2 枚以上なら「〇枚生成」(動画は「〇本生成」)、1 枚なら「生成」
   // 日本語の文を入れ、訳は画面の自動の訳に任せる(言語を切り替えても元に戻せるように)。同じなら書き換えない
@@ -330,7 +339,7 @@ function drawPreview(p) {
   const sr = cfg.mode === "sr";
   const { cw, ch, G, cols, gw, ggap } = p;
   const rows = p.per;
-  const labels = sr && cfg.labels ? p.values.slice(0, G) : [];
+  const labels = sr && cfg.labels ? p.values.slice(0, G).map(srLabel) : [];
   const px = Math.max(14, Math.min(120, Math.round(gw * 0.045)));
   const band = labels.length ? Math.round(px * 1.3) + Math.max(6, Math.floor(px / 2)) * 2 : 0;
   const W = p.W, H = p.H + band;
@@ -403,6 +412,20 @@ async function queueMany(transforms) {
 }
 function panelsIn(output) { return Object.values(output || {}).filter((x) => x?.class_type === "CCAGeneratorPanel"); }
 
+// 画像・PDF に入れる、タイルの設定(PNGinfo から戻せる)
+function tileInfo() { const { on, ...rest } = cfg; return { v: 1, ...rest }; }
+// PNGinfo から: 画像に入っていたタイルの設定を戻す
+export function applyTileSettings(o) {
+  if (!o || typeof o !== "object") return false;
+  const { v, video, on, ...rest } = o;
+  const next = { ...cfg };
+  for (const k of Object.keys(DEF)) if (k !== "on" && rest[k] !== undefined && typeof rest[k] === typeof DEF[k]) next[k] = rest[k];
+  Object.assign(cfg, next, { on: true });
+  save();
+  if (ctx?.root) { fillFields(); refreshTile(); }
+  return true;
+}
+
 // 生成ボタン(まとめるとき)。戻り値: true = 受け付けた
 export async function tileGenerate() {
   const n = ctx.node();
@@ -417,6 +440,7 @@ export async function tileGenerate() {
     const v = p.values;
     const pos = String(ctx.W(n, "positive")?.value || ""), neg = String(ctx.W(n, "negative")?.value || "");
     if (v.length < 2) { ctx.notify(T("置き換える言葉を 2 つ以上書いてください(「,」で区切ります)"), "error", $("#cca-go")); return false; }
+    if (v[0] === "") { ctx.notify(T("1 つ目は置き換える元の言葉です。空にできません"), "error", $("#cca-go")); return false; }
     if (!pos.includes(v[0]) && !neg.includes(v[0])) { ctx.notify(T("プロンプトに「{0}」がありません(置き換える所がありません)", v[0]), "error", $("#cca-go")); return false; }
     // 同じ行は同じシード(行ごとに、生成後のシードの決め方で進める)
     const mode = ctx.W(n, "control_after_generate")?.value || "randomize";
@@ -440,7 +464,7 @@ export async function tileGenerate() {
         });
       }
     }
-    labels = cfg.labels ? v : [];
+    labels = cfg.labels ? v.map(srLabel) : [];
   } else transforms = Array.from({ length: p.N }, () => null);
   const ids = await queueMany(transforms);
   if (!ids.length) return false;
@@ -454,6 +478,7 @@ export async function tileGenerate() {
       border: { top: cfg.bt, right: cfg.br, bottom: cfg.bb, left: cfg.bl },
       border_color: cfg.borderColor === "custom" ? cfg.borderCustom : cfg.borderColor,
       labels, format: cfg.format, quality: cfg.quality, png_compress: cfg.png, name: cfg.name,
+      info: tileInfo(),
     },
   };
   jobs.push(job);
@@ -555,7 +580,12 @@ async function finishJob(job) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.ok) throw new Error(j.error || r.status);
     const made = images.filter(Boolean).length;
-    if (j.format !== "pdf") for (const f of [...j.files].reverse()) ctx.addResult(f, { tile: { count: made, pages: j.pages, width: j.width, height: j.height } });
+    const tinfo = { count: made, pages: j.pages, width: j.width, height: j.height };
+    if (j.format !== "pdf") for (const f of [...j.files].reverse()) ctx.addResult(f, { tile: tinfo });
+    else for (const f of [...j.files].reverse()) { // PDF: 一覧には 1 ページ目の絵(thumb)を出し、押すと PDF を開く
+      const q = new URLSearchParams({ filename: f.filename, subfolder: f.subfolder || "", type: f.type || "output" });
+      ctx.addResult(f, { tile: tinfo, pdf: true, pdfUrl: api.apiURL(`/view?${q}`), ...(j.thumb ? { url: j.thumb } : {}) });
+    }
     const where = j.files.map((f) => `${f.subfolder ? `${f.subfolder}/` : ""}${f.filename}`).join("\n");
     ctx.notify(T("タイルにまとめました({0} 枚 → {1} ページ・{2} × {3} px)", made, j.pages, j.width, j.height)
       + (made < images.length ? `\n${T("できなかった {0} 枚は空けています", images.length - made)}` : "") + `\n${where}`, "info", null,

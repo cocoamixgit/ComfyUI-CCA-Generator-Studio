@@ -1,7 +1,7 @@
 """枠(バウンディングボックス)で指定した配置を、プロンプトに組み込む。
 
 パネルの layout_boxes(JSON)= {"boxes": [{"x", "y", "w", "h"(0〜1 の割合), "type": "obj" / "text",
-"desc": 説明, "text": 書く文字(type が text のとき), "character": 人物か(MOSS のみ)}]}
+"desc": 説明, "text": 書く文字(type が text のとき), "character": 人物か(MOSS のみ), "shape": rect / circle / tri1 / tri2 / tri3(範囲別指定の形。三角は fx / fy で反転)}]}
 
 ComfyUI 本体と同じ組み立て方にする:
   枠 → Create Bounding Boxes の elements(build_elements)→ FLUX 3 Image Layout Prompt / MOSS-Image Layout Prompt
@@ -43,8 +43,15 @@ def parse_boxes(value):
         text = str(b.get("text") or "").strip() if typ == "text" else ""
         if w <= 0.001 or h <= 0.001:
             continue
+        try:
+            rot = float(b.get("rot") or 0)
+        except (TypeError, ValueError):
+            rot = 0.0
+        shape = b.get("shape") if b.get("shape") in ("circle", "tri1", "tri2", "tri3") else "rect"
         out.append({"x": x, "y": y, "w": w, "h": h, "type": typ, "desc": desc, "text": text,
-                    "character": bool(b.get("character")) and typ == "obj"})
+                    "character": bool(b.get("character")) and typ == "obj",
+                    "shape": shape, "fx": bool(b.get("fx")), "fy": bool(b.get("fy")),
+                    "rot": max(-180.0, min(180.0, rot))})
     return out
 
 
@@ -78,6 +85,8 @@ def _exec(node_name, **kwargs):
 def apply_layout(model_type, task, positive, layout_boxes, width=1024, height=1024):
     """枠があれば、その種別のレイアウトの書き方でプロンプトに組み込む。無ければ positive をそのまま返す"""
     kind = layout_kind(model_type, task)
+    if kind == "region":  # 専用の枠の書き方が無いモデル: 枠は 領域プロンプト(regional.py)が領域として使う
+        return positive
     boxes = parse_boxes(layout_boxes) if kind else []
     if not boxes:
         return positive

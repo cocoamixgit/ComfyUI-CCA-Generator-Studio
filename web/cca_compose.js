@@ -12,11 +12,13 @@ const MAX_UNDO = 20;
 
 let ui = null;     // 画面
 let ctx = null;    // 開いたときに渡された関数・値
+const fillColor = () => (st.fill.mode === "black" ? "#000000" : st.fill.mode === "color" ? st.fill.color : "#ffffff");
 const st = {
   base: null,      // 元の画像(HTMLImageElement)
   layer: null,     // 重ねる画像(切り抜き後。canvas)
   undo: [],
   t: { x: 0, y: 0, s: 1, r: 0, flip: false, a: 1 }, // 重ねる画像の中心(元の画像の画素)・倍率・回転(度)・反転・不透明度
+  fill: { mode: "white", color: "#ffffff" }, // 背景を塗りつぶす色(白・黒・色を選ぶ)
   tool: "move",
   brush: 30,
   tol: 32,
@@ -30,27 +32,27 @@ function css() {
   s.id = "cca-comp-style";
   s.textContent = `
 #cca-comp{position:fixed;inset:0;z-index:1001;background:#000c;display:none;align-items:center;justify-content:center;
-  font:14px/1.5 system-ui,"Segoe UI","Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:#e4e7eb}
+  font:14px/1.5 system-ui,"Segoe UI","Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:var(--text,#e4e7eb)}
 #cca-comp.open{display:flex}
-#cca-comp .box{background:#1a1e25;border:1px solid #303744;border-radius:10px;width:calc(100vw - 32px);height:calc(100vh - 32px);display:flex;flex-direction:column}
+#cca-comp .box{background:var(--bg,#1a1e25);border:1px solid var(--border,#303744);border-radius:10px;width:calc(100vw - 32px);height:calc(100vh - 32px);display:flex;flex-direction:column}
 #cca-comp .hd{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid #303744}
 #cca-comp .hd b{font-size:16px}
 #cca-comp .main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 340px}
 #cca-comp .stage{position:relative;min-width:0;min-height:0;background:repeating-conic-gradient(#20242b 0% 25%,#181b21 0% 50%) 50%/24px 24px}
 #cca-comp canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
-#cca-comp .side{border-left:1px solid #303744;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
-#cca-comp section{border:1px solid #303744;border-radius:8px;padding:8px 10px;background:#161a20}
-#cca-comp h4{margin:0 0 6px;font-size:14px;color:#cfd5dc}
+#cca-comp .side{border-left:1px solid var(--border,#303744);overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+#cca-comp section{border:1px solid var(--border,#303744);border-radius:8px;padding:8px 10px;background:var(--card,#161a20)}
+#cca-comp h4{margin:0 0 6px;font-size:14px;color:var(--text,#cfd5dc)}
 #cca-comp .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-#cca-comp button{background:#20252e;color:#e4e7eb;border:1px solid #3a4250;border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit;font-size:13px}
-#cca-comp button:hover{border-color:#3db4a6}
-#cca-comp button.on{background:#2b8f84;border-color:#3db4a6;color:#fff}
-#cca-comp button.pri{background:#2b8f84;border-color:#3db4a6;color:#fff;font-weight:700}
+#cca-comp button{background:var(--card2,#20252e);color:var(--text,#e4e7eb);border:1px solid var(--border,#3a4250);border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit;font-size:13px}
+#cca-comp button:hover{border-color:var(--accent,#3db4a6)}
+#cca-comp button.on{background:var(--accent,#2b8f84);border-color:var(--accent,#3db4a6);color:var(--accent-fg,#fff)}
+#cca-comp button.pri{background:var(--accent,#2b8f84);border-color:var(--accent,#3db4a6);color:var(--accent-fg,#fff);font-weight:700}
 #cca-comp button:disabled{opacity:.5;cursor:default}
-#cca-comp select{background:#0e1115;color:#e4e7eb;border:1px solid #3a4250;border-radius:6px;padding:5px 8px;font:inherit;font-size:13px;max-width:100%;flex:1;min-width:0}
-#cca-comp label.rg{display:grid;grid-template-columns:7.5em minmax(0,1fr) 3.5em;gap:6px;align-items:center;font-size:13px;color:#c9d1da;margin-top:4px}
-#cca-comp input[type=range]{width:100%;accent-color:#3db4a6}
-#cca-comp .note{font-size:13px;color:#9fb0c2;margin-top:4px}
+#cca-comp select{background:var(--sel-bg,var(--card,#0e1115));color:var(--sel-fg,var(--text,#e4e7eb));border:1px solid var(--sel-border,var(--border,#3a4250));border-radius:6px;padding:5px 8px;font:inherit;font-size:13px;max-width:100%;flex:1;min-width:0}
+#cca-comp label.rg{display:grid;grid-template-columns:7.5em minmax(0,1fr) 3.5em;gap:6px;align-items:center;font-size:13px;color:var(--muted,#c9d1da);margin-top:4px}
+#cca-comp input[type=range]{width:100%;accent-color:var(--accent,#3db4a6)}
+#cca-comp .note{font-size:13px;color:var(--muted,#9fb0c2);margin-top:4px}
 #cca-comp .guide{font-size:13px;background:#231d12;border:1px solid #6b5422;border-radius:6px;padding:6px 8px;margin-top:6px;color:#e8d9b5}
 #cca-comp .guide a{color:#7fd6cb}
 #cca-comp .busy{position:absolute;left:12px;top:12px;background:#000c;padding:6px 10px;border-radius:6px;display:none}
@@ -64,16 +66,20 @@ function build() {
   ui = document.createElement("div");
   ui.id = "cca-comp";
   ui.innerHTML = `<div class="box">
-    <div class="hd"><b>画像の合成</b><span style="color:#9fb0c2;font-size:13px">重ねる画像を切り抜いて、元の画像の上に置きます</span>
+    <div class="hd"><b>画像の合成</b><span style="color:#9fb0c2;font-size:13px">重ねる画像を切り抜いて、元の画像の上に置き、背景を塗りつぶします</span>
       <span style="flex:1"></span><button data-c="close">閉じる</button></div>
     <div class="main">
       <div class="stage"><canvas></canvas><div class="busy"></div></div>
       <div class="side">
-        <section><h4>1. 元の画像(土台)</h4>
+        <section class="card"><h4>0. 背景を塗りつぶす</h4>
+          <div class="row"><select data-c="fill"><option value="white">白</option><option value="black">黒</option><option value="color">色を選ぶ</option></select>
+            <input type="color" data-c="fillcolor" value="#ffffff" style="display:none;width:44px;height:30px;padding:0"></div>
+          <div class="note">透明な所を、この色で塗りつぶします。</div></section>
+        <section class="card"><h4>1. 元の画像(土台)</h4>
           <div class="row"><select data-c="base"></select><button data-c="up-base">挿入</button></div></section>
-        <section><h4>2. 重ねる画像</h4>
+        <section class="card"><h4>2. 重ねる画像</h4>
           <div class="row"><select data-c="layer"></select><button data-c="up-layer">挿入</button></div></section>
-        <section><h4>3. 切り抜く(重ねる画像)</h4>
+        <section class="card"><h4>3. 切り抜く(重ねる画像)</h4>
           <div class="row">
             <button data-tool="move" class="on">移動</button><button data-tool="crop">四角で切り抜く</button>
             <button data-tool="erase">消しゴム</button><button data-tool="wand">色で消す</button>
@@ -83,12 +89,12 @@ function build() {
           <div class="row" style="margin-top:6px"><button data-c="bg">背景を自動で消す</button><button data-c="undo">元に戻す</button><button data-c="reset">切り抜きをやり直す</button></div>
           <div class="note" data-c="toolnote">ドラッグで移動、ホイールで拡大・縮小します。</div>
           <div class="guide" data-c="bgguide" style="display:none"></div></section>
-        <section><h4>4. 配置</h4>
+        <section class="card"><h4>4. 配置</h4>
           <label class="rg">大きさ<input type="range" data-c="scale" min="1" max="400" value="100"><span data-v="scale">100%</span></label>
           <label class="rg">回転<input type="range" data-c="rot" min="-180" max="180" value="0"><span data-v="rot">0°</span></label>
           <label class="rg">不透明度<input type="range" data-c="alpha" min="5" max="100" value="100"><span data-v="alpha">100%</span></label>
           <div class="row" style="margin-top:6px"><button data-c="flip">左右反転</button><button data-c="center">真ん中に置く</button></div></section>
-        <section><h4>5. 仕上げ</h4>
+        <section class="card"><h4>5. 仕上げ</h4>
           <div class="row"><button class="pri" data-c="use">画像1として使う</button><button data-c="download">ダウンロード</button></div>
           <div class="row" style="margin-top:6px"><button data-c="caption">📝 この画像からプロンプトを作る</button></div>
           <div class="note">「画像1として使う」は合成した画像を ComfyUI の input フォルダに保存して、入力画像1にします。
@@ -167,6 +173,8 @@ function draw() {
   const bw = st.base?.naturalWidth || st.layer?.width || 1, bh = st.base?.naturalHeight || st.layer?.height || 1;
   const k = Math.min((r.width - 24) / bw, (r.height - 24) / bh);
   st.view = { k, ox: (r.width - bw * k) / 2, oy: (r.height - bh * k) / 2 };
+  g.fillStyle = fillColor();
+  g.fillRect(st.view.ox, st.view.oy, bw * k, bh * k);
   if (st.base) g.drawImage(st.base, st.view.ox, st.view.oy, bw * k, bh * k);
   if (st.layer) {
     g.save();
@@ -290,6 +298,8 @@ function flatten() {
   const c = document.createElement("canvas");
   c.width = bw; c.height = bh;
   const g = c.getContext("2d");
+  g.fillStyle = fillColor();
+  g.fillRect(0, 0, bw, bh);
   if (st.base) g.drawImage(st.base, 0, 0);
   if (st.layer) {
     g.save();
@@ -397,6 +407,9 @@ function bind() {
     const el = $(`[data-c="${k}"]`);
     el.oninput = () => { fn(Number(el.value)); $(`[data-v="${k}"]`).textContent = fmt(Number(el.value)); draw(); };
   };
+  const fsel = $('[data-c="fill"]'), fcol = $('[data-c="fillcolor"]');
+  fsel.onchange = () => { st.fill.mode = fsel.value; fcol.style.display = fsel.value === "color" ? "" : "none"; draw(); };
+  fcol.oninput = () => { st.fill.color = fcol.value; draw(); };
   slider("brush", (v) => { st.brush = v; }, (v) => `${v}`);
   slider("tol", (v) => { st.tol = v; }, (v) => `${v}`);
   slider("scale", (v) => { st.t.s = v / 100; }, (v) => `${v}%`);

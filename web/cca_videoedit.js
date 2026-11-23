@@ -3668,7 +3668,8 @@ function pick(kind) {
       m.id = "cca-vpick";
       document.body.appendChild(m);
     }
-    const listOf = () => (kind === "image" ? st.media.images : kind === "audio" ? [...(st.media.audios || []), ...st.media.videos] : st.media.videos);
+    const base = () => (kind === "image" ? st.media.images : kind === "audio" ? [...(st.media.audios || []), ...st.media.videos] : st.media.videos);
+    const listOf = () => [...new Set([...(ctx?.galleryFiles ? ctx.galleryFiles(kind === "image" ? "image" : "video") : []), ...base()])];
     let list = listOf();
     m.innerHTML = `<div class="pb"><div class="ph2"><b>${kind === "image" ? "画像を選ぶ" : kind === "audio" ? "音声を選ぶ(音声ファイル・音のある動画)" : "動画を選ぶ"}</b>
       <input data-f placeholder="絞り込み(文字を入力)"><button data-rf title="保存先(output)と input のファイルの一覧を読み直して、最新にします">更新</button><button data-up>挿入</button><button data-x>閉じる</button></div>

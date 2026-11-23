@@ -324,12 +324,21 @@ export async function fileHelp(kind, name) {
 export async function fileCheck(kind, name) {
   return getJSON(`/cca_generator/file_check?kind=${encodeURIComponent(kind)}&name=${encodeURIComponent(name || "")}`);
 }
-export async function openFolder(path) {
-  return postJSON("/cca_generator/open_folder", { path });
+export async function openFolder(path, keep = false) { // keep: リンクの先ではなく、そのパスのまま開く
+  return postJSON("/cca_generator/open_folder", { path, keep });
 }
 export async function modelDirs(action, kind, path) {
   if (!action) return getJSON("/cca_generator/model_dirs");
   return postJSON("/cca_generator/model_dirs", { action, kind, path });
+}
+// 画像・動画を読み込む場所(設定の中)
+export async function mediaDirs(action, kind, path) {
+  if (!action) return getJSON("/cca_generator/media_dirs");
+  return postJSON("/cca_generator/media_dirs", { action, kind, path });
+}
+// フォルダを選ぶ画面を開く(選んだパス。取り消しは空)
+export async function pickFolder(initial, title) {
+  return postJSON("/cca_generator/pick_folder", { initial: initial || "", title: title || "" });
 }
 
 // ---------------------------------------------------------------- state
@@ -878,6 +887,7 @@ app.registerExtension({
       const r = onConfigure?.apply(this, arguments);
       const node = this;
       restoreByName(node, info);
+      { const rw = W(node, "resize_mode"); if (rw && rw.value === "今まで通り") rw.value = "画像1のサイズ"; } // 以前のワークフローの値を新しい名前にする
       const init = !!node.properties?.cca_init;
       if (init) delete node.properties.cca_init;
       ensureLoaded()

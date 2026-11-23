@@ -27,7 +27,7 @@ from .specs import NONE, TYPE_INFO, hires_supported
 from .store import _base_dir
 
 TOOL_NAME = "CCA Generator"
-TOOL_VERSION = 1
+TOOL_VERSION = "1.2.0"  # pyproject.toml の version と同じにする
 HASH_FILE = "model_hashes.json"
 _lock = threading.Lock()
 
@@ -253,6 +253,10 @@ def build_parameters(v, width, height):
         if h:
             f.append(("VAE hash", h))
         f.append(("VAE", os.path.basename(str(v["vae_name"]))))
+    if loader != "ckpt":
+        for key, label in (("clip_name", "Text encoder"), ("clip_name_2", "Text encoder 2")):
+            if v.get(key) not in (None, "", NONE):
+                f.append((label, _stem(v[key])))
 
     if hires:
         f.append(("Denoising strength", _num(v.get("hires_denoise", 0.45))))
@@ -276,6 +280,27 @@ def build_parameters(v, width, height):
     tmpl = v.get("wildcard_template")
     if isinstance(tmpl, str) and tmpl.strip() and tmpl != positive:
         f.append(("Template", tmpl))  # ワイルドカードを置き換える前の文(Dynamic Prompts と同じ名前)
+    # マイナスプロンプト(語と設定)と、範囲別指定(枠・枠ごとのプロンプトと設定)。PNGinfo・履歴から戻せるように入れる
+    def _json(src):
+        raw = v.get(src)
+        try:
+            return json.loads(raw) if isinstance(raw, str) and raw.strip() else None
+        except ValueError:
+            return None
+    mp = _json("negw_settings")
+    if isinstance(mp, dict) and mp.get("terms"):
+        from .regional import METHOD_AUTO, METHOD_DIFF, METHOD_VALUE
+        st = mp.get("settings")
+        if isinstance(st, dict) and st.get("negw_method") in (METHOD_AUTO, METHOD_VALUE, METHOD_DIFF):
+            # 方式は日本語の表示名ではなく英語の値(auto / value / diff)で入れる(PNGinfo で戻すときに表示名に直す)
+            mp = dict(mp, settings=dict(st, negw_method={METHOD_AUTO: "auto", METHOD_VALUE: "value", METHOD_DIFF: "diff"}[st["negw_method"]]))
+        f.append(("CCA Minus Prompt", json.dumps(mp, ensure_ascii=False, separators=(",", ":"))))
+    lay = _json("layout_boxes")
+    if isinstance(lay, dict) and lay.get("boxes"):
+        st = _json("regional_settings")
+        if isinstance(st, dict) and st:
+            lay = dict(lay, settings=st)
+        f.append(("CCA Range", json.dumps(lay, ensure_ascii=False, separators=(",", ":"))))
     f.append(("Version", f"{TOOL_NAME} v{TOOL_VERSION} (ComfyUI)"))
     lines.append(", ".join(f"{k}: {_quote(val)}" for k, val in f))
     return "\n".join(lines)

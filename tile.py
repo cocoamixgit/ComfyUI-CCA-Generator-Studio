@@ -15,14 +15,20 @@ make(images, opts)
     quality         JPG・PDF の画質(1〜100)
     png_compress    PNG の圧縮(0〜9。大きいほどファイルは小さく、保存は遅い)
     name            ファイル名(「CCA_tile」)。保存先は 1 枚目の画像と同じフォルダ(output の中)
+    info            タイルの設定(画面の設定をそのまま)。生成情報と一緒に画像(PNG・JPG・PDF)へ入れ、PNGinfo から戻せるようにする
 戻り値: {"files": [{filename, subfolder, type}], "pages", "width", "height", "format", "count"}
 """
+import base64
+import io
+import json
 import math
 import os
 import re
+import zlib
 
 import folder_paths
 from PIL import Image, ImageDraw, ImageFont
+from PIL.PngImagePlugin import PngInfo
 
 from .i18n import tr
 
@@ -232,6 +238,81 @@ def _flat(page):
     return bg
 
 
+# ---------------------------------------------------------------- 生成情報(PNGinfo で戻せるように入れる)
+def _source_meta(images):
+    """1 枚目の画像(PNG)に入っている生成情報 {parameters, prompt, workflow}。無ければ空"""
+    for x in images:
+        p_ = image_path(x)
+        if not p_:
+            continue
+        try:
+            with Image.open(p_) as im:
+                info = getattr(im, "text", None) or im.info
+                got = {k: info[k] for k in ("parameters", "prompt", "workflow") if isinstance(info.get(k), str) and info[k]}
+        except Exception:  # noqa: BLE001
+            continue
+        if got:
+            return got
+    return {}
+
+
+def _tile_json(opts):
+    info = opts.get("info")
+    if not isinstance(info, dict):
+        return ""
+    s = json.dumps(info, ensure_ascii=False, separators=(",", ":"))
+    return s if len(s) <= 20000 else ""
+
+
+def build_meta(images, opts):
+    """{parameters, prompt, workflow, tile}。parameters は A1111 の書き方の最後の行に「CCA Tile」(タイルの設定)を足す"""
+    m = dict(_source_meta(images))
+    tj = _tile_json(opts)
+    if m.get("parameters") and tj:
+        m["parameters"] = m["parameters"].rstrip() + ", CCA Tile: " + json.dumps(tj, ensure_ascii=False)
+    m["tile"] = tj
+    return m
+
+
+def _exif(text):
+    """JPEG の EXIF UserComment(A1111 と同じ書き方)。EXIF は 64KB までなので、大きいときは UTF-8 にして小さくする"""
+    if not text:
+        return None
+    try:
+        ex = Image.Exif()
+        ifd = ex.get_ifd(0x8769)
+        for body in (b"UNICODE\0" + text.encode("utf-16-be"), b"ASCII\0\0\0" + text.encode("utf-8")):
+            ifd[0x9286] = body
+            b = ex.tobytes()
+            if len(b) < 65000:
+                return b
+    except Exception:  # noqa: BLE001  入れられなくても保存は続ける
+        pass
+    return None
+
+
+def _tool_version():
+    from .pnginfo import TOOL_VERSION  # 生成情報に入れるものと同じ版
+    return TOOL_VERSION
+
+
+def _pdf_keywords(text):
+    """PDF の Keywords に ASCII だけで入れる(PNGinfo が読める): \"CCA1:\" + base64(zlib(JSON))"""
+    if not text:
+        return None
+    raw = json.dumps({"parameters": text}, ensure_ascii=False).encode("utf-8")
+    return "CCA1:" + base64.b64encode(zlib.compress(raw, 9)).decode("ascii")
+
+
+def thumb(page, side=640):
+    """PDF の 1 ページ目の小さな絵(結果の一覧に出す)。data URL"""
+    im = _flat(page)
+    im.thumbnail((side, side), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=72)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 def _subfolder(images):
     for x in images:
         if isinstance(x, dict) and (x.get("type") or "output") == "output" and image_path(x):
@@ -249,11 +330,13 @@ def save(pages, images, opts):
     os.makedirs(folder, exist_ok=True)
     q = _int(opts.get("quality"), 1, 100, 90)
     files = []
+    meta = build_meta(images, opts)
     if fmt == "pdf":
         rgb = [_flat(p) for p in pages]
         file = f"{fname}_{counter:05}_.pdf"
+        kw = {"keywords": _pdf_keywords(meta.get("parameters"))} if meta.get("parameters") else {}
         rgb[0].save(os.path.join(folder, file), "PDF", save_all=True, append_images=rgb[1:], resolution=PDF_DPI,
-                    quality=q, title=name, creator="CCA Generator")
+                    quality=q, title=name, creator=f"CCA Generator v{_tool_version()}", **kw)
         files.append({"filename": file, "subfolder": subfolder, "type": "output"})
     else:
         many = len(pages) > 1
@@ -263,9 +346,16 @@ def save(pages, images, opts):
             if fmt == "png":
                 if p.getextrema()[3][0] == 255:
                     p = p.convert("RGB")  # 透明な所が無ければ RGB で(小さくなる)
-                p.save(path, "PNG", compress_level=_int(opts.get("png_compress"), 0, 9, 6))
+                pi = PngInfo()
+                for k in ("parameters", "prompt", "workflow"):
+                    if meta.get(k):
+                        pi.add_text(k, meta[k])
+                if not meta.get("parameters") and meta.get("tile"):
+                    pi.add_text("CCA Tile", meta["tile"])
+                p.save(path, "PNG", pnginfo=pi, compress_level=_int(opts.get("png_compress"), 0, 9, 6))
             else:
-                _flat(p).save(path, "JPEG", quality=q)
+                ex = _exif(meta.get("parameters"))
+                _flat(p).save(path, "JPEG", quality=q, **({"exif": ex} if ex else {}))
             files.append({"filename": file, "subfolder": subfolder, "type": "output"})
     return files
 
@@ -276,5 +366,8 @@ def make(images, opts):
     opts = opts if isinstance(opts, dict) else {}
     pages = compose(images, opts)
     files = save(pages, images, opts)
-    return {"files": files, "pages": len(pages), "width": pages[0].width, "height": pages[0].height,
-            "format": opts.get("format") if opts.get("format") in FORMATS else "jpg", "count": len(images)}
+    fmt = opts.get("format") if opts.get("format") in FORMATS else "jpg"
+    res = {"files": files, "pages": len(pages), "width": pages[0].width, "height": pages[0].height, "format": fmt, "count": len(images)}
+    if fmt == "pdf":
+        res["thumb"] = thumb(pages[0])  # 結果の一覧(ギャラリー)に出す 1 ページ目の絵
+    return res

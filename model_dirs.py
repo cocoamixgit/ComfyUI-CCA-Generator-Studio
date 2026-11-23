@@ -47,6 +47,12 @@ KIND_HELP = {
     "latent_upscale_models": "LTX-2.5 の動画を 2 倍にするモデル(ltx-2.5-latent-spatial-upscaler-x2)を入れます。"
                              "LTX-2.5 を使わないなら要りません。",
 }
+# チェックポイントと拡散モデルは同じフォルダに入れる人が多いので、フォルダの設定は 1 つにまとめる(追加すると両方に登録する)
+PAIR = ("checkpoints", "diffusion_models")
+PAIR_LABEL = "チェックポイント・拡散モデル"
+PAIR_HELP = ("SD1.5・SDXL・Illustrious のチェックポイントと、MOSS・Qwen Image・Anima・Krea2・FLUX.2/3 Klein・Wan2.2・LTX-2.5・Kandinsky 6 などの拡散モデルを入れます。"
+             "同じフォルダに一緒に入れてかまいません。追加したフォルダは、チェックポイントと拡散モデルの両方の選択肢に出ます"
+             "(使わないほうの選択肢にも並びます)。Kandinsky 6 はフォルダごと(Kandinsky-6.0-…/transformer/…)入れます。")
 MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".sft")
 COUNT_LIMIT = 20000
 # StabilityMatrix の共有モデルフォルダ(Data/Models/<名前>)の名前 → ComfyUI の種類
@@ -84,7 +90,13 @@ def load():
         data = {}
     if not isinstance(data, dict):
         data = {}
-    return {k: [p for p in data.get(k, []) if isinstance(p, str)] for k in KINDS}
+    out = {k: [p for p in data.get(k, []) if isinstance(p, str)] for k in KINDS}
+    both = []
+    for k in PAIR:  # 片方だけに入っていた前の版の設定も、両方に入れる
+        both += [p for p in out[k] if p not in both]
+    for k in PAIR:
+        out[k] = list(both)
+    return out
 
 
 def _save(data):
@@ -129,13 +141,16 @@ def add(kind, path):
     p = normalize(path)
     if not os.path.isdir(p):
         raise ValueError(tr('フォルダが見つかりません: {p}', p=p))
+    group = PAIR if kind in PAIR else (kind,)
     with _lock:
         data = load()
-        if p not in data[kind]:
-            data[kind].append(p)
-            _save(data)
-    folder_paths.add_model_folder_path(kind, p)
-    _invalidate(kind)
+        for k in group:
+            if p not in data[k]:
+                data[k].append(p)
+        _save(data)
+    for k in group:
+        folder_paths.add_model_folder_path(k, p)
+        _invalidate(k)
     return p
 
 
@@ -147,15 +162,18 @@ def remove(kind, path):
         data = load()
         if p not in data[kind]:
             raise ValueError(tr('このパネルで追加したフォルダだけ外せます'))
-        data[kind].remove(p)
+        for k in (PAIR if kind in PAIR else (kind,)):
+            if p in data[k]:
+                data[k].remove(p)
         _save(data)
-    try:
-        paths = folder_paths.folder_names_and_paths[kind][0]
-        if p in paths:
-            paths.remove(p)
-    except Exception:
-        pass
-    _invalidate(kind)
+    for k in (PAIR if kind in PAIR else (kind,)):
+        try:
+            paths = folder_paths.folder_names_and_paths[k][0]
+            if p in paths:
+                paths.remove(p)
+        except Exception:
+            pass
+        _invalidate(k)
 
 
 def _source(path, custom_paths):
@@ -168,20 +186,38 @@ def _source(path, custom_paths):
     return "extra"  # extra_model_paths.yaml や起動オプションで追加されたもの(StabilityMatrix など)
 
 
-def count_models(path, limit=COUNT_LIMIT):
-    """フォルダの中(下のフォルダも含む)のモデルファイルの数。(数, 上限で打ち切ったか)"""
-    n = seen = 0
+def scan_models(path, limit=COUNT_LIMIT):
+    """フォルダの中(下のフォルダも含む)のモデルファイルを数える。
+    {count: 全部の数, direct: 直下の数, more: 上限で打ち切ったか, skipped: [[拡張子, 数], …](数えなかったファイルの多い順)}"""
+    n = direct = seen = 0
+    skipped, more = {}, False
+    top = os.path.normcase(os.path.normpath(path))
     try:
-        for _root, _dirs, files in os.walk(path, followlinks=True):
+        for root, _dirs, files in os.walk(path, followlinks=True):
+            here = os.path.normcase(os.path.normpath(root)) == top
             for f in files:
                 seen += 1
                 if f.lower().endswith(MODEL_EXTS):
                     n += 1
+                    direct += here
+                else:
+                    ext = os.path.splitext(f)[1].lower()
+                    skipped[ext] = skipped.get(ext, 0) + 1
                 if seen >= limit:
-                    return n, True
+                    more = True
+                    break
+            if more:
+                break
     except Exception:
         pass
-    return n, False
+    return {"count": n, "direct": direct, "more": more,
+            "skipped": sorted(([e, c] for e, c in skipped.items()), key=lambda x: -x[1])[:6]}
+
+
+def count_models(path, limit=COUNT_LIMIT):
+    """フォルダの中(下のフォルダも含む)のモデルファイルの数。(数, 上限で打ち切ったか)"""
+    d = scan_models(path, limit)
+    return d["count"], d["more"]
 
 
 def info(counts=True):
@@ -210,13 +246,34 @@ def info(counts=True):
             it = {"path": real, "registered": p, "custom": p in custom[kind], "source": _source(p, custom[kind]),
                   "real": real if os.path.normcase(real) != os.path.normcase(os.path.abspath(p)) else ""}
             if counts:
-                it["count"], it["more"] = count_models(real)
+                d = scan_models(real)
+                it.update(count=d["count"], more=d["more"], direct=d["direct"], skipped=d["skipped"])
             seen[key] = it
             items.append(it)
         if counts:
             items.sort(key=lambda x: -x.get("count", 0))
         out[kind] = {"label": label, "help": KIND_HELP.get(kind, ""), "paths": items}
     return out
+
+
+def info_merged(counts=True):
+    """設定の画面用: チェックポイントと拡散モデルを 1 つにまとめた info()。各フォルダに kinds(使われる種類)を付ける"""
+    d = info(counts)
+    seen, paths = {}, []
+    for kind in PAIR:
+        for it in d[kind]["paths"]:
+            key = os.path.normcase(it["path"])
+            if key in seen:
+                seen[key]["kinds"].append(kind)
+                seen[key]["custom"] = seen[key]["custom"] or it["custom"]
+                continue
+            seen[key] = dict(it, kinds=[kind])
+            paths.append(seen[key])
+    if counts:
+        paths.sort(key=lambda x: -x.get("count", 0))
+    d[PAIR[0]] = {"label": PAIR_LABEL, "help": PAIR_HELP, "paths": paths}
+    del d[PAIR[1]]
+    return d
 
 
 def _read_json(path):
@@ -401,6 +458,12 @@ def known_folder(path):
                 allowed.add(os.path.normcase(os.path.realpath(x)))
         except Exception:
             pass
+    try:
+        from . import media_dirs
+        for x in media_dirs.all_paths():
+            allowed.update({os.path.normcase(os.path.normpath(x)), os.path.normcase(os.path.realpath(x))})
+    except Exception:
+        pass
     inp = folder_paths.get_input_directory()
     allowed.update({os.path.normcase(os.path.normpath(inp)), os.path.normcase(os.path.realpath(inp))})
     # 追加ノードを手で入れるときに開く custom_nodes フォルダ
@@ -444,13 +507,14 @@ def _launch(target):
         subprocess.Popen(["xdg-open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def open_folder(path):
-    """リンク(ジャンクション・シンボリックリンク)のフォルダは、実体(リンクの先)を開く。"""
+def open_folder(path, follow_links=True):
+    """リンク(ジャンクション・シンボリックリンク)のフォルダは、実体(リンクの先)を開く。
+    follow_links=False のときは、表示されているパスのまま開く(画像・動画を読み込む場所)。"""
     p = known_folder(path)
     if not p:
         raise ValueError(tr('このフォルダは開けません'))
     real = os.path.realpath(p)
-    target = real if os.path.isdir(real) else p
+    target = real if follow_links and os.path.isdir(real) else p
     if not os.path.isdir(target):
         if _under(target, os.path.join(getattr(folder_paths, "base_path", "") or os.getcwd(), "models")) \
                 or (_font_dir() and _under(target, _font_dir())):

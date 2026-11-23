@@ -1,3 +1,4 @@
+import { T } from "./cca_i18n.js";
 // 配色(テーマ)の切り替え。生成パネル・画像編集・動画編集の色を、選んだ配色に置き換える。
 // 画面の色はもとの配色(クラシック。暗い色)で書いてあり、ここで 1 色ずつ置き換える:
 //   - 色の少ない色(背景・線・文字): もとの明るさの順に、配色の背景 bg → 文字 fg の間の色にする(明るい配色では明るさが逆になる)
@@ -63,7 +64,9 @@ export const THEMES = [
       "--accent-fg": "#faf6ee",  // 強調色の上の文字
       "--danger": "#8c6f55",  // エラー・警告の色
       "--warn": "#bfa987",  // 注意の色
-      "--ok": "#6c7c54"  // 成功の色
+      "--ok": "#6c7c54",  // 成功の色
+      "--sec-a": "#faf6ee",  // 設定の欄の色(奇数番目)
+      "--sec-b": "#e9dfcb"   // 設定の欄の色(偶数番目)。欄ごとに交互に色分けする
     },
     deco: {
       cardShadow: "0 2px 10px rgba(42, 29, 20, 0.14), inset 0 1px 0 rgba(250, 246, 238, 0.78)",  // 欄(カード)の影
@@ -976,7 +979,7 @@ const MENU_VARS = ["--text", "--muted", "--border", "--card", "--card2", "--acce
 const customSelects = new WeakMap();
 
 function initCustomSelects() {
-  const roots = "#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask";
+  const roots = "#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout";
 
   let style = document.getElementById("cca-custom-select-style");
   if (!style) {
@@ -1044,6 +1047,25 @@ function initCustomSelects() {
         background: var(--sel-menu-bg, var(--card, Canvas));
         color: var(--sel-menu-fg, var(--text, CanvasText));
         box-shadow: 0 5px 18px rgba(0,0,0,.28);
+      }
+      .cca-select-filter {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin: 0 0 4px;
+        padding: 6px 8px;
+        border: 1px solid var(--sel-menu-border, var(--border, #888));
+        border-radius: 6px;
+        background: var(--sel-menu-bg, var(--card, Canvas));
+        color: var(--sel-menu-fg, var(--text, CanvasText));
+        font: inherit;
+      }
+      .cca-select-none {
+        padding: 8px 9px;
+        opacity: .7;
       }
       .cca-select-option {
         display: block;
@@ -1184,6 +1206,16 @@ function initCustomSelects() {
       sync();
       menu.replaceChildren();
       let hasNote = false;
+      // 絞り込み(生成パネル・フォルダ設定・モデルの案内の選択欄)
+      let filter = null;
+      if (select.closest("#cca-ui, #cca-dirs, #cca-guide")) {
+        filter = document.createElement("input");
+        filter.type = "text";
+        filter.className = "cca-select-filter";
+        filter.placeholder = T("絞り込み(文字を入力)");
+        filter.setAttribute("autocomplete", "off");
+        menu.appendChild(filter);
+      }
 
       const addOption = (option, index) => {
         const item = document.createElement("button");
@@ -1270,15 +1302,46 @@ function initCustomSelects() {
       }
 
       // 非表示のままでは高さが 0 になり 320 で計算してしまうので、見えない状態で表示して実際の高さを測る
+      const place = () => {
+        const menuHeight = menu.offsetHeight;
+        const below = window.innerHeight - r.bottom;
+        menu.style.top = below >= menuHeight + 8
+          ? `${r.bottom + 3}px`
+          : `${Math.max(4, r.top - menuHeight - 3)}px`;
+      };
       menu.style.visibility = "hidden";
       menu.hidden = false;
-      const menuHeight = menu.offsetHeight;
-      const below = window.innerHeight - r.bottom;
-      menu.style.top = below >= menuHeight + 8
-        ? `${r.bottom + 3}px`
-        : `${Math.max(4, r.top - menuHeight - 3)}px`;
+      place();
       menu.style.visibility = "";
       button.setAttribute("aria-expanded", "true");
+
+      if (filter) {
+        const none = document.createElement("div");
+        none.className = "cca-select-none";
+        none.textContent = T("一致するものがありません");
+        none.style.display = "none";
+        menu.appendChild(none);
+        filter.addEventListener("input", () => {
+          const q = filter.value.trim().toLowerCase();
+          let head = null, headShown = false, any = false;
+          for (const el of menu.children) {
+            if (el.classList.contains("cca-select-group")) { head = el; headShown = false; el.style.display = q ? "none" : ""; continue; }
+            if (!el.classList.contains("cca-select-option")) continue;
+            const hit = !q || el.textContent.toLowerCase().includes(q) || (el.title || "").toLowerCase().includes(q);
+            el.style.display = hit ? "" : "none";
+            if (hit) { any = true; if (head && !headShown) { head.style.display = ""; headShown = true; } }
+          }
+          none.style.display = any ? "none" : "";
+          place();
+        });
+        filter.addEventListener("keydown", event => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const first = [...menu.querySelectorAll(".cca-select-option:not(:disabled)")].find(x => x.style.display !== "none");
+          first?.click();
+        });
+        filter.focus({ preventScroll: true });
+      }
 
       const selected = menu.querySelector('[aria-selected="true"]');
       selected?.scrollIntoView({ block: "nearest" });
@@ -1301,7 +1364,7 @@ function initCustomSelects() {
     });
 
     menu.addEventListener("keydown", event => {
-      const items = [...menu.querySelectorAll(".cca-select-option:not(:disabled)")];
+      const items = [...menu.querySelectorAll(".cca-select-option:not(:disabled)")].filter(x => x.style.display !== "none");
       const current = items.indexOf(document.activeElement);
 
       if (event.key === "Escape") {
@@ -1384,7 +1447,7 @@ function decoCss(th) {
   };
   const ga = (c) => fmt(hex(c), al.panel); // グラデーションの色(色の不透明度 × panel)
   const [g0, g1] = (th.grad || (th.light ? [th.bg, mixHex(th.bg, th.fg, 0.45) + hex(th.bg)[3].toString(16).padStart(2, "0")] : [mixHex(th.bg, th.accent, 0.22) + hex(th.bg)[3].toString(16).padStart(2, "0"), th.bg])).map(ga);
-  const [ar, ag, ab, aa] = hex(th.accent), B = ":is(#cca-ui, #cca-vedit, #cca-imged, .cca-askclose) button:not(:disabled):not(.errx)";
+  const [ar, ag, ab, aa] = hex(th.accent), B = ":is(#cca-ui, #cca-vedit, #cca-imged, #cca-comp, #cca-pnginfo, .cca-askclose) button:not(:disabled):not(.errx)";
   const varLines = [
     ...Object.entries(th.vars || {}).map(([k, v]) => `${k}:${v}`),
     ...Object.entries(SELECT_VARS).filter(([k]) => th.select?.[k] != null).map(([k, name]) => `${name}:${th.select[k]}`)
@@ -1393,7 +1456,7 @@ function decoCss(th) {
     .filter(([k]) => th.select?.[k] != null)
     .map(([k, prop]) => `${prop}:var(${SELECT_VARS[k]}) !important`).join(";");
   const cardPct = Math.round(clamp(al.card, 0, 1) * 100);
-  const ROOTS = ":is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask)";
+  const ROOTS = ":is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout)";
   // 選んでいるボタン(.on)の文字色(スナップ以外)。.on.on は、項目ごとの色指定(.seg button.on)より優先させるため
   const snapOn = [["bg", "background-color"], ["fg", "color"], ["border", "border-color"]]
     .filter(([k]) => th.snapOn?.[k] != null)
@@ -1412,17 +1475,17 @@ function decoCss(th) {
       + `${sel} button.pri,${sel} .seg button.on{background-color:var(--sec-accent) !important;color:var(--accent-fg) !important;border-color:var(--sec-accent) !important}`;
   }).join("\n");
   const textCss = [
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask){color:var(--text)}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask) :is(summary,.sec-head,h1,h2,h3,h4,b,strong){color:var(--text)}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask) :is(.note,.hint,.help,.sub,.muted,.desc,.tip,small,label){color:var(--muted) !important}`,
+    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout){color:var(--text)}`,
+    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) :is(summary,.sec-head,h1,h2,h3,h4,b,strong){color:var(--text)}`,
+    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) :is(.note,.hint,.help,.sub,.muted,.desc,.tip,small,label){color:var(--muted) !important}`,
     `:is(#cca-ui,#cca-vedit,#cca-imged) .note{background:transparent !important;border:none !important;box-shadow:none !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask) :is(input,textarea,select){color:var(--text) !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask) select option:hover{background:var(--hover, revert) !important;color:var(--text) !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask) select option:checked{background:var(--checked, revert) !important;color:var(--text) !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask) button.pri,:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask) .seg button.on{background-color:var(--accent) !important;color:var(--accent-fg) !important;border-color:var(--accent) !important}`
+    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) :is(input,textarea,select){color:var(--text) !important}`,
+    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) select option:hover{background:var(--hover, revert) !important;color:var(--text) !important}`,
+    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) select option:checked{background:var(--checked, revert) !important;color:var(--text) !important}`,
+    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) button.pri,:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) .seg button.on{background-color:var(--accent) !important;color:var(--accent-fg) !important;border-color:var(--accent) !important}`
   ].join("\n");
-  return `${varLines ? `#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask{${varLines}}\n` : ""}#cca-ui, #cca-vedit > .win, #cca-imged > .win{background-image:linear-gradient(170deg, ${g0}, ${g1}) !important}
-#cca-ui .card, #cca-vedit .card, #cca-imged .card{background-color:color-mix(in srgb, var(--card) ${cardPct}%, transparent);box-shadow:${deco.cardShadow}}
+  return `${varLines ? `#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-zoom,#cca-layout{${varLines}}\n` : ""}#cca-ui, #cca-vedit > .win, #cca-imged > .win, #cca-comp > .box, #cca-pnginfo > .box{background-image:linear-gradient(170deg, ${g0}, ${g1}) !important}
+#cca-ui .card, #cca-vedit .card, #cca-imged .card, #cca-comp .card, #cca-pnginfo .card{background-color:color-mix(in srgb, var(--card) ${cardPct}%, transparent);box-shadow:${deco.cardShadow}}
 ${B}{background-image:${deco.btnGrad} !important;box-shadow:${deco.btnShadow}}
 ${B}:hover{filter:brightness(1.06)}
 ${B}:active{box-shadow:${deco.btnActiveShadow}}
@@ -1440,7 +1503,7 @@ function spinDecl({ bg, fg }) {
 function tuneCss(th) {
   const t = th.tune;
   if (!t) return "";
-  const R = ":is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-hbox)";
+  const R = ":is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-hbox)";
   const sel = (arr) => arr.map((x) => `${R} ${x}`).join(", ");
   const decl = (o) => Object.entries(o).filter(([, v]) => v != null).map(([k, v]) => `${k}:${v} !important`).join(";");
   const op = t.solid ? 1 : null;
@@ -1454,14 +1517,14 @@ function tuneCss(th) {
       [sel([`.ly.grp[style*="--g:${g}"]`]), { "--g": v.hue }],
       [sel([`.ly.grp[style*="--g:${g}"] .gtag`]), { color: v.fg }]
     ]),
-    ...(t.scroll ? [
-      [`${R}, ${R} *`, { "scrollbar-color": `${t.scroll.thumb} ${t.scroll.track}` }], // 新しい Chrome・Firefox
-      [`${R} ::-webkit-scrollbar, ${R}::-webkit-scrollbar`, { width: "12px", height: "12px", background: t.scroll.track }], // 古い Chrome
-      [`${R} ::-webkit-scrollbar-track, ${R}::-webkit-scrollbar-track`, { background: t.scroll.track }],
-      [`${R} ::-webkit-scrollbar-thumb, ${R}::-webkit-scrollbar-thumb`, { background: t.scroll.thumb, "border-radius": "8px", border: `2px solid ${t.scroll.track}` }],
-      [`${R} ::-webkit-scrollbar-thumb:hover, ${R}::-webkit-scrollbar-thumb:hover`, { background: t.scroll.hover || t.scroll.thumb }],
-      [`${R} ::-webkit-scrollbar-button, ${R}::-webkit-scrollbar-button`, { display: "none" }]
-    ] : []),
+    ...(t.scroll ? ((S) => [
+      [`${S}, ${S} *`, { "scrollbar-color": `${t.scroll.thumb} ${t.scroll.track}` }], // 新しい Chrome・Firefox
+      [`${S} ::-webkit-scrollbar, ${S}::-webkit-scrollbar`, { width: "12px", height: "12px", background: t.scroll.track }], // 古い Chrome
+      [`${S} ::-webkit-scrollbar-track, ${S}::-webkit-scrollbar-track`, { background: t.scroll.track }],
+      [`${S} ::-webkit-scrollbar-thumb, ${S}::-webkit-scrollbar-thumb`, { background: t.scroll.thumb, "border-radius": "8px", border: `2px solid ${t.scroll.track}` }],
+      [`${S} ::-webkit-scrollbar-thumb:hover, ${S}::-webkit-scrollbar-thumb:hover`, { background: t.scroll.hover || t.scroll.thumb }],
+      [`${S} ::-webkit-scrollbar-button, ${S}::-webkit-scrollbar-button`, { display: "none" }]
+    ])(`:is(${R.slice(4, -1)},[id^="cca-"],.cca-select-menu)`) : []), // 生成パネルの外にあるダイアログ・プルダウンの一覧も含める
     ...(t.layerSel ? [[sel([".ly.sel"]), { background: t.layerSel.bg, "border-color": t.layerSel.border, color: "#1a100a" }]] : []),
     ...(t.check ? [[sel(["input[type=checkbox]", "input[type=radio]"]), { "accent-color": t.check, "color-scheme": "light" }]] : []),
     ...(t.spin ? [[sel(["input[type=number]::-webkit-inner-spin-button"]), spinDecl(t.spin)]] : []),

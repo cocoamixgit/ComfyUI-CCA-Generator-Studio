@@ -6,6 +6,7 @@ from .pnginfo import NODES as PNGINFO_NODES
 from .videoedit import NODES as VIDEOEDIT_NODES
 from .rvcnode import NODES as RVC_NODES
 from .panel import PARTS, CCAEditLatent, CCAGeneratorPanel, CCAGeneratorRoutes, CCAHiresFix, CCAMidFrameGuide, CCASizeSelect
+from .regional import CCAGenAdv
 from .server import register_prompt_hook, register_routes
 
 NODE_CLASS_MAPPINGS = {
@@ -15,6 +16,7 @@ NODE_CLASS_MAPPINGS = {
     "CCASizeSelect": CCASizeSelect,
     "CCAMidFrameGuide": CCAMidFrameGuide,
     "CCAEditLatent": CCAEditLatent,
+    "CCAGenAdv": CCAGenAdv,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CCAGeneratorPanel": "CCA Generator Panel",
@@ -23,6 +25,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CCASizeSelect": "CCA 出力サイズの切り替え",
     "CCAMidFrameGuide": "CCA 途中のフレーム(MiniMax H3)",
     "CCAEditLatent": "CCA 編集の始まり(マスクが無ければ元の画像)",
+    "CCAGenAdv": "CCA Generator (内部: マイナスプロンプト / 範囲別指定)",
 }
 for _name, (_cls, _label) in {**EXTRA_NODES, **IMGEDIT_NODES, **VIDEOEDIT_NODES, **PNGINFO_NODES, **AUDIO_NODES, **RVC_NODES}.items():
     NODE_CLASS_MAPPINGS[_name] = _cls

@@ -45,7 +45,15 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 ## Changelog
 - If you installed using the Quick Installer, updating is as simple as overwriting all existing files.
 
-### Version 1.1 – Changes
+
+### Version 1.2 – Changes & Fixes  -2026/11/23
+* Added the ability to retrieve PNG Info and apply the information to settings.
+* Added a feature for specifying prompt regions, similar to Regional Prompter.
+* Experimentally added a NegPiP-like `(test:-1.0)` syntax feature (Beta).
+* Added a feature that allows transparent PNG backgrounds to be filled by processing image composition twice when creating images.
+* Fixed and improved various dropdown menus and settings.
+
+### Version 1.1 – Changes & Fixes  -2026/11/22
 * Fixed dropdown menu issues.
 * Adjusted the positioning of the top buttons.
 * Added left, center, and right text alignment options.

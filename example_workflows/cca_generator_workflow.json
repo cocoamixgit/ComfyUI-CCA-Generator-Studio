@@ -1,8 +1,8 @@
 {
   "id": "11c2c016-8e68-4660-a3b3-a9fc91c26e8a",
   "revision": 2,
-  "last_node_id": 402,
-  "last_link_id": 1569,
+  "last_node_id": 404,
+  "last_link_id": 1582,
   "nodes": [
     {
       "id": 379,
@@ -688,7 +688,7 @@
       "title": "使い方",
       "properties": {},
       "widgets_values": [
-        "# CCA Generator\n\n1. 画面上部の **CCA 生成パネル** ボタンを押すと、生成パネルが開きます。\n2. パネルの **? 使い方** で、モデルごとの使い方を見られます。\n3. 項目は見出しを押すと折りたためます。「⇅ 並べ替え」を押している間は、見出しをドラッグして位置を変えられます\n   (つかんだ項目は中身ごと動き、入る所が空きます)。「✔ 完了」で固定、「元の並びに戻す」で最初の並びに戻ります。  \n4. 「⚙ 設定の書き出し / 読み込み」で、パネルの設定・プロンプトのプリセット・テンプレート・編集画面の設定・項目の並びを\n   1 つのファイルにまとめて、別の PC に持っていけます。  \n5. 何枚も作って 1 枚に並べる(文字を置き換えて比べる)には「複数画像タイル生成」、プロンプトの言葉を生成のたびに変えるには  \n   「🎲 ワイルドカード」を使います(? 使い方 の「複数画像タイル生成・ワイルドカード」)。  \n"
+        "# CCA Generator\n\n1. 画面上部の **CCA 生成パネル** ボタンを押すと、生成パネルが開きます。\n2. パネルの **? 使い方** で、モデルごとの使い方を見られます。\n3. 項目は見出しを押すと折りたためます。「⇅ 並べ替え」を押している間は、見出しをドラッグして位置を変えられます\n   (つかんだ項目は中身ごと動き、入る所が空きます)。「✔ 完了」で固定、「移動を戻す」で並べ替えを始める前の並びに、「デフォルトの状態に戻す」で最初の並びに戻ります。  \n4. 「⚙ 設定の書き出し / 読み込み」で、パネルの設定・プロンプトのプリセット・テンプレート・編集画面の設定・項目の並びを\n   1 つのファイルにまとめて、別の PC に持っていけます。  \n5. 何枚も作って 1 枚に並べる(文字を置き換えて比べる)には「複数画像タイル生成」、プロンプトの言葉を生成のたびに変えるには  \n   「🎲 ワイルドカード」を使います(? 使い方 の「複数画像タイル生成・ワイルドカード」)。  \n"
       ],
       "color": "#432",
       "bgcolor": "#653"
@@ -21869,8 +21869,8 @@
         "version": 1,
         "state": {
           "lastGroupId": 17,
-          "lastNodeId": 402,
-          "lastLinkId": 1569,
+          "lastNodeId": 404,
+          "lastLinkId": 1582,
           "lastRerouteId": 0
         },
         "revision": 0,
@@ -21927,7 +21927,8 @@
               1474,
               1493,
               1507,
-              1526
+              1526,
+              1571
             ],
             "label": "プロンプト",
             "pos": [
@@ -21991,7 +21992,8 @@
               1464,
               1481,
               1495,
-              1514
+              1514,
+              1575
             ],
             "label": "幅",
             "pos": [
@@ -22023,7 +22025,8 @@
               1465,
               1482,
               1496,
-              1515
+              1515,
+              1576
             ],
             "label": "高さ",
             "pos": [
@@ -22124,7 +22127,8 @@
               1476,
               1494,
               1509,
-              1528
+              1528,
+              1572
             ],
             "label": "シード",
             "pos": [
@@ -22163,7 +22167,8 @@
               1460,
               1477,
               1510,
-              1529
+              1529,
+              1573
             ],
             "label": "ステップ数",
             "pos": [
@@ -22202,7 +22207,8 @@
               1461,
               1478,
               1511,
-              1530
+              1530,
+              1574
             ],
             "label": "CFG",
             "pos": [
@@ -22353,7 +22359,8 @@
               1471,
               1488,
               1503,
-              1523
+              1523,
+              1570
             ],
             "label": "モデル",
             "pos": [
@@ -22586,7 +22593,8 @@
               1397,
               1404,
               1466,
-              1483
+              1483,
+              1577
             ],
             "label": "倍率指定",
             "pos": [
@@ -22657,7 +22665,8 @@
               1467,
               1484,
               1499,
-              1518
+              1518,
+              1578
             ],
             "label": "参照画像(一覧)",
             "pos": [
@@ -28537,6 +28546,14 @@
                   1520
                 ],
                 "slot_index": 26
+              },
+              {
+                "name": "route_27",
+                "type": "BOOLEAN",
+                "links": [
+                  1581
+                ],
+                "slot_index": 27
               }
             ],
             "title": "ルート (どの処理を使うか)",
@@ -28877,7 +28894,7 @@
                 "name": "output",
                 "type": "IMAGE",
                 "links": [
-                  1487
+                  1579
                 ]
               }
             ],
@@ -29252,7 +29269,7 @@
                 "localized_name": "image",
                 "name": "image",
                 "type": "IMAGE",
-                "link": 1487
+                "link": 1582
               },
               {
                 "localized_name": "hires",
@@ -29338,6 +29355,148 @@
             "widgets_values": [],
             "color": "#2a363b",
             "bgcolor": "#3f5159"
+          },
+          {
+            "id": 403,
+            "type": "CCASenseNova",
+            "pos": [
+              1060,
+              6074
+            ],
+            "size": [
+              360,
+              258
+            ],
+            "flags": {},
+            "order": 0,
+            "mode": 0,
+            "inputs": [
+              {
+                "localized_name": "model",
+                "name": "model",
+                "type": "MODEL",
+                "link": 1570
+              },
+              {
+                "localized_name": "positive",
+                "name": "positive",
+                "type": "STRING",
+                "link": 1571
+              },
+              {
+                "localized_name": "seed",
+                "name": "seed",
+                "type": "INT",
+                "link": 1572
+              },
+              {
+                "localized_name": "steps",
+                "name": "steps",
+                "type": "INT",
+                "link": 1573
+              },
+              {
+                "localized_name": "cfg",
+                "name": "cfg",
+                "type": "FLOAT",
+                "link": 1574
+              },
+              {
+                "localized_name": "width",
+                "name": "width",
+                "type": "INT",
+                "link": 1575
+              },
+              {
+                "localized_name": "height",
+                "name": "height",
+                "type": "INT",
+                "link": 1576
+              },
+              {
+                "localized_name": "size_by_scale",
+                "name": "size_by_scale",
+                "type": "BOOLEAN",
+                "link": 1577
+              },
+              {
+                "localized_name": "ref_images",
+                "name": "ref_images",
+                "type": "CCA_IMAGES",
+                "link": 1578,
+                "shape": 7
+              }
+            ],
+            "outputs": [
+              {
+                "localized_name": "image",
+                "name": "image",
+                "type": "IMAGE",
+                "links": [
+                  1580
+                ]
+              }
+            ],
+            "title": "SenseNova-U1.6(テキスト→画像 / 画像→画像)※追加ノード ComfyUI-SenseNova-U1",
+            "properties": {
+              "Node name for S&R": "CCASenseNova"
+            },
+            "widgets_values": [],
+            "color": "#2a363b",
+            "bgcolor": "#3f5159"
+          },
+          {
+            "id": 404,
+            "type": "ComfySwitchNode",
+            "pos": [
+              2350,
+              -120
+            ],
+            "size": [
+              270,
+              100
+            ],
+            "flags": {},
+            "order": 0,
+            "mode": 0,
+            "inputs": [
+              {
+                "name": "on_false",
+                "shape": 7,
+                "type": "IMAGE",
+                "link": 1579
+              },
+              {
+                "name": "on_true",
+                "shape": 7,
+                "type": "IMAGE",
+                "link": 1580
+              },
+              {
+                "name": "switch",
+                "type": "BOOLEAN",
+                "widget": {
+                  "name": "switch"
+                },
+                "link": 1581
+              }
+            ],
+            "outputs": [
+              {
+                "name": "output",
+                "type": "IMAGE",
+                "links": [
+                  1582
+                ]
+              }
+            ],
+            "title": "Route: SenseNova-U1.6",
+            "properties": {
+              "Node name for S&R": "ComfySwitchNode"
+            },
+            "widgets_values": [
+              false
+            ]
           }
         ],
         "groups": [
@@ -33357,14 +33516,6 @@
             "type": "BOOLEAN"
           },
           {
-            "id": 1487,
-            "origin_id": 397,
-            "origin_slot": 0,
-            "target_id": 402,
-            "target_slot": 0,
-            "type": "IMAGE"
-          },
-          {
             "id": 1522,
             "origin_id": -10,
             "origin_slot": 23,
@@ -33467,6 +33618,110 @@
             "target_id": -20,
             "target_slot": 1,
             "type": "VIDEO"
+          },
+          {
+            "id": 1570,
+            "origin_id": -10,
+            "origin_slot": 13,
+            "target_id": 403,
+            "target_slot": 0,
+            "type": "MODEL"
+          },
+          {
+            "id": 1571,
+            "origin_id": -10,
+            "origin_slot": 0,
+            "target_id": 403,
+            "target_slot": 1,
+            "type": "STRING"
+          },
+          {
+            "id": 1572,
+            "origin_id": -10,
+            "origin_slot": 7,
+            "target_id": 403,
+            "target_slot": 2,
+            "type": "INT"
+          },
+          {
+            "id": 1573,
+            "origin_id": -10,
+            "origin_slot": 8,
+            "target_id": 403,
+            "target_slot": 3,
+            "type": "INT"
+          },
+          {
+            "id": 1574,
+            "origin_id": -10,
+            "origin_slot": 9,
+            "target_id": 403,
+            "target_slot": 4,
+            "type": "FLOAT"
+          },
+          {
+            "id": 1575,
+            "origin_id": -10,
+            "origin_slot": 2,
+            "target_id": 403,
+            "target_slot": 5,
+            "type": "INT"
+          },
+          {
+            "id": 1576,
+            "origin_id": -10,
+            "origin_slot": 3,
+            "target_id": 403,
+            "target_slot": 6,
+            "type": "INT"
+          },
+          {
+            "id": 1577,
+            "origin_id": -10,
+            "origin_slot": 26,
+            "target_id": 403,
+            "target_slot": 7,
+            "type": "BOOLEAN"
+          },
+          {
+            "id": 1578,
+            "origin_id": -10,
+            "origin_slot": 30,
+            "target_id": 403,
+            "target_slot": 8,
+            "type": "CCA_IMAGES"
+          },
+          {
+            "id": 1579,
+            "origin_id": 397,
+            "origin_slot": 0,
+            "target_id": 404,
+            "target_slot": 0,
+            "type": "IMAGE"
+          },
+          {
+            "id": 1580,
+            "origin_id": 403,
+            "origin_slot": 0,
+            "target_id": 404,
+            "target_slot": 1,
+            "type": "IMAGE"
+          },
+          {
+            "id": 1581,
+            "origin_id": 381,
+            "origin_slot": 27,
+            "target_id": 404,
+            "target_slot": 2,
+            "type": "BOOLEAN"
+          },
+          {
+            "id": 1582,
+            "origin_id": 404,
+            "origin_slot": 0,
+            "target_id": 402,
+            "target_slot": 0,
+            "type": "IMAGE"
           }
         ],
         "extra": {}

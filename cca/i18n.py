@@ -11,7 +11,7 @@ import os
 import re
 import threading
 
-LOCALES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "locales")
+LOCALES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "locales")
 PACK_FILE = "cca_panel.json"
 CHOICE_FILE = "language.json"
 JA = {"code": "ja", "name": "日本語"}

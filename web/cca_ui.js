@@ -6,14 +6,15 @@ import { api } from "../../scripts/api.js";
 import {
   CCA, IMG_KEYS, NONE, W, currentKey, deletePreset, emit, ensureLoaded, fileCheck, fileHelp, findPanel, guardComfyKeys, imageUrl,
   BUILTIN_MARK, appendPreset, findPreset, hiddenCount, hidePreset, isMissingFile, loraFiles, mediaDirs, modelDirs, openFolder, pickFolder,
-  restoreHidden,
+  restoreHidden, typeList, listKindOf,
   parseImageValue, parseLoras, presetEntries, presetGroup, refreshChoices, resetToDefaults, saveNodeIds, savePreset, setLoras, setWidget,
   uploadImage, visibleSet,
 } from "./cca_generator.js";
 import { T, alert, choice as langChoice, confirm, lang as curLang, onLangChange, packs as langPacks, prompt, ready as i18nReady, recheck as recheckLang, setChoice as setLangChoice } from "./cca_i18n.js";
 import { openComposer } from "./cca_compose.js";
 import { openPngInfo } from "./cca_pnginfo.js";
-import { setupSections, sectionEditBar, SECTIONS_CSS, cardCss } from "./cca_sections.js";
+import { openLoraExplorer } from "./cca_lorax.js";
+import { setupAreas, sectionEditBar, SECTIONS_CSS, AREAS_CSS, cardCss } from "./cca_sections.js";
 import { openSettingsIO } from "./cca_settings.js";
 import { weightKey } from "./cca_text.js";
 import { openImageEditor } from "./cca_imgedit.js";
@@ -24,8 +25,9 @@ import { ensureCss as ensureGuideCss, licBadge, openModelGuide } from "./cca_mod
 import { TILE_CSS, applyTileSettings, refreshTile, resumeTileJobs, setupTile, tileActive, tileCombine, tileGenerate, tileHtml } from "./cca_tile.js";
 import { WILDCARD_CSS, setupWildcards, unknownWildcards, wildcardHtml } from "./cca_wildcards.js";
 import { METER_CSS, attachMeter, primeAudio } from "./cca_meter.js";
-import { THEMES, setTheme, themeChoice } from "./cca_theme.js";
+import { THEMES, setTheme, themeChoice, loadThemes, themeFromText } from "./cca_theme.js";
 import { sideSplitter } from "./cca_shapes.js";
+import { view3d } from "./cca_view3d.js";
 
 // 入力画像の透過(アルファ)を使えるモデル種別(ここに入れたモデルでは「⚠透過画像は使えません。」を出さない)
 const ALPHA_OK = new Set([]); // モデル種別名(model_type)
@@ -34,6 +36,9 @@ const PRESET_RESTORE = "__cca_restore_builtin__";
 const SIZE_SCALE = "倍率指定";
 // 項目名の右の ⓘ を押すと出る説明(使い方)。項目名 → 文面
 const INFO = {
+  sn_pe: "SenseNova-U1.6 で、テキストエンコーダー(qwen3.5_9b_qwen_image_2.1_pe)が短い指示を細かい描写に書き直してから生成します。画像→画像では、入力画像も見て編集用のプロンプトにします。画像に入れる文字は、引用符(\" \")で囲んで書いてください。OFF のときは書いたプロンプトをそのまま使います。テキストエンコーダーは下の「その他モデル」で選びます(テキスト→画像は pe_t2i、画像→画像は pe_i2i。もう一方のファイルも入っていれば、タスクに合う方を自動で使います)。",
+  vram_mode: "VRAM の使い方です。SenseNova-U1.6 では追加ノードの vram_mode にそのまま渡します(「自動」は追加ノードの既定のままです)。full は全モデルを GPU に置きます(いちばん速い)。fast は非同期で転送して速度を重視します。balanced は転送と計算を並行して進めます。low は同期で転送して VRAM の使用量を抑えます(いちばん遅い)。ほかのモデルでは ComfyUI のメモリ管理に近い設定を当てます。モデルを入れ替えたときに反映されます。",
+  sn_passes: "SenseNova-U1.6 の自己修正です。作った画像をプロンプトと見比べ、合っていない所(文字の誤りなど)があれば作り直します。ここで決めた回数まで繰り返し、最後の画像を結果にします。文字の多い画像(ポスター・インフォグラフィック)に向いています。回数を増やすほど時間がかかります。「Core | …」(models/checkpoints に入れた Comfy-Org 版)を選ぶと、公式ワークフローと同じ方式で動きます。追加ノード方式(HF | …・Local | …)では効きません。自己修正には ComfyUI 0.46.0 以上が必要です。",
   hires_upscaler: "拡大の方法を選びます。拡大モデル(4x-UltraSharp など)を使うときは、モデルフォルダの「拡大モデル(Hires. fix 用)」に入れると一覧に出ます。",
   edit_lora_strength: "1.0 のままにします。下げると、画像2がそのまま貼り付いたような結果になりやすくなります。",
   edit_format: "「自動」のままにします。選んだ Edit LoRA のファイルから読み方を決めます。",
@@ -83,7 +88,11 @@ function injectStyles() {
 #cca-ui .brand b{color:var(--accent)}
 #cca-ui .chip{padding:2px 10px;border:1px solid var(--line);border-radius:999px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40vw}
 #cca-ui .sp{flex:1}
-#cca-ui .body{flex:1;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.15fr) var(--sidew, minmax(360px,1fr));gap:14px;padding:0 10px 0 16px}
+#cca-ui a.brand{color:inherit;text-decoration:none}
+#cca-ui a.brand .ver{font-size:11px;font-weight:normal;color:var(--muted)}
+#cca-ui .body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;padding:0 10px 0 16px}
+#cca-ui .body > .mid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.15fr) var(--sidew, minmax(360px,1fr));gap:14px;position:relative}
+#cca-ui .body > .hzrow{display:grid;grid-template-columns:minmax(0,1.15fr) var(--sidew, minmax(360px,1fr));grid-template-rows:minmax(0,1fr);column-gap:14px;position:relative;flex:none;min-height:0;max-height:40%}
 #cca-ui .col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;height:100%;overflow-y:auto;overscroll-behavior:contain;padding:14px 6px 14px 0}
 #cca-ui .col>*{flex-shrink:0}
 #cca-ui .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
@@ -152,10 +161,10 @@ body:has(#cca-imged.open) #cca-toast,body:has(#cca-vedit.open) #cca-toast,body:h
 #cca-ui .f{display:flex;flex-direction:column;gap:4px;min-width:0}
 #cca-ui .f.hide,#cca-ui .hide{display:none!important}
 ${SECTIONS_CSS("#cca-ui")}
-${cardCss("#cca-ui .col.left", "> .card[data-sec]", { model: "blue", prompt: "teal", images: "orange", sampling: "purple", tile: "red", size: "cyan", hires: "pink", models: "lime", out: "yellow" })}
+${AREAS_CSS("#cca-ui .body")}
+${cardCss("#cca-ui .area", "> .card[data-sec]", { model: "blue", prompt: "teal", images: "orange", sampling: "purple", tile: "red", size: "cyan", hires: "pink", models: "lime", out: "yellow" })}
 ${TILE_CSS}
 ${WILDCARD_CSS}
-${cardCss("#cca-ui .col.right", "> .card", {}, "gray")}
 #cca-ui .card.sec-folded>h3{margin-bottom:0}
 #cca-ui .secbar{display:flex;gap:6px}
 #cca-ui label.l{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:6px}
@@ -197,15 +206,77 @@ ${cardCss("#cca-ui .col.right", "> .card", {}, "gray")}
   text-align:center;color:var(--muted);cursor:pointer;overflow:hidden;background:#0e1115;padding:8px}
 #cca-ui .drop.over{border-color:var(--accent);background:#10201e}
 #cca-ui .drop img{max-width:100%;max-height:100%;object-fit:contain}
-#cca-ui .drop .mk{position:absolute;left:6px;top:6px;font-size:12px;background:#000a;padding:1px 6px;border-radius:4px;color:#ffb3b3}
 #cca-ui .gen{display:grid;grid-template-columns:1fr auto;gap:8px}
 #cca-ui .gen .go{height:52px;font-size:17px}
 #cca-ui .bar{height:8px;background:#0e1115;border-radius:999px;overflow:hidden;border:1px solid var(--line)}
 #cca-ui .bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent-d),var(--accent));transition:width .2s}
 #cca-ui .status{display:flex;justify-content:space-between;color:var(--muted);font-size:13px;margin-top:6px}
-#cca-ui .viewer{min-height:320px;max-height:62vh;display:flex;align-items:center;justify-content:center;background:#0b0d10;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-#cca-ui .viewer img,#cca-ui .viewer video{max-width:100%;max-height:62vh;object-fit:contain}
+#cca-ui .histin:empty,#cca-ui .infoin:empty{display:none}
+#cca-ui .ic + .lbl{margin-left:.35em}
+#cca-ui .resmain{display:flex;flex-direction:column;min-width:0}
+#cca-ui .resmain > .viewer{flex:1 1 auto;min-width:0}
+#cca-ui .resmain.bp-top{flex-direction:column-reverse}
+#cca-ui .resmain.bp-top > .resrow{margin:0 0 8px !important}
+#cca-ui .resmain.bp-right{flex-direction:row}
+#cca-ui .resmain.bp-left{flex-direction:row-reverse}
+#cca-ui .resmain:is(.bp-right,.bp-left) > .resrow{flex-direction:column;flex-wrap:nowrap;align-items:stretch;margin:0 !important;gap:6px}
+#cca-ui .resmain.bp-right > .resrow{margin-left:8px !important}
+#cca-ui .resmain.bp-left > .resrow{margin-right:8px !important}
+#cca-ui .slbl{display:none}
+#cca-ui .card.simple .lbl:not(:only-child){display:none}
+#cca-ui .card.simple .ic + .lbl{display:none}
+#cca-ui .card.simple .slbl{display:inline}
+#cca-ui [data-sec="result"].szc .viewer{height:var(--resh);min-height:0}
+#cca-ui [data-sec="result"] .res-grip{display:none}
+#cca-ui .body:not(.sec-editing) [data-sec="info"]:not(:has(#cca-info:not(.hide))){display:none}
+#cca-ui [data-sec="result"].imgonly{position:relative}
+#cca-ui [data-sec="result"].imgonly .res-grip{display:block;position:absolute;left:12px;right:12px;bottom:-5px;height:10px;cursor:ns-resize;border-radius:4px;z-index:2}
+#cca-ui [data-sec="result"].imgonly .res-grip:hover,#cca-ui [data-sec="result"] .res-grip.on{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+#cca-ui .sec-bar .bo,#cca-ui .sec-head .bo{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-left:auto;font-size:12px;font-weight:400}
+#cca-ui .sec-bar .bo select,#cca-ui .sec-bar .bo input[type=number],#cca-ui .sec-head .bo select{width:auto;padding:1px 4px;font-size:12px}
+#cca-ui .body:not(.sec-editing) .sec-head > .bo{display:none}
+#cca-ui .sec-head .bo button{padding:1px 8px;font-size:12px}
+#cca-ui .sec-head .bo button.sel{background:var(--accent);border-color:var(--accent);color:var(--accent-fg,#fff)}
+#cca-ui [data-sec].wpx{position:relative}
+#cca-ui .area .sec-row > .sec-col:not(:has(> [data-sec]:not(.wpx):not(.hide))){flex:0 0 auto}
+#cca-ui [data-sec]:not(.wpx) > .w-grip,#cca-ui .body:not(.sec-editing) [data-sec] > .w-grip{display:none}
+#cca-ui [data-sec] > .w-grip{position:absolute;top:12px;bottom:12px;right:-5px;width:10px;cursor:ew-resize;border-radius:4px;z-index:2}
+#cca-ui [data-sec] > .w-grip:hover,#cca-ui [data-sec] > .w-grip.on{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+#cca-ui .sec-bar .bo input[type=number]{width:64px}
+#cca-ui .sec-bar .bo button{padding:1px 8px;font-size:12px}
+#cca-ui .sec-bar .bo button.sel{background:var(--accent);border-color:var(--accent);color:var(--accent-fg,#fff)}
+#cca-ui .sec-bar .bo label{display:flex;align-items:center;gap:3px;white-space:nowrap}
+#cca-ui .card.simple{padding:6px 8px}
+#cca-ui .card.simple > .sec-head{font-size:13px;margin-bottom:4px !important;padding-bottom:2px !important}
+#cca-ui .card.simple .grid{gap:4px 8px}
+#cca-ui .card.simple .f{gap:2px}
+#cca-ui .card.simple label.l,#cca-ui .card.simple .lora.hint,#cca-ui .card.simple [data-field="loras"] > .row:first-child{display:none !important}
+#cca-ui .card.simple .card{padding:6px 8px;margin-top:6px !important}
+/* 利用モデルの種類: 種類のプルダウンとタスクのボタンを、見出しの行に並べる(見出し → 種類 → タスク → ボタン) */
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded){display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > h3.sec-head,#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > .typesel,#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > .row.tasksel{display:contents !important}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > h3 > .sp,#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > .tasksel > .sp{display:none !important}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) .typesel > .f{order:1;flex:0 1 240px;min-width:140px}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) #cca-tasks{order:2}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > h3 > button{order:3}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) #cca-reset,#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) #cca-mguide-open{order:4}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > h3 > .bo{order:5}
+#cca-ui #cca-body [data-sec="model"]:not(.sec-folded) > .warn{order:9;flex-basis:100%}
+#cca-ui .card.simple > .sec-bar{margin:0 0 4px}
+#cca-ui [data-sec="gen"].simple .bar{margin-top:6px !important}
+#cca-ui [data-sec="gen"].simple .status{margin-top:2px;font-size:12px}
+#cca-ui [data-sec="gen"].simple .pvrow{display:none}
+#cca-ui .card.simple .row{margin-top:4px !important;gap:4px}
+#cca-ui .card.simple .hist{margin-top:4px !important;padding-bottom:2px}
+#cca-ui .card.simple .viewer{border:0;border-radius:6px}
+#cca-ui .viewer{min-height:min(320px,var(--resh,62vh));max-height:var(--resh,62vh);display:flex;align-items:center;justify-content:center;background:#0b0d10;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+#cca-ui .viewer img,#cca-ui .viewer video{max-width:100%;max-height:var(--resh,62vh);object-fit:contain}
 #cca-ui .viewer.withmeter{align-items:stretch}
+#cca-ui .viewer.w3d{position:relative;align-items:stretch;height:var(--resh,62vh)}
+#cca-ui .viewer .v3d{flex:1;min-width:0;min-height:300px;display:flex;align-items:center;justify-content:center;cursor:grab}
+#cca-ui .viewer .v3d:active{cursor:grabbing}
+#cca-ui .viewer .v3dh{position:absolute;left:8px;bottom:6px;font-size:11px;color:#9fb0c2;pointer-events:none;text-shadow:0 1px 2px #000}
+#cca-ui .hist .t .au b{font-size:15px;letter-spacing:.5px}
 #cca-ui .avwrap{display:flex;width:100%;min-height:320px}
 #cca-ui .avwrap .media{flex:1;min-width:0;display:flex;align-items:center;justify-content:center}
 #cca-ui .avwrap .aud{display:flex;flex-direction:column;align-items:center;gap:10px;width:min(560px,90%)}
@@ -243,27 +314,51 @@ ${METER_CSS}
 #cca-addon .rec{color:#9fe0d8;font-size:13px;margin-left:8px}
 #cca-addon a{color:#7cc4ff}
 #cca-ui .hist{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
-#cca-ui .hist .t{flex:0 0 72px;height:72px;border:1px solid var(--line);border-radius:6px;overflow:hidden;cursor:pointer;background:#0b0d10;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
+#cca-ui .hist .t{flex:0 0 var(--histsz,72px);height:var(--histsz,72px);border:1px solid var(--line);border-radius:6px;overflow:hidden;cursor:pointer;background:#0b0d10;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
 #cca-ui .hist .t.on{border-color:var(--accent)}
 #cca-ui .hist img{width:100%;height:100%;object-fit:cover}
 #cca-ui .err{white-space:pre-wrap;background:#2a1414;border:1px solid #6b2a2a;color:#ffc9c7;border-radius:8px;padding:10px;font-size:13px;margin-top:8px}
 #cca-ui .err .errx{float:right;margin:-6px -4px 4px 10px;padding:0 6px;background:none;border:none;color:#ffc9c7;font-size:18px;line-height:1.4;cursor:pointer}
 /* 利用モデルを折りたたんだとき: 見出し・タスクのボタン・右のボタンを 1 行に(見出しとタスクの行の中身を、欄の中に並べ直す) */
 #cca-ui #cca-body [data-sec="model"].sec-folded{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+/* ベースモデル・LoRA / その他モデルを折りたたんだとき(Forge の上の段のように): 見出しの横に、モデルのプルダウン(項目名は左)と LoRA のファイルを 1 行に並べ、上下を詰める */
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]){display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding-top:6px;padding-bottom:6px}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open])::details-content{content-visibility:visible;display:contents}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) > summary{flex:none;margin:0 !important;padding:0 !important;border:0 !important}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) > :not(summary):not(.grid):not([data-field="loras"]),#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .ibox,#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .warn,#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .lora.hint{display:none !important}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) > .grid,#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) #cca-loras,#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .lora{display:contents}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) > .grid > .f:not(.hide){display:flex;flex-direction:row;align-items:center;gap:6px;flex:0 1 auto;min-width:0}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) label.l,#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) > [data-field="loras"] > .row,#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .cca-select-label-sizers{display:none !important}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .f > :not(label):not(.cca-select-wrap):not(select){display:none !important}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .cca-select-wrap{width:auto !important;flex:0 1 auto;min-width:0;max-width:320px !important}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) > [data-field="loras"]{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;flex:0 1 auto;margin:0 !important;padding:0;border:0;background:none !important;box-shadow:none}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) > [data-field="loras"] > .row{margin:0 !important}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .lora > :not(:has(select[data-k="name"])):not(select[data-k="name"]):not(.lorabtn){display:none !important}
 #cca-ui #cca-body [data-sec="model"].sec-folded > h3.sec-head, #cca-ui #cca-body [data-sec="model"].sec-folded > .row.tasksel{display:contents !important}
 #cca-ui #cca-body [data-sec="model"].sec-folded > h3 > .sp{display:none}
 #cca-ui #cca-body [data-sec="model"].sec-folded #cca-tasks{order:1;display:flex !important}
 #cca-ui #cca-body [data-sec="model"].sec-folded > .tasksel > .sp{order:2;flex:1;display:block !important}
 #cca-ui #cca-body [data-sec="model"].sec-folded > h3 > button, #cca-ui #cca-body [data-sec="model"].sec-folded #cca-mguide-open{display:none !important}
 #cca-ui .nopanel{margin:auto;max-width:520px;text-align:center;color:var(--muted)}
-#cca-mask{position:fixed;inset:0;z-index:1001;background:#000c;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#e4e7eb;
+#cca-mask{position:fixed;inset:0;z-index:1001;background:#000c;display:none;align-items:center;justify-content:center;color:#e4e7eb;
   font:13px system-ui,"Segoe UI","Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif}
 #cca-mask.open{display:flex}
-#cca-mask .stage{position:relative}
+#cca-mask .mb{background:#1a1e25;border:1px solid #303744;border-radius:10px;width:min(1280px,96vw);height:min(92vh,1100px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px #0008}
+#cca-mask .mh{display:flex;gap:10px;align-items:baseline;padding:10px 14px;border-bottom:1px solid #303744}
+#cca-mask .mh b{font-size:15px}
+#cca-mask .mh span{color:#959eab}
+#cca-mask .tools{display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid #303744}
+#cca-mask .tools label{display:inline-flex;gap:6px;align-items:center}
+#cca-mask .tools .sep{width:1px;align-self:stretch;background:#303744}
+#cca-mask .vp{flex:1;min-height:0;overflow:auto;display:flex;background:#0e1115}
+#cca-mask .stage{position:relative;margin:auto;flex:none}
 #cca-mask canvas{display:block}
+#cca-mask canvas.b{width:100%;height:100%}
 #cca-mask canvas.m{position:absolute;inset:0;width:100%;height:100%;opacity:.55;cursor:crosshair;touch-action:none}
-#cca-mask .tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center}
+#cca-mask.pan canvas.m{cursor:grab}
+#cca-mask .ft{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid #303744}
 #cca-mask button{background:#20252e;color:#e4e7eb;border:1px solid #3a4250;border-radius:6px;padding:6px 12px;cursor:pointer}
+#cca-mask button:disabled{opacity:.5;cursor:default}
 #cca-mask button.on,#cca-mask button.pri{background:#2b8f84;border-color:#3db4a6}
 #cca-ui .lora{display:grid;grid-template-columns:var(--lcols);gap:6px;align-items:center;margin-bottom:6px}
 #cca-ui .lora .hide{display:none}
@@ -312,6 +407,14 @@ ${METER_CSS}
 #cca-ui .info .meta{display:flex;flex-wrap:wrap;gap:4px 14px}
 #cca-ui .viewer .live{position:relative}
 #cca-ui .viewer .live .tag{position:absolute;left:8px;top:8px;background:var(--card,rgba(0,0,0,.7)) !important;color:var(--text,#fff) !important;border:1px solid rgba(0,0,0,.35);font-size:12px;line-height:1.5;padding:2px 8px;border-radius:4px;font-variant-numeric:tabular-nums}
+#cca-ui select[data-lorapick],#cca-ui .cca-select-wrap:has(> select[data-lorapick]){display:none !important}
+#cca-ui .lorabtn{min-width:0;width:100%;box-sizing:border-box;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:6px 10px;border:1px solid #3db4a6;border-radius:6px;background:var(--card2,#1f242c);color:inherit;font:inherit;cursor:pointer}
+#cca-ui .lorabtn:hover{background:#2a323c}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .lorabtn .lext{display:none}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) .lorabtn{width:auto !important;flex:0 1 auto;max-width:280px}
+#cca-ui #cca-body :is([data-sec="models"],[data-sec="models2"]):not([open]) #cca-lora-add{flex:none;margin:0}
+#cca-ui .lorabtn.none{color:#9aa4b2}
+#cca-ui .lorabtn.missing{border-color:#e0a040}
 #cca-pop{position:fixed;z-index:1002;background:#1a1e25;border:1px solid #3db4a6;border-radius:8px;box-shadow:0 10px 30px #000c;display:none;flex-direction:column;
   font:13px system-ui,"Segoe UI","Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:#e4e7eb;overflow:hidden}
 #cca-pop.open{display:flex}
@@ -325,14 +428,41 @@ ${METER_CSS}
 #cca-pop .o .nt{display:block;font-weight:400;font-size:12px;color:#aab3bf;line-height:1.35}
 #cca-pop .o.on .nt{color:#e8fffb}
 #cca-pop .none{padding:8px 10px;color:#959eab}
-@media (max-width:1000px){#cca-ui .body{grid-template-columns:1fr;grid-auto-rows:max-content;overflow-y:auto;gap:0}#cca-ui .col{height:auto;min-height:max-content;overflow:visible}#cca-ui .col > *{flex-shrink:0}#cca-ui .col.right{padding-top:0}#cca-ui .body > .cca-split{display:none}
-  #cca-ui.rtop .col.right{order:-1}#cca-ui .col.left.sec-editing ~ .col.right > .rpos{display:flex}}
+/* 幅が狭いとき: 上の枠(固定)・中央(スクロール)・下の枠(固定)。並びは広いときと別に覚える */
+@media (max-width:1000px){#cca-ui .body > .mid{display:block;flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}#cca-ui .col{height:auto;min-height:0;overflow:visible}#cca-ui .col > *{flex-shrink:0}#cca-ui .col.right{padding-top:0}#cca-ui .mid > .cca-split{display:none}
+  #cca-ui .body > .hzrow{grid-template-columns:1fr !important}#cca-ui .body > .hzrow > .cca-split{display:none}
+  #cca-ui [data-sec].wpx{min-width:0 !important;max-width:100% !important}}
 #cca-ui .rpos{display:none;justify-content:center;padding:6px 0}
+#cca-ui .lpreset{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;margin-left:6px}#cca-ui .lpreset[hidden]{display:none}
+#cca-ui.secediting .top > button{display:none}
+
 `;
   document.head.appendChild(css);
 }
 
 // ---------------------------------------------------------------- markup
+// LoRA を選ぶ欄: プルダウンはやめて、押すと LoRA のモーダルが開くボタンにする。
+// <select> は値の置き場として残し(画面には出さない)、ボタンには今選んでいる LoRA を出す。
+function asPicker(el, open) {
+  el.dataset.lorapick = "1";
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "lorabtn";
+  (el.closest(".cca-select-wrap") || el).before(b); // テーマが包んだプルダウンがあれば、その外に置く(包みは CSS で隠す)
+  const sync = () => {
+    const none = !el.value || el.value === NONE;
+    const full = none ? T("LoRA を選ぶ") : (el.selectedOptions[0]?.textContent || el.value);
+    const m = none ? null : /^(.*?)(\.(?:safetensors|ckpt|pt|pth|bin|gguf))$/i.exec(full);
+    b.textContent = m ? m[1] : full;
+    if (m) { const ext = document.createElement("span"); ext.className = "lext"; ext.textContent = m[2]; b.appendChild(ext); } // 拡張子は、折り畳んだときだけ隠す
+    b.title = none ? "" : el.value;
+    b.classList.toggle("none", none);
+    b.classList.toggle("missing", el.classList.contains("missing"));
+  };
+  el._ccaSync = sync;
+  sync();
+  b.addEventListener("click", (e) => { e.preventDefault(); open(e); });
+}
 function sel(name, extra = "") { return `<select data-w="${name}" ${extra}></select>`; }
 function num(name, step, extra = "") { return `<input type="number" data-w="${name}" step="${step}" ${extra}>`; }
 function ib(key) { return `<button type="button" class="ib" data-ib="${key}" title="説明を表示">ⓘ</button>`; }
@@ -405,13 +535,12 @@ function build() {
   root.id = "cca-ui";
   root.innerHTML = `
   <div class="top">
-    <div class="brand"><b>CCA</b> Generator</div>
+    <a class="brand" href="https://github.com/cocoamixgit/ComfyUI-CCA-Generator-Studio/tree/main" target="_blank" rel="noopener noreferrer"><b>CCA</b> Generator <small class="ver" id="cca-ver"></small></a>
     <div class="chip" id="cca-chip"></div>
     <div class="sp"></div>
     <div id="cca-prefs" class="prefs" hidden>
       <label class="ck" title="同梱ワークフローを開いたとき、このパネルを自動で表示する"><input type="checkbox" id="cca-autoopen"> 自動で生成パネルを表示する</label>
       <span title="表示の言語(言語パック)">🌐 言語</span><select id="cca-lang"></select>
-      <span title="配色(テーマ)。パネルと画像編集・動画編集の色を変えます">🎨 テーマカラー</span><select id="cca-theme"></select>
     </div>
     <!-- 第52版からの並び: 使い方・並べ替え・グラフを表示・動画編集・画像編集・⚙ 設定 -->
     <button id="cca-guide-open" title="今のモデル種別の使い方を表示">? 使い方</button>
@@ -423,7 +552,10 @@ function build() {
     <button id="cca-close" title="ノードのグラフに戻る">グラフを表示 ✕</button>
   </div>
   <div class="body" id="cca-body">
-    <div class="col left">
+    <div class="hzrow" data-row="top"><div class="area vt top" data-area="top"></div><div class="area vt top r" data-area="topR"></div></div>
+    <div class="cca-hsplit" data-for="top"></div>
+    <div class="mid">
+    <div class="col area left" data-area="left">
       <section class="card" data-sec="model">
         <h3>利用モデルの種類 <span class="badge hide" id="cca-turbo-badge">Turbo</span><span class="sp"></span>
           <button class="icon" id="cca-refresh" title="モデル・LoRA・画像の一覧だけを読み直す(ページは再読み込みしません)">🔄</button>
@@ -482,6 +614,7 @@ ${wildcardHtml()}
           ${field("unet_name", sel("unet_name"))}
           ${field("wan_high_unet", sel("wan_high_unet"))}
           ${field("wan_low_unet", sel("wan_low_unet"))}
+          ${field("vram_mode", sel("vram_mode"))}
         </div>
         <div class="card" data-field="loras" style="margin-top:10px;background:var(--card2)">
           <div class="row" style="margin-bottom:8px"><b>LoRA</b>${ib("loras")}</div>${ibox("loras", "チェックを外すと、一覧から消さずに一時的に使わないようにできます。上から順に掛かります。")}
@@ -574,7 +707,7 @@ ${wildcardHtml()}
       </section>
 
       <section class="card hide" id="cca-sec-audio" data-sec="audiogen">
-        <h3>音楽・音声の設定 ${ib("audiogen")}</h3>${ibox("audiogen", '<div id="cca-audiogen-note"></div>')}
+        <h3><span id="cca-audio-title">音楽・音声の設定</span> ${ib("audiogen")}</h3>${ibox("audiogen", '<div id="cca-audiogen-note"></div>')}
         <div id="cca-audio-opts"></div>
       </section>
 
@@ -588,7 +721,9 @@ ${wildcardHtml()}
           ${rangeField("steps", 1, 100, 1)}
           ${rangeField("cfg", 0, 20, 0.1)}
           ${rangeField("denoise", 0, 1, 0.01)}
+          ${rangeField("sn_passes", 0, 5, 1)}
         </div>
+        <div class="warn hide" id="cca-sn-turbo-warn" style="margin-top:6px">⚠ Turbo で自己修正を使うには、モデルを「Core | …」(models/checkpoints の Comfy-Org 版)にして、Turbo LoRA に sensenova_u1.6_8b_mot_8step_lora_bf16 を選んでください。</div>
         <div class="row" style="margin-top:8px;align-items:flex-end">
           ${field("seed", `<div class="row">${num("seed", 1, 'class="grow" min="0"')}<button class="icon" id="cca-dice" title="ランダムなシードにする">🎲</button></div>`, "grow")}
           <div class="f" data-field="seed_mode"><label class="l">生成後のシード</label><select id="cca-seedmode">${SEED_MODES.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
@@ -603,6 +738,7 @@ ${wildcardHtml()}
 
       <details class="card" id="cca-sec-models2" data-sec="models2" data-remember open>
         <summary>その他モデル</summary>
+        <div style="margin-bottom:8px">${field("sn_pe", `<label class="row"><input type="checkbox" data-w="sn_pe"> <span>テキストエンコーダーでプロンプトを書き直す(PE)</span></label>`)}</div>
         <div class="grid">
           ${field("clip_name", sel("clip_name"))}
           ${field("clip_name_2", sel("clip_name_2"))}
@@ -626,9 +762,9 @@ ${wildcardHtml()}
       </details>
     </div>
 
-    <div class="col right">
+    <div class="col area right" data-area="right">
       <div class="rpos" id="cca-rpos"><button id="cca-rpos-btn"></button></div>
-      <section class="card">
+      <section class="card" data-sec="gen" data-title="生成ボタン">
         <div class="gen">
           <button class="pri go" id="cca-go" title="Ctrl+Enter">生成</button>
           <button id="cca-stop" title="実行中の生成を中断">中断</button>
@@ -636,37 +772,304 @@ ${wildcardHtml()}
         <div style="margin-top:10px" class="bar"><i id="cca-bar"></i></div>
         <div class="status"><span id="cca-status">待機中</span><span id="cca-queue"></span></div>
         <div class="hint hide" id="cca-tile-job"></div>
-        <div class="row" style="margin-top:6px"><span class="hint">途中経過の表示</span>
+        <div class="row pvrow" style="margin-top:6px"><span class="hint">途中経過の表示</span>
           <select id="cca-previewmethod" style="width:auto" title="ComfyUI の設定「Live preview method」と同じもの">
             <option value="default">ComfyUI の起動設定に従う</option><option value="auto">表示する(自動)</option>
             <option value="latent2rgb">表示する(軽い・粗い)</option><option value="taesd">表示する(TAESD・きれい)</option>
             <option value="none">表示しない</option></select></div>
         <div class="err hide" id="cca-err"></div>
       </section>
-      <section class="card">
+      <section class="card" data-sec="result" data-title="生成結果・履歴">
+        <div class="resmain">
         <div class="viewer" id="cca-viewer"><div class="empty">生成結果がここに表示されます</div></div>
-        <div class="row" style="margin-top:8px">
-          <button id="cca-edit-img" disabled title="表示中の画像を画像編集で開く(背景を透明にする・オブジェクト除去)">✏ この画像を編集する</button>
-          <button id="cca-zoom-btn" disabled title="画面いっぱいに表示(ホイールで拡大・縮小、ドラッグで移動)">🔍 拡大表示</button>
-          <button id="cca-open" disabled>新しいタブで開く</button>
-          <button id="cca-folder" disabled title="表示中のファイルがあるフォルダを開く">📂 フォルダを開く</button>
-          <span class="sp"></span>
-          <button id="cca-gallery" title="これまでの結果を一覧で見る">🖼 ギャラリー一覧</button>
-          <button id="cca-clear-hist" title="下の一覧を空にする(ファイルは消えません)">一覧を消去</button>
-          <button id="cca-send" disabled title="この画像を入力画像1にして画像→画像で使う">入力画像1に送る</button>
+        <div class="row resrow" style="margin-top:8px">
+          <button id="cca-edit-img" disabled title="表示中の画像を画像編集で開く(背景を透明にする・オブジェクト除去)"><span class="ic">✏</span><span class="lbl">この画像を編集する</span></button>
+          <button id="cca-zoom-btn" disabled title="画面いっぱいに表示(ホイールで拡大・縮小、ドラッグで移動)"><span class="ic">🔍</span><span class="lbl">拡大表示</span></button>
+          <button id="cca-open" disabled title="新しいタブで開く"><span class="lbl">新しいタブで開く</span><span class="slbl">⤴</span></button>
+          <button id="cca-folder" disabled title="表示中のファイルがあるフォルダを開く"><span class="ic">📂</span><span class="lbl">フォルダを開く</span></button>
+          <button id="cca-send" disabled title="この画像を入力画像1にして画像→画像で使う"><span class="lbl">入力画像1に送る</span><span class="slbl">i2iへ</span></button>
         </div>
-        <div class="hist" id="cca-hist" style="margin-top:8px"></div>
-        <div class="info hide" id="cca-info"></div>
+        </div>
+        <div class="histin"></div>
+        <div class="infoin"><div class="info hide" id="cca-info"></div></div>
+        <div class="res-grip" title="ドラッグで生成結果の画像の高さを変えます(画像サイズの任意 px に入ります)"></div>
+      </section>
+      <section class="card hide" data-sec="info" data-title="生成情報"></section>
+      <section class="card hide" data-sec="hist" data-title="履歴">
+        <div class="histbox" id="cca-histbox">
+          <div class="row histrow" style="margin-top:8px">
+            <button id="cca-gallery" title="これまでの結果を一覧で見る"><span class="ic">🖼</span><span class="lbl">ギャラリー一覧</span></button>
+            <button id="cca-clear-hist" title="履歴の一覧を空にする(ファイルは消えません)">一覧を消去</button>
+          </div>
+          <div class="hist" id="cca-hist" style="margin-top:8px"></div>
+        </div>
       </section>
     </div>
+    </div>
+    <div class="cca-hsplit" data-for="bottom"></div>
+    <div class="hzrow" data-row="bottom"><div class="area vt bottom" data-area="bottom"></div><div class="area vt bottom r" data-area="bottomR"></div></div>
   </div>
   <div class="nopanel hide" id="cca-nopanel">
-    <h3>CCA Generator パネルが見つかりません</h3>
-    <p>同梱の cca_generator_workflow.json を開いてください。</p>
+    <h3>今のタブに CCA Generator パネルがありません</h3>
+    <p>パネルの入ったワークフローのタブに切り替えてください。無ければ、同梱の cca_generator_workflow.json を開いてください。</p>
   </div>`;
   document.body.appendChild(root);
   buildMaskEditor();
   bind();
+}
+
+// ---------------------------------------------------------------- 生成ボタン・生成結果・履歴の表示の設定
+// 並べ替えのときに出る帯で選ぶ: シンプル(余白を詰める)/ 通常、画像の大きさ(大・中・小・任意 px)、履歴を分ける
+const BLOCK_LS = "cca_generator.blockopt.panel";
+// 項目の表示(シンプル・大きさ・横幅・履歴 / 生成情報を分ける)は、幅が狭いときと広いときで別に覚える
+const NARROW_MQ = matchMedia("(max-width:1000px)");
+const blk = () => (NARROW_MQ.matches ? `${BLOCK_LS}.narrow` : BLOCK_LS);
+const BLOCK_SIZES = { result: { l: "62vh", m: "42vh", s: "26vh", px: 400 }, hist: { l: "120px", m: "72px", s: "48px", px: 96 } };
+function blockOpts() {
+  const o = lsGet(blk(), null);
+  return o && typeof o === "object" ? o : {};
+}
+const blockIds = () => $$("#cca-body [data-sec]").map((el) => el.dataset.sec);
+const clampW = (v) => Math.max(120, Math.min(4000, Math.round(Number(v) || 0) || 400));
+function bindWGrip(grip, sec, id) {
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("on");
+    const x0 = e.clientX, w0 = sec.getBoundingClientRect().width;
+    let w = Math.round(w0);
+    const move = (ev) => {
+      w = clampW(w0 + ev.clientX - x0);
+      Object.assign(sec.style, { width: `${w}px`, minWidth: `${w}px` });
+      const inp = sec.querySelector(':scope > .sec-bar [data-bo="wpx"], :scope > .sec-head [data-bo="wpx"]');
+      if (inp) inp.value = w;
+    };
+    const up = () => {
+      grip.classList.remove("on");
+      grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
+      setBlockOpt(id, { wmode: "px", wpx: w });
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+}
+function applyBlockOpts() {
+  const o = blockOpts();
+  for (const id of blockIds()) {
+    const sec = $(`[data-sec="${id}"]`), v = o[id] || {};
+    if (!sec) continue;
+    sec.classList.toggle("simple", v.mode === "simple");
+    // 横幅: 任意なら px(枠より広くはしない)、自動なら枠に合わせる
+    const wpx = v.wmode === "px" ? clampW(v.wpx) : 0;
+    Object.assign(sec.style, wpx ? { flex: "0 0 auto", width: `${wpx}px`, maxWidth: "", minWidth: `${wpx}px`, alignSelf: "flex-start" } : { flex: "", width: "", maxWidth: "", minWidth: "", alignSelf: "" });
+    const bo = sec.querySelector(":scope > .sec-bar .bo, :scope > .sec-head .bo");
+    if (bo) {
+      for (const b of bo.querySelectorAll("[data-bo-w]")) b.classList.toggle("sel", b.dataset.boW === (wpx ? "px" : "auto"));
+      const wi = bo.querySelector('[data-bo="wpx"]'), wu = bo.querySelector('[data-bo="wunit"]');
+      wi.hidden = wu.hidden = !wpx;
+      if (wpx && wi !== document.activeElement) wi.value = wpx;
+    }
+    // 任意のときは、右のふちをドラッグして横幅を変えられる(生成結果の画像の高さと同じ)
+    sec.classList.toggle("wpx", !!wpx);
+    let wg = sec.querySelector(":scope > .w-grip");
+    if (wpx && !wg) { wg = document.createElement("div"); wg.className = "w-grip"; wg.title = T("ドラッグで項目の横幅を変えます(横幅の任意 px に入ります)"); sec.appendChild(wg); bindWGrip(wg, sec, id); }
+    const sz = BLOCK_SIZES[id];
+    if (sz) {
+      const k = ["l", "m", "s", "c"].includes(v.size) ? v.size : (id === "result" ? "l" : "m");
+      const px = Math.max(24, Math.min(4000, Number(v.px) || sz.px));
+      sec.style.setProperty(id === "result" ? "--resh" : "--histsz", k === "c" ? `${px}px` : sz[k]);
+      sec.classList.toggle("szc", k === "c");
+      const bar = sec.querySelector(":scope > .sec-bar");
+      for (const b of bar?.querySelectorAll("[data-bo-sz]") || []) b.classList.toggle("sel", b.dataset.boSz === k);
+      const inp = bar?.querySelector('[data-bo="px"]');
+      if (inp) { inp.hidden = k !== "c"; inp.value = px; inp.nextElementSibling.hidden = k !== "c"; }
+    }
+    const sel = sec.querySelector(':scope > .sec-bar [data-bo="mode"]');
+    if (sel) sel.value = v.mode === "simple" ? "simple" : "normal";
+    if (id === "result") { // 画像に対するボタンの位置
+      const pos = ["right", "top", "left"].includes(v.btnpos) ? v.btnpos : "bottom";
+      const m = sec.querySelector(".resmain");
+      for (const k of ["top", "right", "left"]) m.classList.toggle(`bp-${k}`, pos === k);
+      const bps = sec.querySelector(':scope > .sec-bar [data-bo="btnpos"]');
+      if (bps) bps.value = pos;
+    }
+  }
+  // 履歴を分ける: 履歴の部分を「履歴」の項目へ。分けないときは生成結果の項目の中へ
+  const split = !!o.split, box = $("#cca-histbox"), res = $('[data-sec="result"]'), hist = $('[data-sec="hist"]');
+  (split ? hist : res.querySelector(".histin")).appendChild(box);
+  hist.classList.toggle("hide", !split);
+  // 生成情報を分ける: 生成情報(種別・モデル・シード・プロンプトなど)を「生成情報」の項目へ
+  const isplit = !!o.infoSplit, info = $("#cca-info"), isec = $('[data-sec="info"]');
+  (isplit ? isec : res.querySelector(".infoin")).appendChild(info);
+  isec.classList.toggle("hide", !isplit);
+  res.classList.toggle("imgonly", split && isplit); // 生成画像だけの欄: 下の端のドラッグで高さを変えられる
+  const t = res.querySelector(":scope > .sec-bar .sec-bar-t");
+  if (t) t.textContent = T(split && isplit ? "生成画像" : split ? "生成結果・生成情報" : isplit ? "生成結果・履歴" : "生成結果・履歴・生成情報");
+  const ck = res.querySelector(':scope > .sec-bar [data-bo="split"]');
+  if (ck) ck.checked = split;
+  const ick = res.querySelector(':scope > .sec-bar [data-bo="infosplit"]');
+  if (ick) ick.checked = isplit;
+  window.dispatchEvent(new Event("resize"));
+}
+function setBlockOpt(id, patch) {
+  const o = blockOpts();
+  o[id] = { ...(o[id] || {}), ...patch };
+  lsSet(blk(), o);
+  applyBlockOpts();
+  window.dispatchEvent(new CustomEvent("cca-layout-change", { detail: { key: "panel" } }));
+  window.dispatchEvent(new Event("resize")); // 境目が横幅を決めた項目より狭ければ広げる
+}
+function setupBlockOpts() {
+  for (const id of blockIds()) {
+    // 見出しの無い項目は並べ替えのときの帯、見出しのある項目は見出し(並べ替えのときだけ出す)
+    const bar = $(`[data-sec="${id}"] > .sec-bar`) || $(`[data-sec="${id}"] > .sec-head`);
+    if (!bar || bar.querySelector(".bo")) continue;
+    const box = document.createElement("span");
+    box.className = "bo";
+    box.dataset.nodrag = "";
+    box.innerHTML = `<select data-bo="mode" title="${esc(T("シンプル: 余白を詰めて表示します"))}"><option value="normal">${esc(T("通常"))}</option><option value="simple">${esc(T("シンプル"))}</option></select>`
+      + `<span title="${esc(T("項目の横幅(自動: 枠に合わせる / 任意: px で決める)"))}">${esc(T("横幅"))}</span>` + [["auto", "自動"], ["px", "任意"]].map(([k, l]) => `<button data-bo-w="${k}">${esc(T(l))}</button>`).join("")
+      + `<input type="number" data-bo="wpx" min="120" max="4000" step="10"><span data-bo="wunit">px</span>`
+      + (BLOCK_SIZES[id] ? `<span title="${esc(T(id === "result" ? "生成結果の画像の大きさ(高さ)" : "履歴の画像の大きさ"))}">${esc(T("画像サイズ"))}</span>`
+        + [["l", "大"], ["m", "中"], ["s", "小"], ["c", "任意"]].map(([k, l]) => `<button data-bo-sz="${k}">${esc(T(l))}</button>`).join("")
+        + `<input type="number" data-bo="px" min="24" max="4000" step="1"><span>px</span>` : "")
+      + (id === "result" ? `<span>${esc(T("ボタンの位置"))}</span><select data-bo="btnpos" title="${esc(T("画像に対する、ボタンを並べる位置"))}">${[["bottom", "下"], ["right", "右"], ["top", "上"], ["left", "左"]].map(([v, l]) => `<option value="${v}">${esc(T(l))}</option>`).join("")}</select>`
+        + `<label title="${esc(T("履歴を別の項目にして、ほかの場所に置けるようにします"))}"><input type="checkbox" data-bo="split">${esc(T("履歴を分ける"))}</label>`
+        + `<label title="${esc(T("生成情報(種別・モデル・シード・プロンプトなど)を別の項目にして、ほかの場所に置けるようにします"))}"><input type="checkbox" data-bo="infosplit">${esc(T("生成情報を分ける"))}</label>` : "");
+    bar.appendChild(box);
+    box.addEventListener("click", (e) => { e.stopPropagation(); if (e.target.closest("summary")) e.preventDefault(); }); // 見出しの開け閉めをしない
+    box.querySelector('[data-bo="mode"]').onchange = (e) => setBlockOpt(id, { mode: e.target.value });
+    for (const b of box.querySelectorAll("[data-bo-w]")) b.onclick = () => { const sec = $(`[data-sec="${id}"]`); setBlockOpt(id, { wmode: b.dataset.boW, wpx: blockOpts()[id]?.wpx || Math.round(sec?.getBoundingClientRect().width || 400) }); };
+    box.querySelector('[data-bo="wpx"]').onchange = (e) => setBlockOpt(id, { wmode: "px", wpx: clampW(e.target.value) });
+    for (const b of box.querySelectorAll("[data-bo-sz]")) b.onclick = () => setBlockOpt(id, { size: b.dataset.boSz });
+    const px = box.querySelector('[data-bo="px"]');
+    if (px) px.onchange = () => setBlockOpt(id, { size: "c", px: Number(px.value) || BLOCK_SIZES[id].px });
+    const sp = box.querySelector('[data-bo="split"]');
+    if (sp) sp.onchange = () => { const o = blockOpts(); o.split = sp.checked; lsSet(blk(), o); applyBlockOpts(); };
+    const bp = box.querySelector('[data-bo="btnpos"]');
+    if (bp) bp.onchange = () => setBlockOpt(id, { btnpos: bp.value });
+    const isp = box.querySelector('[data-bo="infosplit"]');
+    if (isp) isp.onchange = () => { const o = blockOpts(); o.infoSplit = isp.checked; lsSet(blk(), o); applyBlockOpts(); };
+  }
+  // 生成画像だけの欄: 下の端をドラッグして、画像の高さ(画像サイズの任意 px)を変える
+  const grip = $('[data-sec="result"] .res-grip'), res = $('[data-sec="result"]');
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("on");
+    const y0 = e.clientY, h0 = $("#cca-viewer").getBoundingClientRect().height;
+    let px = Math.round(h0);
+    const move = (ev) => {
+      px = Math.max(60, Math.min(4000, Math.round(h0 + ev.clientY - y0)));
+      res.classList.add("szc");
+      res.style.setProperty("--resh", `${px}px`);
+      const inp = res.querySelector(':scope > .sec-bar [data-bo="px"]');
+      if (inp) inp.value = px;
+    };
+    const up = () => {
+      grip.classList.remove("on");
+      grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
+      setBlockOpt("result", { size: "c", px });
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+  applyBlockOpts();
+  NARROW_MQ.addEventListener("change", () => applyBlockOpts()); // 幅が狭い / 広いに変わったら、その幅の設定にする
+  window.addEventListener("cca-settings-imported", () => { applyBlockOpts(); applySplits(); }); // 設定を読み込んだら、項目の表示・境目も入れ直す
+  // 並べ替えの部品として: 「デフォルトの状態に戻す」でこの設定も戻す
+  return { setEdit() {}, editing: () => false, undo() {}, reset() { lsSet(blk(), {}); applyBlockOpts(); } };
+}
+
+// ---------------------------------------------------------------- デフォルトの見た目(並べ替えのときに選ぶ): CCA(今の並び) / Forge(上にモデル、下に生成設定と結果)
+const LAYOUT_PRESETS = { forge: {"narrow": {"v": 4, "areas": {"top": ["model", "models", "models2"], "topR": [], "left": ["prompt", "images", "audiogen", "sampling", "hires", "size", "tile", "reg", "neg"], "right": ["result", "info", "hist", "out"], "bottom": ["gen"], "bottomR": []},
+  "fold": {"models": true, "models2": true, "hires": true, "reg": true, "neg": true}}, "layout": {"v": 4, "areas": {"top": ["model"], "topR": ["models", "models2"], "left": ["prompt", "audiogen"], "right": ["info", "hist", "gen", "out"], "bottom": ["images", "sampling", "hires", ["size", "tile"], "reg", "neg"], "bottomR": ["result"]}, "fold": {"models": true, "out": false, "model": false, "size": false, "prompt": false, "hires": true, "sampling": false, "tile": false, "images": false, "audiogen": false, "models2": true, "adv": false, "reg": true, "neg": true, "advp": false}}, "details": {"cca-sec-models": false, "cca-sec-out": true, "cca-sec-hires": false, "cca-sec-models2": false, "cca-sec-adv": true, "cca-sec-reg": false, "cca-sec-neg": false}, "blockopt": {"sampling": {"mode": "normal"}, "size": {"wmode": "px", "wpx": 250}, "result": {"size": "l"}, "model": {"wmode": "px", "wpx": 255, "mode": "normal"}, "prompt": {"mode": "simple"}}, "splits": {"cca_generator.areah.panel.bottom": "744", "cca_generator.areah.panel.top": "122", "cca_generator.sidew.panel.top.r": "0.8903", "cca_generator.sidew.panel.bottom": "533", "cca_generator.sidew.panel": "360", "cca_generator.sidew.panel.top": "2256"}} };
+const PRESET_LS = "cca_generator.layoutpreset.panel", CUSTOM_LS = "cca_generator.layoutcustom.panel";
+// 幅が狭いときの既定の並び(CCA・Forge風とも)
+const NARROW_DEFAULT = { layout: {"v": 4, "areas": {"top": [["images", "prompt"]], "topR": [], "left": [[["model", "sampling", "reg", "neg"], ["models", "hires", "size", "tile"]], "audiogen"], "right": ["models2", "out"], "bottom": [["result", ["gen", "hist", "info"]]], "bottomR": []}, "fold": {"out": false, "models": true, "models2": true, "model": false, "tile": false, "reg": true}},
+  blockopt: {"split": true, "result": {"wmode": "auto", "wpx": 321, "size": "l", "mode": "simple"}, "gen": {"wmode": "px", "wpx": 250, "mode": "simple"}, "hist": {"mode": "simple", "wmode": "px", "wpx": 250, "size": "s"}, "sampling": {"mode": "simple"}, "model": {"mode": "simple"}, "size": {"mode": "simple"}, "infoSplit": true, "info": {"wmode": "px", "wpx": 250, "mode": "simple"}}, heights: {"top": "304", "bottom": "335"} };
+// 幅が狭いときの並び・項目の表示・枠の高さが無ければ(初めて・CCA / Forge風を選んだとき)、既定を入れる
+function seedNarrow(force = false) {
+  try {
+    const put = (k, v) => { if (force || localStorage.getItem(k) == null) localStorage.setItem(k, v); };
+    put("cca_generator.layout.panel.narrow", JSON.stringify(NARROW_DEFAULT.layout));
+    put("cca_generator.blockopt.panel.narrow", JSON.stringify(NARROW_DEFAULT.blockopt));
+    for (const [a, h] of Object.entries(NARROW_DEFAULT.heights)) put(`cca_generator.areah.panel.narrow.${a}`, String(h));
+  } catch { /* 覚えられなくても使える */ }
+}
+const SPLIT_KEYS = ["cca_generator.sidew.panel", "cca_generator.sidew.panel.top", "cca_generator.sidew.panel.bottom", "cca_generator.sidew.panel.r", "cca_generator.sidew.panel.top.r", "cca_generator.sidew.panel.bottom.r", "cca_generator.areah.panel.top", "cca_generator.areah.panel.bottom"];
+// 境目の位置・枠の高さを、覚えている値にする(並べ替えの見た目を変えたとき)
+function applySplits() {
+  const sw = (el, key) => { const r = Number(localStorage.getItem(`${key}.r`)) || 0, v = r > 0 && el.clientWidth ? r * el.clientWidth : Number(localStorage.getItem(key)) || 0; if (v) el.style.setProperty("--sidew", `${Math.max(240, Math.min(v, el.clientWidth - 240))}px`); else el.style.removeProperty("--sidew"); window.dispatchEvent(new Event("resize")); };
+  sw($(".body > .mid"), "cca_generator.sidew.panel");
+  for (const row of $$(".body > .hzrow")) {
+    sw(row, `cca_generator.sidew.panel.${row.dataset.row}`);
+    const h = Number(localStorage.getItem(`cca_generator.areah.panel${NARROW_MQ.matches ? ".narrow" : ""}.${row.dataset.row}`)) || 0;
+    row.style.height = h ? `${h}px` : ""; row.style.maxHeight = h ? "none" : "";
+  }
+  window.dispatchEvent(new Event("resize"));
+}
+function layoutPresets(areas) {
+  // 幅が狭いとき・広いときで、それぞれ覚える(選んでいる見た目・カスタムの並び・並び・項目の表示・境目)
+  const sfx = () => (areas.narrow() ? ".narrow" : "");
+  const pkey = () => PRESET_LS + sfx(), ckey = () => CUSTOM_LS + sfx();
+  const keysOf = () => (areas.narrow() ? [`cca_generator.layout.panel.narrow`, `${BLOCK_LS}.narrow`, "cca_generator.areah.panel.narrow.top", "cca_generator.areah.panel.narrow.bottom"]
+    : ["cca_generator.layout.panel", LS_DETAILS, BLOCK_LS, ...SPLIT_KEYS]);
+  const cur = () => { try { const v = localStorage.getItem(pkey()); return v === "forge" || v === "custom" ? v : "cca"; } catch { return "cca"; } };
+  let applying = false;
+  const apply = (k) => {
+    applying = true;
+    const narrow = areas.narrow(), KEYS = keysOf();
+    try {
+      // カスタムから CCA・Forge風にするときは、カスタムの並びを覚えておく(「カスタム」を選ぶと戻る)
+      if (cur() === "custom" && k !== "custom") localStorage.setItem(ckey(), JSON.stringify(Object.fromEntries(KEYS.map((key) => [key, localStorage.getItem(key)]))));
+      localStorage.setItem(pkey(), k);
+      if (k === "custom") {
+        const c = JSON.parse(localStorage.getItem(ckey()) || "null");
+        if (c) for (const key of KEYS) { if (c[key] == null) localStorage.removeItem(key); else localStorage.setItem(key, c[key]); }
+      } else if (narrow) {
+        // 幅が狭いとき: CCA・Forge風とも、既定の並び
+        seedNarrow(true);
+      } else {
+        const P = LAYOUT_PRESETS[k];
+        for (const key of SPLIT_KEYS) localStorage.removeItem(key);
+        if (P) {
+          localStorage.setItem("cca_generator.layout.panel", JSON.stringify(P.layout));
+          localStorage.setItem(LS_DETAILS, JSON.stringify(P.details));
+          for (const [key, v] of Object.entries(P.splits)) localStorage.setItem(key, v);
+          lsSet(BLOCK_LS, P.blockopt);
+        } else {
+          localStorage.removeItem("cca_generator.layout.panel");
+          localStorage.removeItem(LS_DETAILS);
+          lsSet(BLOCK_LS, {});
+        }
+      }
+    } catch { /* 覚えられなくても今の画面には使う */ }
+    areas.reload();
+    applyBlockOpts();
+    applySplits();
+    applying = false;
+  };
+  const box = document.createElement("span");
+  box.id = "cca-lpreset";
+  box.className = "lpreset";
+  box.hidden = true;
+  box.title = T("生成パネルの並びを選びます。並びを変えると「カスタム」になります(CCA・Forge風にしたあとも、「カスタム」を選ぶと戻ります)");
+  box.innerHTML = `<span>${esc(T("レイアウト"))}</span><select data-lp>` + [["cca", "CCA"], ["forge", "Forge風"], ["custom", "カスタム"]].map(([k, l]) => `<option value="${k}">${esc(T(l))}</option>`).join("") + "</select>";
+  const sl = box.querySelector("[data-lp]");
+  const show = (v) => { sl.value = v; sl.dispatchEvent(new Event("input")); }; // プルダウンの表示も合わせる
+  show(cur());
+  sl.onchange = () => apply(sl.value);
+  NARROW_MQ.addEventListener("change", () => show(cur())); // 幅が狭い / 広いに変わったら、その幅の選択を出す
+  // 並びを変えたら(項目を動かす・項目の表示・境目)「カスタム」にする(今の幅の方)
+  window.addEventListener("cca-layout-change", (e) => {
+    if (applying || !/^panel/.test(String(e.detail?.key || "")) || cur() === "custom") return;
+    try { localStorage.setItem(pkey(), "custom"); localStorage.removeItem(ckey()); } catch { /* 無視 */ }
+    show("custom");
+  });
+  // 並べ替えの部品として: 「デフォルトの状態に戻す」は、選んでいる見た目に戻す
+  return { el: box, setEdit() {}, editing: () => false, undo() {}, reset() { apply(cur()); } };
 }
 
 function slotHtml(name, n) {
@@ -733,7 +1136,6 @@ function bind() {
   $("#cca-close").onclick = () => close();
   fillLang();
   fillTheme();
-  $("#cca-theme").onchange = (e) => setTheme(e.target.value);
   $("#cca-lang").onchange = async (e) => {
     const sel = e.currentTarget;
     sel.disabled = true;
@@ -756,6 +1158,21 @@ function bind() {
       }
       setW(name, coerce(name, el));
     });
+  }
+  // LoRA の欄(Turbo LoRA・MOSS Edit)も、LoRA 一覧の行と同じく、プルダウンの代わりに LoRA エクスプローラを開く
+  for (const name of ["turbo_lora_name", "turbo_lora_low_name", "edit_lora_name"]) {
+    const el = root.querySelector(`select[data-w="${name}"]`);
+    if (!el) continue;
+    const openPicker = () => {
+      el.blur();
+      openLoraExplorer({
+        api, notify, current: el.value === NONE ? "" : el.value, model: W(node(), "model_type")?.value, noneValue: NONE,
+        used: new Set(),
+        onChoicesChanged: async () => { await refreshChoices(); helpCache.clear(); refresh(); },
+        onPick: (value) => setW(name, value),
+      });
+    };
+    asPicker(el, openPicker);
   }
   for (const el of $$("[data-range]")) {
     el.addEventListener("input", () => {
@@ -807,7 +1224,8 @@ function bind() {
   $("#cca-lora-add").onclick = async () => {
     const n = node();
     if (!n) return;
-    await setLoras(n, [...parseLoras(W(n, "loras").value), { name: NONE, strength: 1, clip: 1, target: "both", on: true }]);
+    const cur = parseLoras(W(n, "loras").value);
+    if (!cur.some((l) => l.name === NONE)) await setLoras(n, [...cur, { name: NONE, strength: 1, clip: 1, target: "both", on: true }]); // 選んでいない行があれば足さない
     renderLoras(n, true);
     refreshLight();
   };
@@ -884,17 +1302,30 @@ function bind() {
   for (const b of $$("[data-scale]")) b.onclick = () => setW("size_scale", Number(b.dataset.scale));
 
   // 左の列の項目: 折りたたみ(いつでも)・並べ替え(上の「⇅ 並べ替え」のときだけ)
-  sectionEditBar($("#cca-secbar"), [setupSections(root.querySelector(".col.left"), { name: "panel" })]);
+  $("#cca-ver").textContent = CCA.SPEC?.version_short ? `v${CCA.SPEC.version_short}` : ""; // 版(pyproject.toml の version から)
+  seedNarrow(); // 幅が狭いときの既定(覚えていなければ)
+  const areas = setupAreas($(".body"), { name: "panel", narrow: matchMedia("(max-width:1000px)"), narrowDefaults: NARROW_DEFAULT.layout.areas });
+  const lp = layoutPresets(areas);
+  sectionEditBar($("#cca-secbar"), [areas, setupBlockOpts(), lp], { onSet: (on) => { lp.el.hidden = !on; root.classList.toggle("secediting", on); }, noReset: true }); // 「デフォルトの状態に戻す」は「レイアウト」で選ぶ
+  $("#cca-secbar").appendChild(lp.el); // 並べ替え中だけ出す(帯を作ったあとに入れる)
   // 第29版: 複数画像タイル生成・サンプルワード / ワイルドカード
   setupTile(UICTX);
   setupWildcards(UICTX);
-  sideSplitter($(".body"), "panel", $(".col.right"), { gap: 14, minSide: 360, minMain: 360 }); // 左右の欄の境目をドラッグで動かす
+  // 左右の境目: 横幅を決めた項目(任意 px)より狭くはしない
+  const fw = (el) => (el?.classList?.contains("wpx") ? parseFloat(el.style.width) || 0 : 0);
+  const fixedMin = (area) => Math.max(0, ...[...area.children].map((c) => (c.matches("[data-sec]") ? fw(c)
+    : c.classList.contains("sec-row") ? [...c.children].reduce((s, x) => s + (fw(x) ? fw(x) + 12 : 0), 0) : Math.max(0, ...[...c.children].map(fw))))) + 16;
+  sideSplitter($(".body > .mid"), "panel", $(".col.right"), { gap: 14, minSide: () => Math.max(360, fixedMin($(".col.right"))), minMain: () => Math.max(360, fixedMin($(".col.left"))) }); // 左右の欄の境目をドラッグで動かす
+  for (const row of $$(".body > .hzrow")) { // 上と下の枠の境目(中央とは別々)
+    const L = row.querySelector(".area:not(.r)"), Rt = row.querySelector(".area.r");
+    sideSplitter(row, `panel.${row.dataset.row}`, Rt, { gap: 14, minSide: () => Math.max(240, fixedMin(Rt)), minMain: () => Math.max(240, fixedMin(L)) });
+  }
   const LS_RTOP = "cca_generator.narrowtop", rbtn = $("#cca-rpos-btn");
   const rtop = (on) => { root.classList.toggle("rtop", on); rbtn.textContent = T(on ? "▼ 生成ボタンと結果を下に置く" : "▲ 生成ボタンと結果を上に置く"); };
   rtop(lsGet(LS_RTOP, false));
   rbtn.onclick = () => { const on = !root.classList.contains("rtop"); lsSet(LS_RTOP, on); rtop(on); }; // 幅が狭くて 1 列のときの並び
   const prefs = $("#cca-prefs");
-  $("#cca-setio-open").onclick = () => { prefs.hidden = false; openSettingsIO(prefs, mediaDirsPanel()); }; // 自動で表示・言語・テーマカラーは設定の中に
+  $("#cca-setio-open").onclick = () => { prefs.hidden = false; openSettingsIO(prefs, [themePanel(), mediaDirsPanel()]); }; // 自動で表示・言語・テーマカラーは設定の中に
   // 生成の履歴(結果の小さな絵の列): ホイールで横に動かす
   $("#cca-hist").addEventListener("wheel", (e) => {
     const el = e.currentTarget;
@@ -994,11 +1425,27 @@ function bind() {
     el.ondrop = (e) => {
       e.preventDefault();
       el.classList.remove("over");
+      // 生成した画像(結果・履歴)や、ほかの入力画像の欄の画像
+      const v = e.dataTransfer?.getData("application/x-cca-image");
+      if (v) { (async () => { await rememberImage(v); await setW(name, v); })(); return; }
       const f = [...(e.dataTransfer?.files || [])].find((x) => x.type.startsWith("image/"));
       if (f) uploadTo(name, f);
     };
     el.onmouseenter = () => { root.dataset.hoverSlot = name; };
   }
+  // 生成した画像(結果・履歴)や入力画像の欄の画像をつかんで、入力画像の欄へドラッグで入れられるように
+  root.addEventListener("dragstart", (e) => {
+    const img = e.target?.closest?.("img");
+    if (!img) return;
+    let v = null;
+    const t = img.closest("#cca-hist .t");
+    if (t) { const h = history[Number(t.dataset.i)]; if (h && !h.isVideo && !h.isAudio && !h.is3d && !h.pdf) v = h.value; }
+    else if (img.closest("#cca-viewer")) { if (current && !current.isVideo && !current.isAudio && !current.is3d && !current.pdf) v = current.value; }
+    else { const d = img.closest("[data-drop]"); const w = d && W(node(), d.dataset.drop)?.value; if (w && w !== NONE) v = w; }
+    if (!v) return;
+    e.dataTransfer.setData("application/x-cca-image", v);
+    e.dataTransfer.effectAllowed = "copy";
+  });
   for (const b of $$("[data-upload]")) b.onclick = () => pickAndUpload(b.dataset.upload);
   for (const b of $$("[data-clear]")) b.onclick = () => clearSlot(b.dataset.clear);
   const maskBtn = root.querySelector("[data-mask]");
@@ -1166,14 +1613,15 @@ function fillPresets(select) {
 }
 function fillModelTypes(n) {
   const el = root.querySelector('[data-w="model_type"]');
-  const groups = { image: [], video: [], audio: [] };
+  const groups = { image: [], video: [], audio: [], "3d": [] };
   for (const t of CCA.SPEC.types) groups[CCA.SPEC.types_info[t].kind].push(t);
   const label = (t) => (CCA.SPEC.types_info[t].is_turbo ? `${t} ⚡` : t);
   // data-note = 種別の短い説明(プルダウンを開いたときに名前の下に出す)
   const opt = (t) => `<option value="${esc(t)}" data-note="${esc(CCA.SPEC.types_info[t].note || "")}" data-lic="${esc(CCA.SPEC.types_info[t].license || "")}" data-lic-html="${esc(licBadge(CCA.SPEC, CCA.SPEC.types_info[t].license))}">${esc(label(t))}</option>`;
   const html = `<optgroup label="画像">${groups.image.map(opt).join("")}</optgroup>`
     + `<optgroup label="動画">${groups.video.map(opt).join("")}</optgroup>`
-    + `<optgroup label="音楽・音声">${groups.audio.map(opt).join("")}</optgroup>`;
+    + `<optgroup label="音楽・音声">${groups.audio.map(opt).join("")}</optgroup>`
+    + (groups["3d"].length ? `<optgroup label="3D">${groups["3d"].map(opt).join("")}</optgroup>` : "");
   if (el._ccaHtml !== html) { el.innerHTML = html; el._ccaHtml = html; }
   el.value = W(n, "model_type").value;
 }
@@ -1249,9 +1697,12 @@ function refreshLight() {
     if (!w) continue;
     if (name === "model_type") continue;
     if (el.tagName === "SELECT") {
-      const values = IMG_KEYS.includes(name) ? [NONE, ...(w.options?.values || []).filter((v) => v !== NONE)] : w.options?.values;
-      fillSelect(el, values, w.value, name === "edit_format" ? (v) => EDIT_FORMAT_LABELS[v] || v : undefined);
+      const values = IMG_KEYS.includes(name) ? [NONE, ...(w.options?.values || []).filter((v) => v !== NONE)] : typeList(n, name) || w.options?.values;
+      const dl = CCA.SPEC.types_info[W(n, "model_type").value]?.downloaded || {}; // 自動でダウンロードする選択肢は、まだなら印を付ける
+      fillSelect(el, values, w.value, name === "edit_format" ? (v) => EDIT_FORMAT_LABELS[v] || v
+        : (v) => (dl[v] === false ? `${v}(${T("未ダウンロード")})` : v));
       el.classList.toggle("missing", isMissingFile(n, name));
+      el._ccaSync?.();
     } else if (el.type === "checkbox") {
       el.checked = !!w.value;
     } else {
@@ -1265,7 +1716,7 @@ function refreshLight() {
     const miss = isMissingFile(n, name) && visibleSet(n).has(name);
     el.classList.toggle("hide", !miss);
     if (miss) {
-      const kind = CCA.SPEC.list_kind[(CCA.SPEC.list_keys || CCA.SPEC.file_keys)[name]];
+      const kind = listKindOf(n, name);
       if (kind) renderHelp(el, kind, W(n, name).value);
       else el.textContent = "見つかりません。別の画像を選んでください。";
     } else {
@@ -1283,7 +1734,7 @@ function refreshLight() {
     const masked = name === "image" && /(^|\/)cca_masks\//.test(parseImageValue(v).subfolder + "/");
     const src = masked ? (maskPreview(n, v) || imageUrl(v)) : imageUrl(v);
     const html = on
-      ? `<img src="${esc(src)}" alt="">${masked ? '<span class="mk">マスクあり(赤い所を作り直す)</span>' : ""}`
+      ? `<img src="${esc(src)}" alt="">`
       : `<span>クリックして選ぶ<br>またはここにドロップ${name !== "image" ? "<br><small>(任意・使う場合だけ)</small>" : ""}</span>`;
     if (drop._ccaHtml !== html) { drop.innerHTML = html; drop._ccaHtml = html; }
   }
@@ -1301,6 +1752,8 @@ function refreshLight() {
   $("#cca-turbo-on").checked = turboOn;
   const isTurbo = !!CCA.SPEC.types_info[W(n, "model_type").value]?.is_turbo;
   $("#cca-turbo-warn").classList.toggle("hide", !(isTurbo && vis.has("turbo_lora_name") && !turboOn));
+  $("#cca-sn-turbo-warn")?.classList.toggle("hide", !(isTurbo && vis.has("sn_passes") && CCA.SPEC.types_info[W(n, "model_type").value]?.loader === "sn"
+    && Number(W(n, "sn_passes")?.value) > 0 && !String(W(n, "unet_name")?.value || "").startsWith("Core | ")));
   // 今の種別の保存先を先に見せる(画像・動画の両方)
   const pv = [["image_output_prefix", "画像"], ["video_output_prefix", "動画"], ["audio_output_prefix", "音声"]];
   const kd = CCA.SPEC.types_info[W(n, "model_type").value]?.kind;
@@ -1615,7 +2068,7 @@ function openImageEditorFor(value) {
 let histTopOpt = true;
 const refreshHistOpt = () => mediaDirs().then((d) => { histTopOpt = !!(d.options || {}).history_top; }).catch(() => {});
 setTimeout(refreshHistOpt, 1500);
-const galleryValues = (kind) => (!histTopOpt ? [] : [...new Set(history.filter((h) => h.value && !h.pdf && (kind === "video" ? h.isVideo : kind === "audio" ? h.isAudio : !h.isVideo && !h.isAudio)).map((h) => h.value))]);
+const galleryValues = (kind) => (!histTopOpt ? [] : [...new Set(history.filter((h) => h.value && !h.pdf && (kind === "video" ? h.isVideo : kind === "audio" ? h.isAudio : !h.isVideo && !h.isAudio && !h.is3d)).map((h) => h.value))]);
 function openVideoEditorFor(value) {
   guardComfyKeys(); // 開いている間は ComfyUI 本体の「元に戻す」を動かさない
   openVideoEditor({
@@ -1841,6 +2294,11 @@ function renderLoras(n, force = false) {
   const box = $("#cca-loras");
   if (!box) return;
   const list = parseLoras(W(n, "loras")?.value);
+  if (list.filter((l) => l.name === NONE).length > 1) { // 選んでいない行が重なっていたら 1 つにまとめる
+    const keep = list.filter((l, i) => l.name !== NONE || i === list.findLastIndex((x) => x.name === NONE));
+    setLoras(n, keep).then(() => renderLoras(n, true));
+    return;
+  }
   const files = loraFiles(n);
   const loader = CCA.SPEC.types_info[W(n, "model_type").value]?.loader;
   const key = loraKey(list, files, loader);
@@ -1857,7 +2315,7 @@ function renderLoras(n, force = false) {
       .map((f) => `<option value="${esc(f)}" ${f === l.name ? "selected" : ""}>${esc(f)}${missing && f === l.name ? "(見つかりません)" : ""}</option>`).join("");
     return `<div class="lora" data-i="${i}">
       <input type="checkbox" data-k="on" ${l.on ? "checked" : ""} title="有効/無効">
-      <select data-k="name" class="${missing ? "missing" : ""}">${opts}</select>
+      <select data-k="name" data-lorapick="1" class="${missing ? "missing" : ""}">${opts}</select>
       <input type="number" data-k="strength" step="0.05" value="${l.strength}" title="強度">
       <input type="number" data-k="clip" step="0.05" value="${l.clip}" title="CLIP 強度" class="${loader === "ckpt" ? "" : "hide"}">
       <select data-k="target" class="${loader === "wan14" ? "" : "hide"}" title="Wan2.2 14B: どちらのモデルに掛けるか">
@@ -1873,6 +2331,13 @@ function renderLoras(n, force = false) {
       const next = parseLoras(W(n, "loras").value);
       if (!next[i]) return;
       const g = (k) => row.querySelector(`[data-k="${k}"]`);
+      if (e?.target?.dataset?.k === "name" && g("name").value === NONE) { // (none) にした行は消す
+        next.splice(i, 1);
+        await setLoras(n, next);
+        renderLoras(n, true);
+        refreshLight();
+        return;
+      }
       next[i] = { ...next[i], on: g("on").checked, name: g("name").value, strength: Number(g("strength").value) || 0,
         clip: Number(g("clip").value) || 0, target: g("target").value };
       // ファイルを選び直したときだけ作り直す(見つからない表示の更新)。強度・チェックは作り直さない
@@ -1883,6 +2348,25 @@ function renderLoras(n, force = false) {
       refreshLight();
     };
     for (const el of row.querySelectorAll("input,select")) el.addEventListener("change", commit);
+    // 名前のプルダウンを押したら、プルダウンの代わりに LoRA エクスプローラ(ローカル / Civitai)を開く
+    const nameSel = row.querySelector('select[data-k="name"]');
+    const openPicker = () => {
+      nameSel.blur();
+      openLoraExplorer({
+        api, notify, current: nameSel.value === NONE ? "" : nameSel.value, model: W(n, "model_type")?.value, noneValue: NONE,
+        used: new Set(parseLoras(W(n, "loras").value).map((l) => l.name)),
+        onChoicesChanged: async () => { await refreshChoices(); helpCache.clear(); refresh(); },
+        onPick: async (name) => {
+          const next = parseLoras(W(n, "loras").value);
+          if (!next[i]) return;
+          next[i] = { ...next[i], name };
+          await setLoras(n, next);
+          renderLoras(n, true);
+          refreshLight();
+        },
+      });
+    };
+    asPicker(nameSel, openPicker);
     row.querySelector('[data-k="del"]').onclick = async () => {
       const next = parseLoras(W(n, "loras").value);
       next.splice(i, 1);
@@ -2061,21 +2545,250 @@ async function renderDirs(m) {
   }
 }
 
+// ---- テーマを「ここで作る」: 画像を読めるテキストエンコーダー(画像からプロンプトと同じもの)に色だけを答えさせ、
+// 残り(項目ごとの色・影・プルダウンなど)はここで組み立てる。小さいモデルでも形が崩れにくいように、答えは短い JSON だけにする
+const hx = (c) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(c || "").trim()); return m ? `#${m[1].toLowerCase()}` : null; };
+const rgbOf = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+const toHex = (r) => `#${r.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("")}`;
+const mixC = (a, b, t) => { const x = rgbOf(a), y = rgbOf(b); return toHex(x.map((v, i) => v + (y[i] - v) * t)); };
+const rgbaC = (c, a) => `rgba(${rgbOf(c).join(", ")}, ${a})`;
+const lumC = (c) => { const [r, g, b] = rgbOf(c).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const contrastC = (a, b) => { const x = lumC(a), y = lumC(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+// 文字の色が地の上で読めないときは、読める色(白か黒寄り)にする
+const readable = (fg, ...grounds) => (grounds.every((g) => contrastC(fg, g) >= 6) ? fg : (lumC(grounds[0]) > 0.4 ? "#161210" : "#f4f2ee"));
+function themeFromPalette(pal, base) {
+  let bg = hx(pal.bg) || "#f5f1e6";
+  const light = lumC(bg) > 0.4;
+  const card = hx(pal.card) || mixC(bg, light ? "#ffffff" : "#000000", light ? 0.45 : 0.25);
+  const panel = hx(pal.panel) || mixC(bg, card, 0.5);
+  const fg = readable(hx(pal.fg) || (light ? "#1c120b" : "#eef0f2"), bg, card);
+  const muted = (() => { const m = hx(pal.muted) || mixC(fg, bg, 0.3); return contrastC(m, card) >= 4 ? m : mixC(fg, bg, 0.15); })();
+  const accent = hx(pal.accent) || (light ? "#5c361b" : "#3db4a6");
+  const accent2 = hx(pal.accent2) || mixC(accent, fg, 0.35);
+  const danger = hx(pal.danger) || "#c0392b", warn = hx(pal.warn) || "#d4a017", ok = hx(pal.ok) || "#4f8a3a";
+  const onAccent = contrastC(accent, "#ffffff") >= 3.5 ? "#ffffff" : "#141414";
+  const card2 = mixC(card, fg, 0.08), border = rgbaC(fg, 0.22), shadow = rgbaC(light ? fg : "#000000", light ? 0.14 : 0.45), hi = rgbaC(light ? "#ffffff" : fg, light ? 0.7 : 0.12);
+  const keys = Object.keys(base?.sections || {});
+  const secCols = [accent, accent2, mixC(accent, fg, 0.3), mixC(accent2, fg, 0.3)];
+  const id = `ai_${Date.now().toString(36)}`;
+  return {
+    id, order: 600, name: String(pal.name || "").trim().slice(0, 30) || T("AI で作ったテーマ"),
+    light, bg, fg, accent, accent2,
+    grad: light ? [mixC(bg, "#ffffff", 0.3), mixC(bg, accent, 0.45)] : [mixC(bg, accent, 0.22), bg],
+    alpha: { panel: 0.96, card: 0.86, go: 0.94 },
+    hueMap: [[0, danger], [35, warn], [120, ok], [270, accent2], [320, accent]],
+    secTitleUseAccent: true,
+    vars: { "--bg": bg, "--panel": panel, "--card": card, "--card2": card2, "--text": fg, "--muted": muted, "--border": border, "--accent": accent, "--accent2": accent2,
+      "--accent-fg": onAccent, "--danger": danger, "--warn": warn, "--ok": ok, "--sec-a": card, "--sec-b": mixC(card, accent, 0.1) },
+    deco: {
+      cardShadow: `0 2px 10px ${shadow}, inset 0 1px 0 ${hi}`, secCardShadow: `0 2px 10px ${shadow}, inset 0 1px 0 ${hi}`,
+      btnGrad: `linear-gradient(180deg, ${rgbaC(light ? "#ffffff" : fg, light ? 0.5 : 0.12)}, ${rgbaC(light ? "#ffffff" : fg, 0.06)} 48%, ${rgbaC("#000000", light ? 0.1 : 0.25)})`,
+      btnShadow: `inset 0 1px 0 ${hi}, inset 0 -2px 3px ${rgbaC("#000000", light ? 0.14 : 0.35)}, 0 1px 3px ${shadow}`,
+      btnActiveShadow: `inset 0 2px 4px ${rgbaC("#000000", 0.3)}`,
+      goBorder: mixC(accent, "#ffffff", 0.6), goColor: onAccent, goTextShadow: `0 1px 2px ${rgbaC("#000000", 0.5)}`,
+      goShadow: `inset 0 2px 0 ${rgbaC("#ffffff", 0.35)}, inset 0 -6px 12px ${rgbaC("#000000", 0.3)}, 0 6px 16px ${shadow}`,
+    },
+    select: { bg: card, fg, border, menuBg: card, menuFg: fg, menuBorder: border, hoverBg: card2, hoverFg: fg, selectedBg: accent, selectedFg: onAccent },
+    onFg: onAccent, secDoneFg: fg,
+    sections: Object.fromEntries(keys.map((k, i) => { const a = secCols[i % secCols.length]; return [k, { accent: a, tint: rgbaC(a, 0.18), border: rgbaC(a, 0.42) }]; })),
+  };
+}
+// モデルの答え(文章)から JSON を取り出す。崩れていたら #rrggbb を順に拾う
+function paletteFrom(text) {
+  const s = String(text || "");
+  const a = s.indexOf("{"), b = s.lastIndexOf("}");
+  if (a >= 0 && b > a) { try { const j = JSON.parse(s.slice(a, b + 1)); if (j && typeof j === "object") return j; } catch { /* 下で拾う */ } }
+  const cols = s.match(/#[0-9a-fA-F]{6}\b/g) || [];
+  if (cols.length < 3) return null;
+  const ks = ["bg", "panel", "card", "fg", "muted", "accent", "accent2", "danger", "warn", "ok"];
+  return Object.fromEntries(cols.slice(0, ks.length).map((c, i) => [ks[i], c]));
+}
+const THEME_ASK = (what) => `You are a UI color designer. Create a color theme for an image generation app ${what}.
+Reply with ONLY one JSON object and nothing else, in exactly this form:
+{"name":"short theme name in Japanese","bg":"#rrggbb","panel":"#rrggbb","card":"#rrggbb","fg":"#rrggbb","muted":"#rrggbb","accent":"#rrggbb","accent2":"#rrggbb","danger":"#rrggbb","warn":"#rrggbb","ok":"#rrggbb"}
+bg: page background. panel: panel background. card: section background. fg: main text, must be clearly readable on bg and card.
+muted: secondary text. accent: main buttons. accent2: highlights. danger: errors. warn: warnings. ok: success.`;
+async function makeTheme(kind, btn, input) {
+  const enc = captionEncoder();
+  if (!enc) { notify(T("テーマを作るには、画像を読めるテキストエンコーダーが必要です。MOSS 用の qwen3.5_9b_w4a8_gptq か、Krea2・FLUX.3 用の qwen3vl_4b をテキストエンコーダーのフォルダに入れてください。"), "error", btn); return; }
+  let ask, image = null;
+  if (kind === "text") {
+    const want = String(input || "").trim();
+    if (!want) { notify(T("どんなテーマにしたいかを書いてください"), "error", btn); return; }
+    ask = THEME_ASK(`based on this request: "${want.replace(/"/g, "'")}"`);
+  } else {
+    ask = THEME_ASK("whose colors match the mood and main colors of this image");
+    image = input;
+  }
+  if (!confirm(T("テーマを作ります。\n\n使うテキストエンコーダー: {0}\n(初めて使うときは読み込みに時間がかかります)\n\nできたテーマは保存され、テーマカラーで選べるようになります。", enc.name))) return;
+  const btns = [...themeBox.querySelectorAll("[data-tg]")];
+  btns.forEach((x) => { x.disabled = true; });
+  const label = btn.textContent;
+  btn.textContent = T("作成中…(初回はテキストエンコーダーの読み込みに時間がかかります)");
+  try {
+    if (image) image = await uploadImage(image);
+    const g = { 1: { class_type: "CLIPLoader", inputs: { clip_name: enc.name, type: enc.type, device: "default" } },
+      3: { class_type: "TextGenerateV2", inputs: { clip: ["1", 0], prompt: ask, max_length: 320, sampling_mode: "off", thinking: false, use_default_template: true, mtp: "auto" } },
+      4: { class_type: "PreviewAny", inputs: { source: ["3", 0] } } };
+    if (image) { g[2] = { class_type: "LoadImage", inputs: { image } }; g[3].inputs["images.image1"] = ["2", 0]; }
+    const out = await runMini(g);
+    const text = String(out?.outputs?.["4"]?.text?.[0] ?? "").trim();
+    const pal = paletteFrom(text);
+    if (!pal) throw new Error(T("色の答えを読み取れませんでした"));
+    const th = themeFromPalette(pal, THEMES.find((t) => t.id === "cca10") || THEMES.find((t) => t.sections));
+    const r = await api.fetchApi("/cca_generator/themes/import", { method: "POST", body: JSON.stringify({ id: th.id, theme: th, overwrite: false }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `${r.status}`);
+    await loadThemes(true);
+    fillTheme();
+    setTheme(th.id);
+    themeBox.querySelector("#cca-theme").value = th.id;
+    notify(T("テーマ「{0}」を作りました({1})", th.name, enc.name), "info", btn);
+  } catch (e) {
+    notify(`${T("テーマを作れませんでした")}: ${e.message}`, "error", btn);
+  } finally {
+    btns.forEach((x) => { x.disabled = false; });
+    btn.textContent = label;
+  }
+}
+
+// ---- テーマ(設定の中): テーマカラーの選択と、テーマを作る(テンプレート・取り込み)
+let themeBox = null;
+function themePanel() {
+  if (themeBox) return themeBox;
+  const m = themeBox = document.createElement("div");
+  m.id = "cca-themesec";
+  m.className = "sec";
+  m.innerHTML = `<style>
+#cca-themesec h4{margin:2px 0 8px}
+#cca-themesec .tm-pick{display:flex;gap:10px;align-items:center;margin:0 0 14px}
+#cca-themesec .tm-pick > span{font-weight:600;white-space:nowrap}
+#cca-themesec select{flex:1 1 12em;min-width:10em;background:#12151a;color:#e4e7eb;border:1px solid #303744;border-radius:6px;padding:4px 8px}
+#cca-themesec .tm-make{font-weight:700;margin:0 0 8px}
+#cca-themesec .tm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;align-items:stretch}
+#cca-themesec .tm-card{border:1px solid color-mix(in srgb,var(--tm-c) 40%,var(--border,#303744));border-radius:10px;padding:10px 12px 12px;background:color-mix(in srgb,var(--tm-c) 12%,var(--card,#1a1e25))}
+#cca-themesec .tm-card.here{--tm-c:var(--accent,#3db4a6)}
+#cca-themesec .tm-card.other{--tm-c:var(--accent2,#ffd24d)}
+#cca-themesec .tm-ttl{font-weight:700;margin:0 0 2px}
+#cca-themesec .tm-desc{font-size:12px;color:var(--muted,#959eab);margin:0 0 6px;line-height:1.5}
+#cca-themesec .tm-lbl{font-size:12px;font-weight:600;margin:10px 0 4px}
+#cca-themesec .tm-lbl.sep{border-top:1px solid color-mix(in srgb,var(--tm-c) 40%,var(--border,#303744));padding-top:10px;margin-top:12px}
+#cca-themesec .tm-line{display:flex;gap:8px;align-items:center}
+#cca-themesec .tm-line input{flex:1 1 auto;min-width:0;background:#12151a;color:#e4e7eb;border:1px solid #303744;border-radius:6px;padding:5px 8px}
+#cca-themesec .tm-line button{flex:none}
+#cca-themesec .tm-line.col{flex-direction:column;align-items:stretch}#cca-themesec .tm-line.col input{width:100%;box-sizing:border-box}#cca-themesec .tm-line.col button{align-self:flex-start}
+#cca-themesec ol.tm-steps{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
+#cca-themesec ol.tm-steps li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:4px 8px;align-items:start}
+#cca-themesec .tm-no{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--tm-c);color:var(--card,#1a1e25)}
+#cca-themesec .tm-step{font-size:13px;line-height:22px}
+#cca-themesec .tm-step small{display:block;font-size:11.5px;line-height:1.5;color:var(--muted,#959eab)}
+#cca-themesec ol.tm-steps li button{grid-column:2;justify-self:start}
+</style>
+    <h4>${esc(T("テーマ"))}</h4>
+    <div class="tm-pick"><span title="${esc(T("配色(テーマ)。パネルと画像編集・動画編集の色を変えます"))}">${esc(T("テーマカラー"))}</span><select id="cca-theme"></select></div>
+    <div class="tm-make">${esc(T("テーマを作る"))}</div>
+    <div class="tm-grid">
+      <div class="tm-card here">
+        <div class="tm-ttl">${esc(T("ここで作る"))}</div>
+        <div class="tm-desc">${esc(T("画像からプロンプトを作るときと同じテキストエンコーダー(qwen3.5_9b・qwen3vl_4b)で色を決めます。作ったテーマは保存され、テーマカラーで選べます。"))}</div>
+        <div class="tm-lbl">${esc(T("文章から"))}</div>
+        <div class="tm-line col"><input data-tg-text placeholder="${esc(T("例: 夜の海のような、紺と水色の落ち着いた暗いテーマ"))}"><button data-tg="text">${esc(T("文章から作る"))}</button></div>
+        <div class="tm-lbl sep">${esc(T("画像から"))}</div>
+        <div class="tm-line"><button data-tg="img">${esc(T("画像から作る…"))}</button><span class="tm-desc" style="margin:0">${esc(T("選んだ画像の色合いで作ります"))}</span></div>
+      </div>
+      <div class="tm-card other">
+        <div class="tm-ttl">${esc(T("他で作ってくる"))}</div>
+        <div class="tm-desc">${esc(T("ChatGPT などのほかの AI にテーマのファイルを作ってもらい、ここで取り込みます。"))}</div>
+        <ol class="tm-steps">
+          <li><span class="tm-no">1</span><span class="tm-step">${esc(T("テンプレートを AI に渡して、作ってもらう"))}</span><button data-tm="tpl">${esc(T("テンプレートをダウンロード"))}</button></li>
+          <li><span class="tm-no">2</span><span class="tm-step">${esc(T("色を確かめる(任意)"))}<small>${esc(T("theme_view.html をブラウザで開き、「テーマのファイルを開く」でできたファイルを開きます"))}</small></span><button data-tm="view">${esc(T("theme_view.html をダウンロード"))}</button></li>
+          <li><span class="tm-no">3</span><span class="tm-step">${esc(T("できたファイルを取り込む"))}<small>${esc(T(".js・.txt のどちらでも取り込めます"))}</small></span><button data-tm="import">${esc(T("テーマのファイルを取り込む"))}</button></li>
+        </ol>
+      </div>
+    </div>
+    <input type="file" accept="image/*" hidden data-tg-file><input type="file" accept=".js,.mjs,.txt,text/javascript" hidden data-tm-file>`;
+  m.addEventListener("keydown", (e) => e.stopPropagation());
+  m.querySelector("#cca-theme").onchange = (e) => setTheme(e.target.value);
+  // ここで作る(文章から・画像から)
+  m.querySelector('[data-tg="text"]').onclick = (e) => makeTheme("text", e.currentTarget, m.querySelector("[data-tg-text]").value);
+  const tgFile = m.querySelector("[data-tg-file]");
+  m.querySelector('[data-tg="img"]').onclick = () => { tgFile.value = ""; tgFile.click(); };
+  tgFile.onchange = () => { const f = tgFile.files?.[0]; if (f) makeTheme("img", m.querySelector('[data-tg="img"]'), f); };
+  // テンプレートをダウンロード(web/themes/_template.js)
+  m.querySelector('[data-tm="tpl"]').onclick = async (e) => {
+    try {
+      const r = await fetch(new URL("./themes/_template.js", import.meta.url), { cache: "no-store" });
+      if (!r.ok) throw new Error(`${r.status}`);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([await r.text()], { type: "text/javascript" }));
+      a.download = "cca_theme_template.js";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (err) { notify(`${T("テンプレートを読めませんでした")}: ${err.message}`, "error", e.currentTarget); }
+  };
+  // 色の確認用のページ(web/theme_view.html)をダウンロード
+  m.querySelector('[data-tm="view"]').onclick = async (e) => {
+    const btn = e.currentTarget;
+    try {
+      const r = await fetch(new URL("./theme_view.html", import.meta.url), { cache: "no-store" });
+      if (!r.ok) throw new Error(`${r.status}`);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(await r.blob());
+      a.download = "theme_view.html";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (err) { notify(`${T("theme_view.html を読めませんでした")}: ${err.message}`, "error", btn); }
+  };
+  // テーマのファイルを取り込む: 読み込んで、値だけ(JSON)のファイルに書き直してサーバーに保存する
+  const file = m.querySelector("[data-tm-file]");
+  m.querySelector('[data-tm="import"]').onclick = () => { file.value = ""; file.click(); };
+  file.onchange = async () => {
+    const f = file.files?.[0], btn = m.querySelector('[data-tm="import"]');
+    if (!f) return;
+    try {
+      // AI の説明文・コードブロックの印が付いたままでも、値の部分を取り出して読む
+      const th = await themeFromText(await f.text());
+      if (!/^[a-z0-9_-]{1,64}$/.test(String(th.id || ""))) throw new Error(T("id は英小文字・数字・_・- で書いてください"));
+      if (!th.name) th.name = th.id;
+      const body = { id: th.id, theme: JSON.parse(JSON.stringify(th)), overwrite: false };
+      let r = await api.fetchApi("/cca_generator/themes/import", { method: "POST", body: JSON.stringify(body) });
+      if (r.status === 409) {
+        if (!confirm(T("同じ id のテーマ({0})があります。置き換えますか？", th.id))) return;
+        body.overwrite = true;
+        r = await api.fetchApi("/cca_generator/themes/import", { method: "POST", body: JSON.stringify(body) });
+      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `${r.status}`);
+      await loadThemes(true);
+      fillTheme();
+      setTheme(th.id);
+      m.querySelector("#cca-theme").value = th.id;
+      notify(T("テーマ「{0}」を取り込みました", T(th.name)), "info", btn);
+    } catch (err) { notify(`${T("取り込めませんでした")}: ${err.message}`, "error", btn); }
+  };
+  m._render = () => fillTheme();
+  return m;
+}
+
 // ---- 画像・動画を読み込む場所(設定の中。モデルフォルダとは別)
 let mediaBox = null;
 function mediaDirsPanel() {
   if (mediaBox) return mediaBox;
   const m = mediaBox = document.createElement("div");
   m.id = "cca-mediadirs";
-  m.innerHTML = `<style>#cca-mediadirs,#cca-mediadirs [data-list]{display:contents}#cca-mediadirs h4{margin:12px 0 4px}#cca-mediadirs .p{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
+  m.className = "sec";
+  m.innerHTML = `<style>#cca-mediadirs [data-list]{display:contents}#cca-mediadirs h4{margin:12px 0 4px}#cca-mediadirs > h4:first-of-type{margin-top:2px}#cca-mediadirs .grp{margin:10px 0 0;border:1px solid color-mix(in srgb,var(--md-c) 40%,var(--border,#303744));border-radius:10px;padding:8px 12px 10px;background:color-mix(in srgb,var(--md-c) 12%,var(--card,#1a1e25))}
+#cca-mediadirs .grp.md-opt{--md-c:var(--muted,#959eab)}#cca-mediadirs .grp.md-a{--md-c:var(--accent,#3db4a6)}#cca-mediadirs .grp.md-b{--md-c:var(--accent2,#ffd24d)}#cca-mediadirs .grp.md-add{--md-c:var(--warn,#e0b04a)}
+#cca-mediadirs .grp > h4{margin:0 0 4px}#cca-mediadirs .md-ttl{font-weight:700;margin:0 0 2px}#cca-mediadirs details.grp > summary{font-weight:700;cursor:pointer}#cca-mediadirs .p{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
 #cca-mediadirs label.ck{display:flex !important;flex-direction:row;justify-content:flex-start;align-items:center;gap:8px;margin:4px 0;width:auto;text-align:left}#cca-mediadirs label.ck input{width:auto !important;flex:0 0 auto;margin:0}#cca-mediadirs code{word-break:break-all}#cca-mediadirs .cnt{color:#959eab;font-size:12px}
 #cca-mediadirs input:not([type=checkbox]){flex:1 1 12em;min-width:10em;background:#12151a;color:#e4e7eb;border:1px solid #303744;border-radius:6px;padding:4px 8px}
 #cca-mediadirs select{flex:0 0 auto;min-width:11em;max-width:100%;background:#12151a;color:#e4e7eb;border:1px solid #303744;border-radius:6px;padding:4px 8px}</style>
-    <div class="sec"><label class="ck"><input type="checkbox" data-opt="history_top"> ${esc(T("生成履歴(ギャラリー)のファイルを一番上に足す"))}</label>
+    <h4>${esc(T("画像・動画を読み込む場所"))}</h4>
+    <div class="grp md-opt"><div class="md-ttl">${esc(T("共通の設定"))}</div><label class="ck"><input type="checkbox" data-opt="history_top"> ${esc(T("生成履歴(ギャラリー)のファイルを一番上に足す"))}</label>
       <label class="ck"><input type="checkbox" data-opt="recursive"> ${esc(T("サブフォルダを検索対象に入れる"))}</label>
       <div class="note">${esc(T("サブフォルダを含めた場合などで大量のファイルを並べると重くなる可能性があります。"))}</div></div>
     <div data-list></div>
-    <details class="sec"><summary>${esc(T("フォルダを追加する"))}</summary><div class="row" style="margin-top:6px"><select data-kind></select>
+    <details class="grp md-add"><summary>${esc(T("フォルダを追加する"))}</summary><div class="row" style="margin-top:6px"><select data-kind></select>
       <input data-path placeholder="${esc(T("フォルダのパス(例: D:\\AI\\images)"))}"><button data-browse title="${esc(T("フォルダを選ぶ画面を開きます(ComfyUI を動かしているパソコンで開きます)"))}">📁 ${esc(T("参照"))}</button>
       <button class="pri" data-add>${esc(T("追加"))}</button></div></details>`;
   m.addEventListener("keydown", (e) => e.stopPropagation());
@@ -2095,7 +2808,7 @@ function mediaDirsPanel() {
     const sel = m.querySelector("[data-kind]");
     if (!sel.options.length) sel.innerHTML = Object.entries(info).map(([k, v]) => `<option value="${k}">${esc(T(v.label))}</option>`).join("");
     const list = m.querySelector("[data-list]");
-    list.innerHTML = Object.entries(info).map(([k, v]) => `<div class="sec"><h4>${esc(T(v.label))} <span title="${esc(T(v.help))}">ⓘ</span></h4><div class="note" style="margin:0 0 4px">${esc(T(v.help))}</div>`
+    list.innerHTML = Object.entries(info).map(([k, v], i) => `<div class="grp ${i % 2 ? "md-b" : "md-a"}"><h4>${esc(T(v.label))} <span title="${esc(T(v.help))}">ⓘ</span></h4><div class="note" style="margin:0 0 4px">${esc(T(v.help))}</div>`
       + v.paths.map((p, i) => `<div class="p"><code>${esc(p.path)}</code><span class="cnt">${p.count} ${esc(T("個"))}</span>
         <button data-open="${k}|${i}">📂 ${esc(T("開く"))}</button><button data-copy="${esc(p.path)}">📋 ${esc(T("パスをコピー"))}</button>${p.custom ? `<button data-del="${k}|${i}">${esc(T("外す"))}</button>` : ""}</div>${dirSub(p)}`).join("") + "</div>").join("");
     for (const b of list.querySelectorAll("[data-open]")) { const [k, i] = b.dataset.open.split("|"); b.onclick = () => openWithMessage(b, info[k].paths[Number(i)].path, true); }
@@ -2203,7 +2916,7 @@ function refresh() {
     box._ccaLoad = async () => {
       if (box._ccaLoaded) return;
       box._ccaLoaded = true;
-      const kind = CCA.SPEC.list_kind[(CCA.SPEC.list_keys || CCA.SPEC.file_keys)[k]];
+      const kind = listKindOf(node(), k);
       if (!kind) return;
       const helps = (await Promise.all(rows.map(([name]) => getHelp(kind, name)))).filter(Boolean);
       if (box._ccaStd !== lkey || !helps.length) return;
@@ -2347,6 +3060,9 @@ async function generate() {
   // 登録の無いワイルドカード(__名前__)は置き換わらずにそのまま送られる
   const unk = [...new Set([...unknownWildcards(W(n, "positive")?.value), ...unknownWildcards(W(n, "negative")?.value)])];
   if (unk.length) notify(`登録の無いワイルドカードは、そのまま送ります: ${unk.join(" ")}`, "info", $("#cca-go"));
+  // 追加ノードが入っていない種別は、送らずに入れ方を出す
+  const missNode = CCA.SPEC.types_info?.[W(n, "model_type")?.value]?.missing_node;
+  if (missNode) { showError(T(missNode)); setStatus(T("追加ノードが必要です")); return; }
   $("#cca-go").disabled = true;
   try {
     if (audioKind(n)) await generateAudio(n, batch); // 第42版: 声・音楽
@@ -2368,7 +3084,7 @@ async function generate() {
 let executingId = "";
 // ---------------------------------------------------------------- 第42版: 声・音楽(Qwen3-TTS・LatentSync 1.6・HeartMuLa・ACE-Step 1.5)
 // 画像・動画のワークフローは使わず、サーバー(audiogen.py)が作る小さな処理を runMini で送る。設定は audio_opts(JSON。種別ごとに覚える)
-const audioKind = (n) => CCA.SPEC.types_info?.[W(n, "model_type")?.value]?.kind === "audio";
+const audioKind = (n) => ["audio", "3d"].includes(CCA.SPEC.types_info?.[W(n, "model_type")?.value]?.kind); // 3D も同じ流れで作る
 let audioJob = null;
 const objCache = new Map();
 // 追加ノードの選べる値(声・言語・保存した声・話し方のひな形・モデル)は、入っているノードから読む
@@ -2407,11 +3123,69 @@ async function setAO(k, v) {
   $("#cca-audio-opts")._json = json; // 自分で変えた値(打っている欄は作り直さない)
   await setW("audio_opts", json);
 }
+// 3D のおすすめ設定(選ぶと、下の値がまとめて入ります。値は あとから自由に変えられます)
+const P3D_BASE = {"faces": 700000, "texture": 4096, "ss_steps": 12, "ss_cfg": 7.5, "shape_steps": 20, "shape_cfg": 7.5, "tex_steps": 12, "tex_cfg": 1.0, "metal_mode": "fixed", "metallic": 0, "rough_mode": "model", "roughness": 0.5, "up_steps": 12, "ss_shift": 5, "ss_rescale": 0.7, "shape_rescale": 0.5, "crop_pad": 1.1, "crop_bg": "black", "remesh_res": 768, "remesh_smooth": 20, "remesh_small": 0.01, "crease": 180, "uv_pad": 1, "uv_weld": 0.0002, "normal_res": 2048, "cage": 0.05, "ao_res": 1024, "ao_samples": 64, "ao_dist": 0.71, "ao_strength": 1, "ao_bias": 0.01};
+const P3D_DEF = (label, o) => ({ label, v: { ...P3D_BASE, ...o } });
+const P3D = {
+  standard: P3D_DEF("標準(公式テンプレートと同じ)", {}),
+  bright: P3D_DEF("全体を明るく綺麗に", {"tex_steps": 24}),
+  person: P3D_DEF("人物(顔や体つきを丁寧に)", {"faces": 1000000, "ss_steps": 16, "shape_steps": 30, "tex_steps": 20}),
+  figure: P3D_DEF("置物・フィギュア", {"faces": 800000, "shape_steps": 25, "tex_steps": 16}),
+  character: P3D_DEF("イラスト・キャラクター", {"faces": 600000, "ss_cfg": 6.0, "shape_cfg": 6.0, "tex_steps": 20}),
+  animal: P3D_DEF("動物・ぬいぐるみ", {"faces": 800000, "ss_steps": 14, "ss_cfg": 7.0, "shape_steps": 28, "shape_cfg": 7.0, "tex_steps": 18}),
+  machine: P3D_DEF("乗り物・機械(形をはっきり)", {"faces": 1200000, "ss_steps": 16, "ss_cfg": 8.5, "shape_steps": 30, "shape_cfg": 8.5}),
+  building: P3D_DEF("建物・家具", {"faces": 500000, "texture": 2048, "ss_cfg": 8.0, "shape_steps": 24, "shape_cfg": 8.0}),
+  fast: P3D_DEF("速く試す", {"faces": 200000, "texture": 1024, "ss_steps": 8, "shape_steps": 8, "tex_steps": 8}),
+  quality: P3D_DEF("高品質(時間がかかる)", {"faces": 1500000, "ss_steps": 24, "shape_steps": 36, "tex_steps": 30}),
+  metal_glossy: P3D_DEF("金属(つるつる)", {"metal_mode": "fixed", "metallic": 1.0, "rough_mode": "fixed", "roughness": 0.2}),
+  metal_matte: P3D_DEF("金属(つや消し)", {"metal_mode": "fixed", "metallic": 1.0, "rough_mode": "fixed", "roughness": 0.5}),
+  metal_rust: P3D_DEF("金属(ざらざら・さび)", {"metal_mode": "fixed", "metallic": 0.8, "rough_mode": "fixed", "roughness": 0.8}),
+  gold: P3D_DEF("金(光沢)", {"metal_mode": "fixed", "metallic": 1.0, "rough_mode": "fixed", "roughness": 0.15, "tex_steps": 16}),
+  chrome: P3D_DEF("銀・クローム", {"metal_mode": "fixed", "metallic": 1.0, "rough_mode": "fixed", "roughness": 0.05}),
+  brass: P3D_DEF("銅・真鍮", {"metal_mode": "fixed", "metallic": 1.0, "rough_mode": "fixed", "roughness": 0.3}),
+  plastic_glossy: P3D_DEF("プラスチック(つるつる)", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.3}),
+  plastic_matte: P3D_DEF("プラスチック(つや消し)", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.7}),
+  rubber: P3D_DEF("ゴム", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.9}),
+  glass_like: P3D_DEF("ガラスのようなつるつる", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.1}),
+  ceramic: P3D_DEF("陶器・磁器", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.25}),
+  wood: P3D_DEF("木材", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.75}),
+  stone: P3D_DEF("石・コンクリート", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.9}),
+  cloth: P3D_DEF("布・服", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 1.0}),
+  leather: P3D_DEF("革", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.6}),
+  skin_doll: P3D_DEF("肌・人形(やわらかい)", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.5, "faces": 900000, "shape_steps": 28}),
+  plush_soft: P3D_DEF("ぬいぐるみ(ふわふわ)", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 1.0, "remesh_smooth": 30}),
+  paper: P3D_DEF("紙・ペーパークラフト", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.95, "faces": 200000, "texture": 2048}),
+  clay: P3D_DEF("粘土・ソフビ", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.6}),
+  toy_block: P3D_DEF("ブロック・おもちゃ", {"metal_mode": "fixed", "metallic": 0.0, "rough_mode": "fixed", "roughness": 0.35, "faces": 300000}),
+  model_values: P3D_DEF("金属と粗さをモデルに任せる", {"metal_mode": "model", "rough_mode": "model"}),
+  model_metal: P3D_DEF("金属だけモデルに任せる", {"metal_mode": "model", "rough_mode": "fixed", "roughness": 0.5}),
+  low_poly: P3D_DEF("低ポリ(軽い)", {"faces": 50000, "texture": 1024, "ss_steps": 10, "shape_steps": 10, "tex_steps": 10, "normal_res": 1024}),
+  game: P3D_DEF("ゲーム向け(軽め)", {"faces": 100000, "texture": 2048, "normal_res": 2048}),
+  print3d: P3D_DEF("3D プリント向け(形重視)", {"faces": 1000000, "texture": 1024, "shape_steps": 32, "tex_steps": 8, "ao_strength": 0.0}),
+  shadow_strong: P3D_DEF("陰を強く", {"ao_strength": 2.0, "ao_samples": 128}),
+  shadow_none: P3D_DEF("陰なし(平らな見た目)", {"ao_strength": 0.0, "ao_samples": 1}),
+  bump_sharp: P3D_DEF("凹凸をくっきり", {"normal_res": 4096, "cage": 0.1}),
+  bump_light: P3D_DEF("凹凸を省く(軽い)", {"normal_res": 512}),
+  smooth_surface: P3D_DEF("表面をなめらかに", {"remesh_smooth": 60}),
+  hard_edges: P3D_DEF("角を残す(硬い形)", {"remesh_smooth": 5, "crease": 40}),
+  bg_white: P3D_DEF("背景が白い画像向け", {"crop_bg": "white"}),
+  bg_gray: P3D_DEF("背景が灰色の画像向け", {"crop_bg": "gray"}),
+  margin_wide: P3D_DEF("余白を広く(物が切れるとき)", {"crop_pad": 1.4}),
+  margin_narrow: P3D_DEF("余白を狭く(物を大きく)", {"crop_pad": 1.0}),
+  detail_shape: P3D_DEF("細かい形を重視", {"faces": 1500000, "remesh_res": 1536, "up_steps": 20}),
+  faithful: P3D_DEF("画像に忠実に(CFG 高め)", {"ss_cfg": 9.0, "shape_cfg": 9.0}),
+  free_form: P3D_DEF("自由な形(CFG 低め)", {"ss_cfg": 5.0, "shape_cfg": 5.0}),
+  color_vivid: P3D_DEF("色をくっきり", {"tex_steps": 28, "tex_cfg": 1.5}),
+  best: P3D_DEF("最高品質(最も遅い)", {"faces": 2000000, "ss_steps": 40, "shape_steps": 40, "up_steps": 24, "tex_steps": 36, "remesh_res": 1536, "normal_res": 4096, "ao_res": 2048, "ao_samples": 256}),
+};
+const LAB3D = { fixed: "数値で決める", model: "モデルが決める", black: "黒", white: "白", gray: "灰色" };
+const P3D_LAB = Object.fromEntries(Object.entries(P3D).map(([k, x]) => [k, x.label]));
 const audioName = (e) => String(e?.value || "").split(" [")[0].split("/").pop();
 const LEN_MODES = { normal: "声の長さで動画を切る(動画が短いときは声を切る)", pingpong: "動画を行き来させて、声の長さまでのばす",
   loop_to_audio: "動画をくり返して、声の長さまでのばす" };
 const FMT_LABEL = { mp3: "MP3", flac: "FLAC(音が劣化しない)", opus: "Opus(小さい)" };
 const AUDIO_NOTES = {
+  trellis2: "画像 1 枚から 3D モデル(GLB)を作ります。標準の値は ComfyUI の公式テンプレートと同じです。色が黒くなる・細部が崩れるときは、「細かい設定」の色の CFG・ステップ数や、骨組み・形のステップ数を変えて試します。同じ画像でもシードで結果が変わります。",
   TTS: "プリセットの声でテキストを読み上げます。「話し方の指示」に英語などで書くと話し方が変わります(空なら指示なし)。ひな形を選ぶこともできます(指示を書いたときは、書いた指示を使います)。言語は「Auto」なら文から決めます。モデルは初めて使うときに自動でダウンロードされます。",
   TTD: "「声の説明」に書いたとおりの声で読み上げます(1.7B のモデルだけ)。年齢・性別・声の高さ・話す速さなどを書きます。",
   TTC: "「参照音声」に数秒〜10 秒くらいの声を入れ、その声で読み上げるテキストを書きます。参照音声で話している内容(参照音声の文字起こし)を入れると、よく似ます(「📝 書き起こす」で文にできます)。名前を付けて保存すると、次から「保存した声を使う」で選べます。",
@@ -2435,6 +3209,42 @@ const rvcFields = () => [
 // 種別・タスクごとの欄。t: select / num / check / text / area / media。adv = 「細かい設定」の中
 function audioFields(gen, task, o) {
   const c = CCA.SPEC.audio?.choices || {};
+  if (gen === "trellis2") {
+    return [
+      { k: "preset3d", t: "select", label: "おすすめ設定", opts: Object.keys(P3D), lab: P3D_LAB, none: "選んでください" },
+      { k: "faces", t: "num", label: "面の数(多いほど細かく、ファイルが重い)", min: 10000, max: 2000000, step: 10000 },
+      { k: "texture", t: "select", label: "テクスチャの大きさ", opts: c.texture },
+      { k: "metal_mode", t: "select", label: "金属の度合いの決め方", opts: ["fixed", "model"], lab: LAB3D },
+      ...(o.metal_mode !== "model" ? [{ k: "metallic", t: "num", label: "金属の度合い(0〜1。0 で金属なし、1 で金属)", min: 0, max: 1, step: 0.05 }] : []),
+      { k: "rough_mode", t: "select", label: "粗さの決め方", opts: ["model", "fixed"], lab: LAB3D },
+      ...(o.rough_mode === "fixed" ? [{ k: "roughness", t: "num", label: "粗さ(0〜1。0 でつるつる、1 でざらざら)", min: 0, max: 1, step: 0.05 }] : []),
+      { adv: true, k: "ss_steps", t: "num", label: "骨組みのステップ数", min: 1, max: 50, step: 1 },
+      { adv: true, k: "ss_cfg", t: "num", label: "骨組みの CFG", min: 1, max: 10, step: 0.1 },
+      { adv: true, k: "ss_shift", t: "num", label: "骨組みのシフト", min: 0, max: 20, step: 0.5 },
+      { adv: true, k: "ss_rescale", t: "num", label: "骨組みの CFG 補正", min: 0, max: 1, step: 0.05 },
+      { adv: true, k: "shape_steps", t: "num", label: "形のステップ数", min: 1, max: 50, step: 1 },
+      { adv: true, k: "shape_cfg", t: "num", label: "形の CFG", min: 1, max: 10, step: 0.1 },
+      { adv: true, k: "shape_rescale", t: "num", label: "形の CFG 補正", min: 0, max: 1, step: 0.05 },
+      { adv: true, k: "up_steps", t: "num", label: "形を細かくするステップ数", min: 1, max: 50, step: 1 },
+      { adv: true, k: "tex_steps", t: "num", label: "色のステップ数", min: 1, max: 50, step: 1 },
+      { adv: true, k: "tex_cfg", t: "num", label: "色の CFG(標準は 1.0。上げすぎると崩れます)", min: 1, max: 10, step: 0.1 },
+      { adv: true, k: "crop_pad", t: "num", label: "切り抜きの余白(1 で余白なし)", min: 1, max: 3, step: 0.05 },
+      { adv: true, k: "crop_bg", t: "select", label: "切り抜きの背景色", opts: ["black", "white", "gray"], lab: LAB3D },
+      { adv: true, k: "remesh_res", t: "num", label: "面を整える細かさ", min: 128, max: 2048, step: 64 },
+      { adv: true, k: "remesh_smooth", t: "num", label: "面のなめらかさ(回数)", min: 0, max: 100, step: 1 },
+      { adv: true, k: "remesh_small", t: "num", label: "小さな破片を消す割合", min: 0, max: 1, step: 0.01 },
+      { adv: true, k: "crease", t: "num", label: "角の境目の角度(度)", min: 0, max: 180, step: 5 },
+      { adv: true, k: "uv_pad", t: "num", label: "展開の余白(px)", min: 0, max: 16, step: 1 },
+      { adv: true, k: "uv_weld", t: "num", label: "展開で点をつなぐ距離", min: 0, max: 0.01, step: 0.0001 },
+      { adv: true, k: "normal_res", t: "select", label: "凹凸の画像の大きさ", opts: c.normal_res },
+      { adv: true, k: "cage", t: "num", label: "凹凸を読み取る距離", min: 0, max: 1, step: 0.01 },
+      { adv: true, k: "ao_res", t: "num", label: "陰の画像の大きさ", min: 256, max: 4096, step: 256 },
+      { adv: true, k: "ao_samples", t: "num", label: "陰の細かさ(サンプル数)", min: 1, max: 512, step: 1 },
+      { adv: true, k: "ao_dist", t: "num", label: "陰の届く距離", min: 0, max: 5, step: 0.05 },
+      { adv: true, k: "ao_strength", t: "num", label: "陰の強さ", min: 0, max: 4, step: 0.1 },
+      { adv: true, k: "ao_bias", t: "num", label: "陰のずれ防止", min: 0, max: 1, step: 0.01 },
+    ];
+  }
   if (gen === "rvc") return [{ k: "audio", t: "media", media: "audio", label: "変換する音声" }, ...rvcFields(), ...[{ k: "format", t: "select", label: "保存の形式", opts: c.format, lab: FMT_LABEL },
     ...(o.format === "mp3" ? [{ k: "mp3q", t: "select", label: "MP3 の音質", opts: c.mp3q }] : [])]];
   const fmt = [{ k: "format", t: "select", label: "保存の形式", opts: c.format, lab: FMT_LABEL },
@@ -2531,7 +3341,7 @@ let aoBusy = 0;
 async function renderAudioOpts(n, force = false) {
   const box = $("#cca-audio-opts");
   const mt = W(n, "model_type").value, task = W(n, "task").value, ti = CCA.SPEC.types_info[mt] || {};
-  if (ti.kind !== "audio") { box.innerHTML = ""; box._sig = ""; return; }
+  if (ti.kind !== "audio" && ti.kind !== "3d") { box.innerHTML = ""; box._sig = ""; return; }
   const ticket = ++aoBusy;
   const [dyn, media] = await Promise.all([audioDyn(ti.gen), mediaList()]);
   if (ticket !== aoBusy || !root) return;
@@ -2542,6 +3352,7 @@ async function renderAudioOpts(n, force = false) {
   if (!force && focused && box._sig === sig) return;
   box._sig = sig;
   box._json = json;
+  $("#cca-audio-title").textContent = T(ti.kind === "3d" ? "3D の設定" : "音楽・音声の設定");
   $("#cca-audiogen-note").textContent = T(AUDIO_NOTES[ti.gen === "qwen_tts" || ti.gen === "latentsync" ? task : ti.gen] || "");
   const opt = (f, v) => `<option value="${esc(v)}" ${String(v) === String(o[f.k] ?? "") ? "selected" : ""}>${esc(f.lab?.[v] ? T(f.lab[v]) : String(v).replace(LINK_RE, "$2"))}</option>`;
   const control = (f) => {
@@ -2579,8 +3390,10 @@ async function renderAudioOpts(n, force = false) {
     el.addEventListener(sel ? "change" : "input", async () => {
       let v = el.type === "checkbox" ? el.checked : el.value;
       if (el.type === "number") { if (el.value === "" || Number.isNaN(Number(el.value))) return; v = Number(el.value); }
+      if (k === "preset3d" && P3D[v]) { for (const [pk, pv] of Object.entries(P3D[v].v)) await setAO(pk, pv); }
+      else if (k !== "preset3d" && o.preset3d) await setAO("preset3d", "");
       await setAO(k, v);
-      if (sel) renderAudioOpts(node(), true);
+      if (sel || k === "preset3d") renderAudioOpts(node(), true);
     });
   }
   for (const b of box.querySelectorAll("[data-aoup]")) b.onclick = () => pickMedia(b.dataset.aoup, b.dataset.media, b);
@@ -2626,17 +3439,18 @@ async function transcribe(btn) {
 }
 // 種別が声・音楽のときの、パネルの見え方(使わない欄・カードを隠す。文の欄の名前と入力例)
 function refreshAudioGen(n, vis, tinfo) {
-  const on = tinfo.kind === "audio";
+  const on = tinfo.kind === "audio" || tinfo.kind === "3d";
   const task = W(n, "task").value, tl = tinfo.labels || {};
   $("#cca-addon-open").classList.toggle("hide", !tinfo.addon); // 入れ方の案内がある追加ノードだけ(ACE-Step は ComfyUI 本体)
   const lab = (k, d) => tl[task]?.[k] ?? tl["*"]?.[k] ?? d;
-  $("#cca-sec-audio").classList.toggle("hide", !on);
+  $("#cca-sec-audio").classList.toggle("hide", tinfo.kind !== "audio" && tinfo.kind !== "3d");
   if (on) {
     $("#cca-sec-size").classList.add("hide");
     $("#cca-sec-tile")?.classList.add("hide");
     $("#cca-sec-models").classList.toggle("hide", !vis.has("unet_name"));
   } else {
     $("#cca-sec-size").classList.remove("hide");
+    $("#cca-sec-tile")?.classList.remove("hide");
     $("#cca-sec-models").classList.remove("hide");
   }
   root.querySelector('section[data-sec="prompt"]').classList.toggle("hide", on && !vis.has("positive"));
@@ -2645,7 +3459,7 @@ function refreshAudioGen(n, vis, tinfo) {
   $("#cca-prompt-title").textContent = T(on ? lab("positive", "プロンプト") : "プロンプト");
   root.querySelector('textarea[data-w="positive"]').placeholder = T(on ? lab("positive_ph", "") : "生成したい内容");
   root.querySelector('textarea[data-w="negative"]').placeholder = T(on ? lab("negative_ph", "") : "避けたい内容");
-  if (on) renderAudioOpts(n);
+  if (tinfo.kind === "audio" || tinfo.kind === "3d") renderAudioOpts(n);
 }
 // 生成のあとのシード(ComfyUI の「生成後のシード」と同じ: 送ったあとで変える)
 async function advanceSeed(n) {
@@ -2665,13 +3479,22 @@ const AUDIO_STAGE = {
   LatentSyncNode: "リップシンクを作成しています", CreateVideo: "動画にまとめています", CCASaveVideoFile: "保存しています",
   SaveAudioMP3: "保存しています", SaveAudio: "保存しています", SaveAudioOpus: "保存しています",
 };
+// 3D(TRELLIS.2)の段階
+const STAGE_3D = {
+  UNETLoader: "モデルを読み込んでいます", VAELoader: "VAE を読み込んでいます", CLIPVisionLoader: "画像エンコーダーを読み込んでいます",
+  RemoveBackground: "背景を外しています", Trellis2Conditioning: "画像を読んでいます", KSampler: "形と色を作っています",
+  VaeDecodeShapeTrellis: "形にしています", VaeDecodeTextureTrellis: "色にしています", RemeshMesh: "面を整えています",
+  DecimateMesh: "面を減らしています", UnwrapMesh: "展開しています", BakeTextureFromVoxel: "色を焼き付けています",
+  BakeNormalMapFromMesh: "凹凸を焼き付けています", BakeAmbientOcclusion: "陰を焼き付けています", Save3DAdvanced: "保存しています",
+};
+const stageName = (type) => (audioJob?.is3d && STAGE_3D[type]) || AUDIO_STAGE[type] || "作っています";
 function audioStatus(s, i, batch) {
   const pre = batch > 1 ? `${i + 1} / ${batch}: ` : "";
   if (s.phase === "wait") setStatus(`${pre}${T("順番を待っています(前に {0} 件)", s.ahead)}`);
-  else if (s.phase === "node") setStatus(`${pre}${T(AUDIO_STAGE[s.type] || "作っています")}…`);
+  else if (s.phase === "node") setStatus(`${pre}${T(stageName(s.type))}…`);
   else if (s.phase === "progress" && s.max > 1) {
     $("#cca-bar").style.width = `${Math.round((100 * s.value) / s.max)}%`;
-    setStatus(`${pre}${T(AUDIO_STAGE[s.type] || "作っています")}… ${s.value} / ${s.max}`);
+    setStatus(`${pre}${T(stageName(s.type))}… ${s.value} / ${s.max}`);
   }
 }
 async function generateAudio(n, batch) {
@@ -2683,17 +3506,19 @@ async function generateAudio(n, batch) {
       j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false) throw new Error(j.error || r.status);
       await advanceSeed(n);
-      audioJob = { cancel: false };
+      audioJob = { cancel: false, is3d: j.kind === "3d" };
       $("#cca-bar").style.width = "0%";
       setStatus(batch > 1 ? `${i + 1} / ${batch}: ${T("作っています")}…` : `${T("作っています")}…`);
-      const out = await runMini(j.prompt, { job: audioJob, onStatus: (s) => audioStatus(s, i, batch) });
+      let t0 = 0; // 順番待ちが終わって処理が始まった時刻(生成時間に使う)
+      const out = await runMini(j.prompt, { job: audioJob, onStatus: (s) => { if (!t0 && s.phase !== "wait") t0 = Date.now(); audioStatus(s, i, batch); } });
       const o = out?.outputs?.out || {};
-      const f = (o.audio || o.cca_video || o.images || [])[0];
+      const f = (o.audio || o.cca_video || o.images || o["3d"] || [])[0];
       if (!f?.filename) throw new Error(T("結果のファイルが見つかりません"));
       const q = new URLSearchParams({ filename: f.filename, subfolder: f.subfolder || "", type: f.type || "output" });
-      const isVideo = j.kind === "video";
-      history.unshift({ url: api.apiURL(`/view?${q}`), isVideo, isAudio: !isVideo, ts: Date.now(), promptId: "",
-        value: `${f.subfolder ? `${f.subfolder}/` : ""}${f.filename} [${f.type || "output"}]`, audio: j.used });
+      const isVideo = j.kind === "video", is3d = j.kind === "3d";
+      history.unshift({ url: api.apiURL(`/view?${q}`), isVideo, isAudio: !isVideo && !is3d, ...(is3d ? { is3d } : {}), ts: Date.now(), promptId: "",
+        value: `${f.subfolder ? `${f.subfolder}/` : ""}${f.filename} [${f.type || "output"}]`, audio: j.used,
+        ...(t0 ? { sec: Math.round((Date.now() - t0) / 100) / 10 } : {}) }); // 生成にかかった秒数(情報の一覧に出すだけ。メタ情報には書かない)
       history = history.slice(0, HISTORY_MAX);
       lsSet(LS_HISTORY, history);
       renderHistory();
@@ -2723,24 +3548,26 @@ function renderAudioInfo(entry) {
     : ti.gen === "latentsync" ? kv("動画", audioName({ value: o.video })) + kv("声", audioName({ value: o.audio })) + kv("長さの合わせ方", T(LEN_MODES[o.length_mode] || o.length_mode))
     : ti.gen === "rvc" ? kv("変換する音声", audioName({ value: o.audio }))
     : ti.gen === "heartmula" ? kv("長さの上限(秒)", o.duration) + kv("温度", o.temperature) + kv("top_k", o.top_k)
+    : ti.gen === "trellis2" ? kv("入力画像", audioName({ value: o.image })) + kv("面の数", o.faces) + kv("テクスチャ", o.texture)
     : kv("長さ(秒)", o.duration) + kv("BPM", o.bpm) + kv("キー", o.keyscale) + kv("拍子", o.timesig) + kv("歌の言語", o.language) + (o.instrumental ? kv("歌なし", "✔") : "");
   const rvcSum = ti.gen === "rvc" || o.rvc_on ? kv("RVC", audioName({ value: o.rvc_model })) + kv(".index", o.rvc_index_used && o.rvc_index_used !== NONE ? audioName({ value: o.rvc_index_used }) : T("使わない"))
     + kv("声の高さ(半音)", o.rvc_pitch) : "";
   box.innerHTML = `
-    <div class="meta">${kv("種別", `${i.model_type} / ${CCA.SPEC.task_labels?.[i.task] || i.task}`)}${kv("モデル", i.model)}</div>
+    <div class="meta">${kv("種別", `${i.model_type} / ${CCA.SPEC.task_labels?.[i.task] || i.task}`)}${kv("モデル", i.model)}${kv("生成時間", entry.sec ? secLabel(entry.sec) : "")}</div>
     ${rvcSum ? `<div class="meta">${rvcSum}</div>` : ""}
     <div class="meta">${kv("Seed", i.seed)}${ti.steps ? kv(lab("steps"), i.steps) : ""}${ti.cfg ? kv(lab("cfg"), i.cfg) : ""}${i.sampler ? kv("Sampler", `${i.sampler} / ${i.scheduler}`) : ""}</div>
     <div class="meta">${sum}</div>
     ${i.positive ? `<div><span class="k">${esc(T(lab("positive")))}</span></div><div class="txt">${esc(i.positive)}</div>` : ""}
     ${i.negative ? `<div><span class="k">${esc(T(lab("negative")))}</span></div><div class="txt">${esc(i.negative)}</div>` : ""}
-    <div class="row"><button data-reuse="prompt">${esc(T("文を入力欄に戻す"))}</button><button data-reuse="seed">${esc(T("このシードを使う"))}</button>
+    <div class="row">${i.positive || i.negative ? `<button data-reuse="prompt">${esc(T("文を入力欄に戻す"))}</button>` : ""}<button data-reuse="seed">${esc(T("このシードを使う"))}</button>
       ${entry.isAudio ? `<button data-reuse="lip" title="${esc(T("この声で、動画のリップシンクを作成します(LatentSync 1.6)"))}">👄 ${esc(T("リップシンクに使う"))}</button>
       <button data-reuse="clone" title="${esc(T("この声を「参照音声」にします(Qwen3-TTS)"))}">🗣 ${esc(T("参照音声に使う"))}</button>` : ""}</div>`;
   const toType = async (mt, task) => {
     if (W(node(), "model_type").value !== mt) await setW("model_type", mt);
     if (task && W(node(), "task").value !== task) await setW("task", task);
   };
-  box.querySelector('[data-reuse="prompt"]').onclick = async () => {
+  const rp = box.querySelector('[data-reuse="prompt"]'); // 文が無いとき(3D など)はボタンを出さない
+  if (rp) rp.onclick = async () => {
     await toType(i.model_type, i.task);
     await setW("positive", i.template || i.positive || "");
     if (i.negative) await setW("negative", i.negative);
@@ -2820,6 +3647,16 @@ function onPreview(e) {
   if (livePreviewUrl) URL.revokeObjectURL(livePreviewUrl);
   livePreviewUrl = url;
 }
+// 生成を始めた時刻(prompt_id → ミリ秒)。結果が出たときに、かかった秒数を履歴の記録に入れる(情報の一覧に出す)
+const startedAt = new Map();
+function onStart(e) {
+  const id = e.detail?.prompt_id;
+  if (!id) return;
+  startedAt.set(id, Date.now());
+  if (startedAt.size > 50) startedAt.delete(startedAt.keys().next().value);
+}
+// かかった秒数の表示(12.3秒 / 1分05秒)
+const secLabel = (s) => (s < 60 ? T("{0}秒", s.toFixed(1)) : T("{0}分{1}秒", Math.floor(s / 60), String(Math.round(s % 60)).padStart(2, "0")));
 function onExecuted(e) {
   const d = e.detail || {};
   if (miniIds.has(d.prompt_id)) return; // 合成・プロンプト作成の小さな処理
@@ -2833,9 +3670,11 @@ function onExecuted(e) {
     if (!it?.filename) continue;
     const q = new URLSearchParams({ filename: it.filename, subfolder: it.subfolder || "", type: it.type || "output" });
     const isVideo = /\.(mp4|webm|mov|mkv)$/i.test(it.filename);
+    const t0 = startedAt.get(d.prompt_id);
     const entry = {
       url: api.apiURL(`/view?${q}`), isVideo, ts: Date.now(), promptId: d.prompt_id || "",
       value: `${it.subfolder ? `${it.subfolder}/` : ""}${it.filename} [${it.type || "output"}]`,
+      ...(t0 ? { sec: Math.round((Date.now() - t0) / 100) / 10 } : {}), // 生成にかかった秒数(情報の一覧に出すだけ。メタ情報には書かない)
     };
     history.unshift(entry);
   }
@@ -2915,12 +3754,12 @@ function renderInfo(entry) {
     box.innerHTML = `<div class="hint">${esc(T("複数画像タイル生成でまとめた画像です({0} 枚・{1} ページ・{2} × {3} px)。1 枚ずつの設定は、結果の一覧のそれぞれの画像で見られます。", entry.tile.count, entry.tile.pages, entry.tile.width, entry.tile.height))}</div>`;
     return;
   }
-  if (!i) { box.innerHTML = '<div class="hint">この画像の設定情報はありません(生成中、または以前の版で生成した画像)。</div>'; return; }
+  if (!i) { box.innerHTML = `${entry.sec ? `<div class="meta"><span><span class="k">${esc(T("生成時間"))}</span>${esc(secLabel(entry.sec))}</span></div>` : ""}<div class="hint">${esc(T("この画像の設定情報はありません(生成中、または以前の版で生成した画像)。"))}</div>`; return; }
   const task = CCA.SPEC.task_labels?.[i.task] || i.task;
   const model = i.model && i.model !== NONE ? i.model : (i.wan || []).filter((x) => x && x !== NONE).join(" / ");
   const kv = (k, v) => (v === undefined || v === null || v === "" || v === NONE ? "" : `<span><span class="k">${esc(k)}</span>${esc(v)}</span>`);
   box.innerHTML = `
-    <div class="meta">${kv("種別", `${i.model_type} / ${task}`)}${kv("モデル", model)}</div>
+    <div class="meta">${kv("種別", `${i.model_type} / ${task}`)}${kv("モデル", model)}${kv("生成時間", entry.sec ? secLabel(entry.sec) : "")}</div>
     <div class="meta">${kv("Seed", i.seed)}${kv("Steps", i.steps)}${kv("CFG", i.cfg)}${kv("Sampler", `${i.sampler} / ${i.scheduler}`)}${kv("Denoise", i.denoise)}${kv("サイズ", i.size_mode === SIZE_SCALE ? `画像1 × ${i.size_scale}` : i.task === "I2I" && (!i.resize_mode || ["画像1のサイズ", "今まで通り"].includes(i.resize_mode)) ? "" : i.width && i.height ? `${i.width}×${i.height}${i.resize_mode && !["画像1のサイズ", "今まで通り"].includes(i.resize_mode) && i.task === "I2I" ? `(${i.resize_mode})` : ""}` : "")}</div>
     ${CCA.SPEC.types_info?.[i.model_type]?.kind === "video" ? `<div class="meta">${kv("フレーム数", i.video_length)}${kv("fps", CCA.SPEC.types_info?.[i.model_type]?.base === "MiniMax H3" ? 24 : i.video_fps)}</div>` : ""}
     ${i.loras?.length ? `<div class="meta">${kv("LoRA", i.loras.join(", "))}</div>` : ""}
@@ -2969,15 +3808,23 @@ function onStatus(e) {
   if (root && q !== undefined) $("#cca-queue").textContent = q ? `キュー残り ${q}` : "";
 }
 
-let meterNow = null;
+let meterNow = null, view3dNow = null;
 function show(entry) {
   current = entry;
   const v = $("#cca-viewer");
   meterNow?.destroy();
   meterNow = null;
+  view3dNow?.destroy();
+  view3dNow = null;
   v.classList.toggle("withmeter", !!entry && (entry.isVideo || entry.isAudio));
+  v.classList.toggle("w3d", !!entry?.is3d);
   if (!entry) {
     v.innerHTML = '<div class="empty">生成結果がここに表示されます</div>';
+  } else if (entry.is3d) {
+    v.innerHTML = `<div class="v3d"></div><div class="v3dh">${esc(T("ドラッグで回転・ホイールで拡大縮小・右ドラッグで移動"))}</div>`;
+    view3dNow = view3d(v.querySelector(".v3d"), entry.url, {
+      onError: () => { const b = v.querySelector(".v3d"); if (b) b.innerHTML = `<div class="empty">${esc(T("3D モデルを表示できませんでした"))}</div>`; },
+    });
   } else if (entry.isVideo || entry.isAudio) {
     // 第42版: 動画・音声は右にレベルメーター(左右・dB)
     v.innerHTML = `<div class="avwrap"><div class="media">${entry.isVideo ? `<video src="${esc(entry.url)}" controls loop preload="metadata"></video>`
@@ -2986,13 +3833,13 @@ function show(entry) {
   } else {
     v.innerHTML = `<img src="${esc(entry.url)}" alt="">`;
   }
-  $("#cca-send").disabled = !entry || entry.isVideo || entry.isAudio || entry.pdf;
+  $("#cca-send").disabled = !entry || entry.isVideo || entry.isAudio || entry.is3d || entry.pdf;
   const ed = $("#cca-edit-img");
-  ed.disabled = !entry || entry.isAudio || entry.pdf;
-  ed.textContent = entry?.isVideo ? "🎬 この動画を編集する" : "✏ この画像を編集する";
+  ed.disabled = !entry || entry.isAudio || entry.is3d || entry.pdf;
+  ed.innerHTML = entry?.isVideo ? `<span class="ic">🎬</span><span class="lbl">${esc(T("この動画を編集する"))}</span>` : `<span class="ic">✏</span><span class="lbl">${esc(T("この画像を編集する"))}</span>`;
   ed.title = entry?.isVideo ? "表示中の動画を動画編集で開く(つなげる・切り取る・文字などを重ねる)" : "表示中の画像を画像編集で開く(背景を透明にする・オブジェクト除去)";
   $("#cca-open").disabled = !entry;
-  $("#cca-zoom-btn").disabled = !entry || entry.isAudio;
+  $("#cca-zoom-btn").disabled = !entry || entry.isAudio || entry.is3d;
   $("#cca-folder").disabled = !entry;
   renderInfo(entry);
   for (const t of $$("#cca-hist .t")) t.classList.toggle("on", entry && t.dataset.ts === String(entry.ts) && t.dataset.url === entry.url);
@@ -3000,7 +3847,7 @@ function show(entry) {
 function renderHistory() {
   if (!root) return;
   const box = $("#cca-hist");
-  box.innerHTML = history.map((h, i) => `<div class="t" data-i="${i}" data-ts="${h.ts}" data-url="${esc(h.url)}" title="${h.isAudio ? `音声: ${esc(audioName(h))}` : h.isVideo ? "動画" : h.pdf ? "PDF" : "画像"}">${h.isAudio ? `<div class="au">🎵<span>${esc(audioName(h))}</span></div>` : h.isVideo ? videoThumb(h.url) : `<img src="${esc(h.url)}" loading="lazy" alt="">`}</div>`).join("");
+  box.innerHTML = history.map((h, i) => `<div class="t" data-i="${i}" data-ts="${h.ts}" data-url="${esc(h.url)}" title="${h.isAudio ? `音声: ${esc(audioName(h))}` : h.is3d ? `3D: ${esc(audioName(h))}` : h.isVideo ? "動画" : h.pdf ? "PDF" : "画像"}">${h.isAudio ? `<div class="au">🎵<span>${esc(audioName(h))}</span></div>` : h.is3d ? `<div class="au"><b>3D</b><span>${esc(audioName(h))}</span></div>` : h.isVideo ? videoThumb(h.url) : `<img src="${esc(h.url)}" loading="lazy" alt="">`}</div>`).join("");
   for (const t of box.querySelectorAll(".t")) t.onclick = () => show(history[Number(t.dataset.i)]);
 }
 async function sendToInput() {
@@ -3269,23 +4116,70 @@ function maskColor() {
 function buildMaskEditor() {
   const m = document.createElement("div");
   m.id = "cca-mask";
-  m.innerHTML = `
+  m.tabIndex = -1;
+  m.innerHTML = `<div class="mb">
+    <div class="mh"><b>マスクを描く</b><span>塗った範囲だけ作り直します</span></div>
     <div class="tools">
-      <b>マスクを描く</b><span style="color:#959eab">塗った範囲だけ作り直します</span>
       <button data-t="brush" class="on">ブラシ</button><button data-t="erase">消しゴム</button>
       <label>太さ <input type="range" id="cca-mask-size" min="4" max="300" value="48"></label>
+      <span class="sep"></span>
+      <button id="cca-mask-undo" title="元に戻す(Ctrl+Z)" disabled>↶ 元に戻す</button><button id="cca-mask-redo" title="やり直す(Ctrl+Y)" disabled>↷ やり直す</button>
       <button id="cca-mask-clear">全部消す</button>
       <label title="マスクの見える色です(画像に似た色があって見えにくいときに変えます。作り直す範囲には関係しません)">色 <input type="color" id="cca-mask-color"></label>
+      <span class="sep"></span>
+      <label title="ホイールでも拡大・縮小できます。右ボタン(または真ん中のボタン・スペースを押しながら)でドラッグすると、表示を動かせます">表示の大きさ <input type="range" id="cca-mask-zoom" min="5" max="800" step="1" value="100"><span id="cca-mask-zv">100%</span></label>
+      <button id="cca-mask-fit">全体を表示</button>
     </div>
-    <div class="stage"><canvas class="b"></canvas><canvas class="m"></canvas></div>
-    <div class="tools"><button id="cca-mask-cancel">キャンセル</button><button class="pri" id="cca-mask-save">このマスクを使う</button></div>`;
+    <div class="vp"><div class="stage"><canvas class="b"></canvas><canvas class="m"></canvas></div></div>
+    <div class="ft"><button id="cca-mask-cancel">キャンセル</button><button class="pri" id="cca-mask-save">このマスクを使う</button></div></div>`;
   document.body.appendChild(m);
-  const mc = m.querySelector("canvas.m");
-  let drawing = false, last = null;
+  const mc = m.querySelector("canvas.m"), vp = m.querySelector(".vp"), stage = m.querySelector(".stage");
+  const zr = m.querySelector("#cca-mask-zoom"), zv = m.querySelector("#cca-mask-zv");
+  let drawing = false, last = null, pan = null, space = false;
   const pos = (e) => {
     const r = mc.getBoundingClientRect();
     return [(e.clientX - r.left) * (mc.width / r.width), (e.clientY - r.top) * (mc.height / r.height)];
   };
+  // 元に戻す・やり直す(塗る前の形を覚える。多いと重いので 20 回まで)
+  const undoBtn = m.querySelector("#cca-mask-undo"), redoBtn = m.querySelector("#cca-mask-redo");
+  const histBtns = () => { undoBtn.disabled = !maskState?.undo.length; redoBtn.disabled = !maskState?.redo.length; };
+  const snap = () => mc.getContext("2d").getImageData(0, 0, mc.width, mc.height);
+  const pushUndo = () => { maskState.undo.push(snap()); if (maskState.undo.length > 20) maskState.undo.shift(); maskState.redo = []; histBtns(); };
+  const step = (back) => {
+    const from = back ? maskState.undo : maskState.redo, to = back ? maskState.redo : maskState.undo;
+    if (!from.length) return;
+    to.push(snap());
+    mc.getContext("2d").putImageData(from.pop(), 0, 0);
+    histBtns();
+  };
+  undoBtn.onclick = () => step(true);
+  redoBtn.onclick = () => step(false);
+  // 表示の大きさ(z: 画像の 1 px を画面の何 px にするか)。(cx, cy): 動かさない点(表示の中の位置)
+  const setZoom = (z, cx = vp.clientWidth / 2, cy = vp.clientHeight / 2) => {
+    if (!maskState) return;
+    const old = maskState.z || 1, W = mc.width, H = mc.height;
+    z = Math.max(0.05, Math.min(8, z));
+    const r = stage.getBoundingClientRect(), v = vp.getBoundingClientRect();
+    const px = (v.left + cx - r.left) / old, py = (v.top + cy - r.top) / old; // 画像の中の点
+    maskState.z = z;
+    stage.style.width = `${Math.round(W * z)}px`;
+    stage.style.height = `${Math.round(H * z)}px`;
+    const r2 = stage.getBoundingClientRect();
+    vp.scrollLeft += r2.left + px * z - (v.left + cx);
+    vp.scrollTop += r2.top + py * z - (v.top + cy);
+    zr.value = Math.round(z * 100);
+    zv.textContent = `${Math.round(z * 100)}%`;
+  };
+  const fit = () => { if (maskState) setZoom(Math.min((vp.clientWidth - 16) / mc.width, (vp.clientHeight - 16) / mc.height)); };
+  maskEditorApi = { fit, histBtns };
+  zr.oninput = () => setZoom(Number(zr.value) / 100);
+  vp.addEventListener("contextmenu", (e) => e.preventDefault()); // 右ボタンのドラッグで動かすので、メニューは出さない
+  m.querySelector("#cca-mask-fit").onclick = fit;
+  vp.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const v = vp.getBoundingClientRect();
+    setZoom((maskState?.z || 1) * Math.exp(-e.deltaY * 0.0015), e.clientX - v.left, e.clientY - v.top);
+  }, { passive: false });
   const stroke = (p) => {
     const ctx = mc.getContext("2d");
     const size = Number(m.querySelector("#cca-mask-size").value) * (mc.width / mc.getBoundingClientRect().width);
@@ -3299,16 +4193,25 @@ function buildMaskEditor() {
     ctx.stroke();
     last = p;
   };
-  mc.onpointerdown = (e) => { drawing = true; last = null; mc.setPointerCapture(e.pointerId); stroke(pos(e)); };
-  mc.onpointermove = (e) => { if (drawing) stroke(pos(e)); };
-  mc.onpointerup = mc.onpointercancel = () => { drawing = false; last = null; };
+  mc.onpointerdown = (e) => {
+    mc.setPointerCapture(e.pointerId);
+    if (space || e.button === 1 || e.button === 2) { pan = { x: e.clientX, y: e.clientY, l: vp.scrollLeft, t: vp.scrollTop }; e.preventDefault(); return; } // 表示を動かす(右ボタン・中ボタンのドラッグ、スペースを押しながら)
+    if (e.button !== 0) return;
+    pushUndo();
+    drawing = true; last = null; stroke(pos(e));
+  };
+  mc.onpointermove = (e) => {
+    if (pan) { vp.scrollLeft = pan.l - (e.clientX - pan.x); vp.scrollTop = pan.t - (e.clientY - pan.y); return; }
+    if (drawing) stroke(pos(e));
+  };
+  mc.onpointerup = mc.onpointercancel = () => { drawing = false; last = null; pan = null; };
   for (const b of m.querySelectorAll("[data-t]")) {
     b.onclick = () => {
       maskState.tool = b.dataset.t;
       for (const x of m.querySelectorAll("[data-t]")) x.classList.toggle("on", x === b);
     };
   }
-  m.querySelector("#cca-mask-clear").onclick = () => mc.getContext("2d").clearRect(0, 0, mc.width, mc.height);
+  m.querySelector("#cca-mask-clear").onclick = () => { pushUndo(); mc.getContext("2d").clearRect(0, 0, mc.width, mc.height); };
   // 色を変えると、描いてあるマスクもその色に(保存するのは形だけ)
   const mcol = m.querySelector("#cca-mask-color");
   mcol.value = maskColor();
@@ -3322,8 +4225,16 @@ function buildMaskEditor() {
   };
   m.querySelector("#cca-mask-cancel").onclick = () => m.classList.remove("open");
   m.querySelector("#cca-mask-save").onclick = () => saveMask();
-  m.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Escape") m.classList.remove("open"); });
+  m.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+    if (e.key === "Escape") m.classList.remove("open");
+    else if (mod && (k === "z" || k === "y")) { e.preventDefault(); step(k === "z" && !e.shiftKey); }
+    else if (e.key === " " && !e.target.closest?.("input,button,select")) { e.preventDefault(); space = true; m.classList.add("pan"); }
+  });
+  m.addEventListener("keyup", (e) => { if (e.key === " ") { space = false; m.classList.remove("pan"); } });
 }
+let maskEditorApi = null;
 function loadImg(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -3346,13 +4257,6 @@ async function openMaskEditor() {
     bc.width = mc.width = base.naturalWidth;
     bc.height = mc.height = base.naturalHeight;
     bc.getContext("2d").drawImage(base, 0, 0);
-    // 画面に収まる大きさで表示(小さい画像は拡大)
-    const scale = Math.min((window.innerWidth * 0.92) / base.naturalWidth, (window.innerHeight * 0.76) / base.naturalHeight);
-    const stage = m.querySelector(".stage");
-    stage.style.width = `${Math.round(base.naturalWidth * scale)}px`;
-    stage.style.height = `${Math.round(base.naturalHeight * scale)}px`;
-    bc.style.width = "100%";
-    bc.style.height = "100%";
     // 既存のマスク(透明部分)を読み込む
     const tmp = document.createElement("canvas");
     tmp.width = base.naturalWidth; tmp.height = base.naturalHeight;
@@ -3368,8 +4272,12 @@ async function openMaskEditor() {
       md.data[i] = cr; md.data[i + 1] = cg; md.data[i + 2] = cb; md.data[i + 3] = a;
     }
     mctx.putImageData(md, 0, 0);
-    maskState = { tool: "brush", source, base };
+    maskState = { tool: "brush", source, base, z: 1, undo: [], redo: [] };
+    for (const x of m.querySelectorAll("[data-t]")) x.classList.toggle("on", x.dataset.t === "brush");
     m.classList.add("open");
+    m.focus();
+    maskEditorApi?.histBtns();
+    requestAnimationFrame(() => maskEditorApi?.fit()); // 画面に収まる大きさで表示
   } catch (e) {
     showError(e.message);
   }
@@ -3547,6 +4455,7 @@ const popIsOpen = () => !!pop?.classList.contains("open");
 document.addEventListener("mousedown", (e) => {
   if (popIsOpen() && pop.contains(e.target)) return; // 一覧の中の操作
   const sel = e.target?.closest?.("#cca-ui select, #cca-dirs select, #cca-guide select");
+  if (sel?.dataset.lorapick) { if (popIsOpen()) closePop(); return; } // LoRA の欄は LoRA エクスプローラを開く(絞り込みの一覧は出さない)
   if (sel && e.button === 0 && !sel.disabled) {
     e.preventDefault();
     if (popIsOpen() && pop._select === sel) closePop(); // 同じものをもう一度押したら閉じる
@@ -3564,7 +4473,7 @@ document.addEventListener("scroll", (e) => {
 }, true);
 document.addEventListener("keydown", (e) => {
   const sel = e.target?.closest?.("#cca-ui select, #cca-dirs select");
-  if (!sel) return;
+  if (!sel || sel.dataset.lorapick) return;
   if (e.key === "Enter" || e.key === " " || (e.altKey && e.key === "ArrowDown")) {
     e.preventDefault();
     openPop(sel);
@@ -3645,6 +4554,7 @@ function fillTheme() {
   const sel = document.getElementById("cca-theme"); // 設定の画面に移したので、ページ全体から探す
   if (!sel) return;
   sel.setAttribute("data-no-i18n", "");
+  if (!THEMES.length) { loadThemes().then(() => fillTheme()); return; } // テーマのファイルを読み込んでから
   sel.innerHTML = THEMES.map((t) => `<option value="${esc(t.id)}">${esc(T(t.name))}</option>`).join("");
   sel.value = themeChoice();
 }
@@ -3697,6 +4607,16 @@ app.registerExtension({
   commands: [{ id: "CCA.Generator.TogglePanel", label: T("CCA 生成パネルを開く/閉じる"), function: () => toggle() }],
   async setup() {
     api.addEventListener("progress", onProgress);
+    // モデルを Hugging Face からダウンロードしている間の進み具合(SenseNova-U1.6 の「HF | …」。初回だけ)
+    api.addEventListener("cca_generator.notice", (e) => { if (e.detail?.text) notify(e.detail.text, "error", null, {}); });  // 画面に案内を出す(ノードが無いときの更新方法など)
+    api.addEventListener("cca_generator.download", (e) => {
+      const d = e.detail || {};
+      if (!root || !d.total) return;
+      const gb = (b) => (b / 1e9).toFixed(1), pct = Math.min(100, Math.round((100 * d.done) / d.total));
+      $("#cca-bar").style.width = `${pct}%`;
+      setStatus(d.finished ? T("ダウンロードが終わりました。モデルを読み込んでいます…")
+        : T("モデルをダウンロードしています(初回だけ)… {0} / {1} GB({2}%)・ファイル {3} / {4}", gb(d.done), gb(d.total), pct, d.index || 0, d.count || 0));
+    });
     api.addEventListener("executing", onExecuting);
     api.addEventListener("executed", onExecuted);
     api.addEventListener("execution_error", onError);
@@ -3704,6 +4624,7 @@ app.registerExtension({
     api.addEventListener("execution_success", onSuccess);
     api.addEventListener("b_preview", onPreview);
     api.addEventListener("execution_interrupted", () => { running = false; setStatus("中断しました"); });
+    api.addEventListener("execution_start", onStart);
     api.addEventListener("execution_start", () => { if (root) { showError(""); resetProgress(); $("#cca-bar").style.width = "0"; setStatus("開始…"); } });
     resumeTileJobs(UICTX); // ページを開き直しても、まとめる途中だったタイルの続きをする
   },

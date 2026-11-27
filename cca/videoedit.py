@@ -34,6 +34,7 @@ from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter, ImageFont
 
 import folder_paths
 
+from .adjust import adj_at, adj_kf_on, adj_on, adjust_image, sel_on
 from .i18n import tr
 from .imgedit import EDIT_SUFFIX, parse_value
 from .prefix import prefix_folder
@@ -686,12 +687,28 @@ DEFAULTS = {"x": 0.5, "y": 0.5, "s": 1.0, "w": 0.3, "h": 0.3, "size": 0.08, "rot
 ANIM_KEYS = {"clip": ("x", "y", "s", "rot", "opacity"), "text": ("x", "y", "size", "rot", "opacity"),
              "media": ("x", "y", "w", "h", "rot", "opacity")}
 # 第20版: 登場・退場の動き(大きさが決まってから位置・大きさ・回転・不透明度を動かす)。typing は文字を一文字ずつ
-MOTION_IN = ("pop", "boing", "drop", "bungee", "rise", "tumble", "drift", "stagger", "flicker", "typing")
+MOTION_IN = ("pop", "boing", "drop", "bungee", "rise", "tumble", "drift", "stagger", "flicker", "typing", "swing")
 TRANSITIONS = ("fade", "dip_black", "dip_white", "wipe_h", "wipe_v", "slide_h", "slide_v", "split_h", "split_v",
                "iris_circle", "iris_box", "iris_diamond", "clock", "zoom", "spin") + MOTION_IN + ("blur",)
 # 第21版: ぼかし(画面の高さに対しての割合)。トランジションの「ぼかし」と「ぼかしも重ねる」(blur: true)のはじめの強さ・ループの「ぼんやり」の強さ
 BLUR_TRANS = 0.04
 BLUR_LOOP = 0.03
+# 文字を一文字ずつ動かせる効果(tin / tout の perChar: true。stagger: ずらす割合 0〜0.95、order: fwd / rev / rand)
+PER_CHAR = ("fade", "zoom", "spin", "pop", "boing", "drop", "bungee", "rise", "tumble", "drift", "stagger", "flicker", "swing",
+            "slide_h", "slide_v", "blur", "wipe_h", "wipe_v", "split_h", "split_v", "iris_circle", "iris_box", "iris_diamond", "clock")
+# 形で出す・消す効果(一文字ずつのときは、文字ごとの枠の中で)
+CLIP_TYPES = ("wipe_h", "wipe_v", "split_h", "split_v", "iris_circle", "iris_box", "iris_diamond", "clock")
+
+
+def pc_on(tr, key):
+    """文字の一文字ずつのトランジションか"""
+    return key == "text" and isinstance(tr, dict) and bool(tr.get("perChar")) and tr.get("type") in PER_CHAR
+
+
+def pc_loop(o):
+    """文字の一文字ずつのループか"""
+    lp = o.get("loop")
+    return o.get("kind") == "text" and isinstance(lp, dict) and bool(lp.get("perChar")) and lp.get("type") in LOOPS
 # どこから入るか(省くとこの向き)
 MOTION_DIR = {"drop": "top", "bungee": "top", "rise": "bottom", "tumble": "left", "drift": "left", "stagger": "left"}
 DIR_VEC = {"top": (0, -1), "bottom": (0, 1), "left": (-1, 0), "right": (1, 0)}
@@ -780,7 +797,7 @@ def trans_progress(tr_in, tr_out, t_local, length):
     return one(tr_in, t_local), one(tr_out, length - t_local)
 
 
-def apply_trans_state(st, tr, p, key="clip"):
+def apply_trans_state(st, tr, p, key="clip", which="tin"):
     """位置・大きさ・回転・不透明度で表すトランジション(スライド・ズーム・回転・フェード)を値に入れる。
     返り値: 色を混ぜる量と色(ディップ)"""
     if p is None or p >= 1.0:
@@ -790,9 +807,11 @@ def apply_trans_state(st, tr, p, key="clip"):
     flip_h, flip_v, rev = bool(tr.get("flipH")), bool(tr.get("flipV")), bool(tr.get("rev"))
     scale_keys = ("s",) if key == "clip" else ("size",) if key == "text" else ("w", "h")
     # ぼかし → 鮮明(出るときは 鮮明 → ぼかし)。ほかの効果にも「ぼかしも重ねる」で足せる
-    if t == "blur" or tr.get("blur"):
+    if (t == "blur" and not pc_on(tr, key)) or tr.get("blur"):
         st["blur"] = st.get("blur", 0.0) + (1 - q) * BLUR_TRANS
-    if t == "fade":
+    if pc_on(tr, key):
+        st.setdefault("_pc", []).append((tr, p, which))
+    elif t == "fade":
         st["opacity"] *= q
     elif t in ("slide_h", "slide_v"):
         # 画面の端のすぐ外から入ってくる(大きさが決まってから _slide で位置を決める)
@@ -862,18 +881,115 @@ def apply_motion(st, cx, cy, w, h, W, H):
             n = math.floor(q * 14)
             if not (q >= 1 or hash01(n + 1) < 0.2 + 0.8 * q):
                 st["opacity"] *= 0.05
+        elif t == "swing":
+            st["rot"] += SWING_DEG * (1 - out_back(q)) * (1 if d == "right" else -1)
+            st["opacity"] *= min(1.0, q * 2)
     return cx, cy, w, h
 
 
-def apply_loop(st, lp, t, cx, cy, w, h):
-    """ずっと続ける動き。支点(pin)のまわりに回す・大きさを変える。返り値 (cx, cy, w, h)"""
-    if not isinstance(lp, dict) or lp.get("type") not in LOOPS:
-        return cx, cy, w, h
+# くいっ(傾きから戻る)の傾き(度)
+SWING_DEG = 28.0
+
+
+def _rand_rank(n):
+    """ばらばらの順(決まった乱数。JS と同じ)。i 番目の文字が何番目に動くか"""
+    idx = sorted(range(n), key=lambda i: (hash01(i * 7919 + 13), i))
+    rank = [0] * n
+    for r, i in enumerate(idx):
+        rank[i] = r
+    return rank
+
+
+def char_fx(pcs, i, n, px, it=None, lp=None, t=0.0):
+    """一文字ずつ動かすときの、i 文字目(空白を除いて数える。全部で n 文字)の動き。px: 文字の大きさ。
+    返り値 {"dx", "dy"(px), "sc"(倍), "rot"(度), "op"(不透明度)}。画面の JS(charFx)と同じ式"""
+    dx = dy = rot = blur = 0.0
+    sc = op = 1.0
+    clips = []
+    for tr, p, which in pcs:
+        order = tr.get("order")
+        s = 0.0 if order == "sync" else min(0.95, max(0.0, _f(tr.get("stagger"), 0.7)))  # 同時: 全部の文字が一緒に
+        k = n - 1 - i if order == "rev" else _rand_rank(n)[i] if order == "rand" else i
+        if which == "tout":
+            k = n - 1 - k  # 出るときも、先の文字から先に動く
+        q0 = min(1.0, max(0.0, (p - s * k / (n - 1)) / (1 - s))) if n > 1 else p
+        if q0 >= 1:
+            continue
+        t = tr.get("type")
+        q = ease(q0)
+        d = tr.get("dir") if tr.get("dir") in DIR_VEC else MOTION_DIR.get(t, "left")
+        vx, vy = DIR_VEC[d]
+        if t == "fade":
+            op *= q
+        elif t in ("zoom", "spin"):
+            rev = bool(tr.get("rev"))
+            sc *= (1 + 2 * (1 - q)) if rev else max(0.001, q)
+            if t == "spin":
+                rot += (1 - q) * 360 * (-1 if tr.get("flipH") else 1)
+            if rev:
+                op *= q
+        elif t == "pop":
+            sc *= max(0.001, out_back(q0))
+            op *= min(1.0, q0 * 3)
+        elif t == "boing":
+            sc *= max(0.001, out_elastic(q0))
+            op *= min(1.0, q0 * 4)
+        elif t in ("drop", "bungee", "tumble"):
+            e = out_bounce(q0) if t == "drop" else out_elastic(q0) if t == "bungee" else ease(q0)
+            dx += vx * 1.5 * px * (1 - e)
+            dy += vy * 1.5 * px * (1 - e)
+            if t == "tumble":
+                rot += (-360 if (vx < 0 or vy < 0) else 360) * (1 - e)
+        elif t in ("rise", "drift", "stagger"):
+            e = ease(q0)
+            dist = (1.2 if t == "stagger" else 0.8) * px
+            dx += vx * dist * (1 - e)
+            dy += vy * dist * (1 - e)
+            if t == "stagger":
+                rot += math.sin(q0 * 4 * math.pi) * (1 - q0) * 18
+                op *= min(1.0, q0 * 3)
+            else:
+                op *= e
+        elif t == "flicker":
+            if not (hash01(math.floor(q0 * 14) + 1 + i * 7) < 0.2 + 0.8 * q0):
+                op *= 0.05
+        elif t == "swing":
+            rot += SWING_DEG * (1 - out_back(q0)) * (1 if d == "right" else -1)
+            op *= min(1.0, q0 * 2)
+        elif t in ("slide_h", "slide_v"):
+            sg = (1 if tr.get("flipH") else -1) if t == "slide_h" else (1 if tr.get("flipV") else -1)
+            if t == "slide_h":
+                dx += sg * 2 * px * (1 - q)
+            else:
+                dy += sg * 2 * px * (1 - q)
+            op *= min(1.0, q0 * 2.5)
+        elif t == "blur":
+            blur += (1 - q) * 0.5 * px
+        elif t in CLIP_TYPES:
+            clips.append((tr, q0))
+    # ずっと動かす(ループ)を一文字ずつ: 文字ごとに少しずつ遅らせ、文字の大きさで動かす
+    if lp and it:
+        lag = 0.0 if lp.get("order") == "sync" else min(2.0, max(0.0, _f(lp.get("lag"), 0.1)))
+        k = n - 1 - i if lp.get("order") == "rev" else _rand_rank(n)[i] if lp.get("order") == "rand" else i
+        lr, ls, ldx, ldy, lop, lfocus, (pnx, pny) = loop_vals(lp, t - k * lag, it["w"], it["h"])
+        rx, ry, th = pnx * it["w"], pny * it["h"], math.radians(lr)
+        qx, qy = (rx * math.cos(th) - ry * math.sin(th)) * ls, (rx * math.sin(th) + ry * math.cos(th)) * ls
+        dx += rx - qx + ldx
+        dy += ry - qy + ldy
+        rot += lr
+        sc *= ls
+        op *= lop
+        blur += lfocus * 0.4 * px
+    return {"dx": dx, "dy": dy, "sc": sc, "rot": rot, "op": op, "blur": blur, "clips": clips}
+
+
+def loop_vals(lp, t, w, h):
+    """ずっと続ける動きの値(w・h: 動かすものの大きさ)。返り値 (rot, sc, dx, dy, op, focus, pin)。focus: ぼんやりの強さ"""
     typ = lp["type"]
     f = min(10.0, max(0.05, _f(lp.get("speed"), 1.0)))
     a = min(3.0, max(0.0, _f(lp.get("amt"), 1.0)))
     tau = 2 * math.pi
-    rot, sc, dx, dy, op = 0.0, 1.0, 0.0, 0.0, 1.0
+    rot, sc, dx, dy, op, focus = 0.0, 1.0, 0.0, 0.0, 1.0, 0.0
     if typ == "sway":
         rot = math.sin(tau * 0.8 * f * t) * 10 * a
     elif typ == "pendulum":
@@ -910,7 +1026,18 @@ def apply_loop(st, lp, t, cx, cy, w, h):
         rot = math.sin(tau * 0.9 * f * t) * 5 * a
         dx = math.sin(tau * 0.9 * f * t + 1) * 0.02 * w * a
     elif typ == "focus":
-        st["blur"] = st.get("blur", 0.0) + BLUR_LOOP * a * (0.5 - 0.5 * math.cos(tau * 0.5 * f * t))
+        focus = a * (0.5 - 0.5 * math.cos(tau * 0.5 * f * t))
+    return rot, sc, dx, dy, op, focus, PIN_VEC.get(lp.get("pin") or LOOP_PIN.get(typ, "c"), (0.0, 0.0))
+
+
+def apply_loop(st, lp, t, cx, cy, w, h):
+    """ずっと続ける動き。支点(pin)のまわりに回す・大きさを変える。返り値 (cx, cy, w, h)"""
+    if not isinstance(lp, dict) or lp.get("type") not in LOOPS:
+        return cx, cy, w, h
+    typ = lp["type"]
+    rot, sc, dx, dy, op, focus, _pin = loop_vals(lp, t, w, h)
+    if focus:
+        st["blur"] = st.get("blur", 0.0) + BLUR_LOOP * focus
     px, py = PIN_VEC.get(lp.get("pin") or LOOP_PIN.get(typ, "c"), (0.0, 0.0))
     rx, ry = px * w, py * h
     b = math.radians(st["rot"])
@@ -1078,14 +1205,102 @@ def _alpha(im, opacity):
     return im
 
 
-def _paste_clip(canvas, im, x, y):
-    """画面からはみ出す所を切って重ねる"""
+def _paste_clip(canvas, im, x, y, blend=None):
+    """画面からはみ出す所を切って重ねる。blend: 合成(乗算など。BLEND_MODES)"""
     W, H = canvas.size
     l, t = max(0, x), max(0, y)
     r, b = min(W, x + im.width), min(H, y + im.height)
     if r <= l or b <= t:
         return
-    canvas.alpha_composite(im.crop((l - x, t - y, r - x, b - y)), (l, t))
+    part = im.crop((l - x, t - y, r - x, b - y))
+    if blend in BLEND_MODES:
+        canvas.paste(blend_rgba(canvas.crop((l, t, r, b)), part, blend), (l, t))
+        return
+    canvas.alpha_composite(part, (l, t))
+
+
+# ---------------------------------------------------------------- 合成(描画モード。画面の canvas / CSS と同じ計算: W3C Compositing and Blending)
+BLEND_MODES = ("multiply", "screen", "overlay", "soft-light", "hard-light", "darken", "lighten", "color-dodge", "color-burn", "lighter",
+               "difference", "exclusion", "hue", "saturation", "color", "luminosity")
+
+
+def _lum(c):
+    return c[..., 0:1] * 0.3 + c[..., 1:2] * 0.59 + c[..., 2:3] * 0.11
+
+
+def _clip_color(c):
+    lu = _lum(c)
+    n = c.min(axis=-1, keepdims=True)
+    x = c.max(axis=-1, keepdims=True)
+    c = np.where(n < 0, lu + (c - lu) * lu / np.maximum(lu - n, 1e-6), c)
+    c = np.where(x > 1, lu + (c - lu) * (1 - lu) / np.maximum(x - lu, 1e-6), c)
+    return c
+
+
+def _set_lum(c, lu):
+    return _clip_color(c + (lu - _lum(c)))
+
+
+def _sat(c):
+    return c.max(axis=-1, keepdims=True) - c.min(axis=-1, keepdims=True)
+
+
+def _set_sat(c, s):
+    mx = c.max(axis=-1, keepdims=True)
+    mn = c.min(axis=-1, keepdims=True)
+    rng = mx - mn
+    out = np.where(rng > 1e-6, (c - mn) * s / np.maximum(rng, 1e-6), 0.0)
+    return out
+
+
+def blend_rgb(cb, cs, mode):
+    """色の合成 B(下の色, 上の色)。値は 0〜1"""
+    if mode == "multiply":
+        return cb * cs
+    if mode == "screen":
+        return cb + cs - cb * cs
+    if mode in ("hard-light", "overlay"):
+        a, b = (cb, cs) if mode == "hard-light" else (cs, cb)  # overlay は hard-light の上下を入れ替えたもの
+        return np.where(b <= 0.5, a * 2 * b, a + (2 * b - 1) - a * (2 * b - 1))
+    if mode == "soft-light":
+        d = np.where(cb <= 0.25, ((16 * cb - 12) * cb + 4) * cb, np.sqrt(np.maximum(cb, 0)))
+        return np.where(cs <= 0.5, cb - (1 - 2 * cs) * cb * (1 - cb), cb + (2 * cs - 1) * (d - cb))
+    if mode == "darken":
+        return np.minimum(cb, cs)
+    if mode == "lighten":
+        return np.maximum(cb, cs)
+    if mode == "color-dodge":
+        return np.where(cb <= 0, 0.0, np.where(cs >= 1, 1.0, np.minimum(1.0, cb / np.maximum(1 - cs, 1e-6))))
+    if mode == "color-burn":
+        return np.where(cb >= 1, 1.0, np.where(cs <= 0, 0.0, 1 - np.minimum(1.0, (1 - cb) / np.maximum(cs, 1e-6))))
+    if mode == "lighter":
+        return np.minimum(1.0, cb + cs)
+    if mode == "difference":
+        return np.abs(cb - cs)
+    if mode == "exclusion":
+        return cb + cs - 2 * cb * cs
+    if mode == "hue":
+        return _set_lum(_set_sat(cs, _sat(cb)), _lum(cb))
+    if mode == "saturation":
+        return _set_lum(_set_sat(cb, _sat(cs)), _lum(cb))
+    if mode == "color":
+        return _set_lum(cs, _lum(cb))
+    if mode == "luminosity":
+        return _set_lum(cb, _lum(cs))
+    return cs
+
+
+def blend_rgba(back, top, mode):
+    """back(下)に top(上)を、合成 mode で重ねた RGBA(どちらも同じ大きさ)"""
+    b = np.asarray(back.convert("RGBA"), dtype=np.float32) / 255.0
+    f = np.asarray(top.convert("RGBA"), dtype=np.float32) / 255.0
+    cb, ab = b[..., :3], b[..., 3:4]
+    cs, as_ = f[..., :3], f[..., 3:4]
+    mix = (1 - ab) * cs + ab * np.clip(blend_rgb(cb, cs, mode), 0, 1)
+    ao = as_ + ab * (1 - as_)
+    co = (as_ * mix + (1 - as_) * ab * cb) / np.maximum(ao, 1e-6)
+    out = np.concatenate([co, ao], axis=-1)
+    return Image.fromarray(np.clip(out * 255 + 0.5, 0, 255).astype(np.uint8), "RGBA")
 
 
 def slide_pos(st, cx, cy, w, h, W, H):
@@ -1175,11 +1390,17 @@ def _rrect_pts(x0, y0, x1, y1, r, tail=None):
 
 # 並べる形(タイル・水玉)。画面(web/cca_shapes.js の patternItems)と同じ並べ方
 PATTERNS = ("tile", "dots")
-PAT_DEF = {"pitch": 0.25, "gap": 0.15, "odd": 1.0, "even": 1.0, "rodd": 1.0, "reven": 1.0, "stagger": False, "round": 0.0, "alt": "col", "rules": []}
+PAT_DEF = {"pitch": 0.25, "pitchY": 0.0, "offX": 0.0, "offY": 0.0, "gap": 0.15, "odd": 1.0, "even": 1.0, "rodd": 1.0, "reven": 1.0, "stagger": False, "round": 0.0, "alt": "col", "rules": []}
 
 
 def _pat_pitch(c):
-    return max(2.0, _cl(_f(c.get("pitch"), PAT_DEF["pitch"]), 0.02, 1.0) * min(c["w"], c["h"]))
+    return max(2.0, _cl(_f(c.get("pitch"), PAT_DEF["pitch"]), 0.005, 1.0) * min(c["w"], c["h"]))
+
+
+def _pat_pitch_y(c):
+    """縦の並べる間かく(pitchY。0 なら横と同じ)"""
+    v = _f(c.get("pitchY"), 0.0)
+    return max(2.0, _cl(v, 0.0025, 1.0) * min(c["w"], c["h"])) if v > 0 else _pat_pitch(c)
 
 
 def _pat_base(c):
@@ -1189,7 +1410,7 @@ def _pat_base(c):
 def pattern_items(c):
     """並べる 1 つずつの (真ん中 x, 真ん中 y, 大きさ)。c = {x, y, w, h(箱), pitch, gap, odd, even, alt, stagger}"""
     w, h = c["w"], c["h"]
-    p, base = _pat_pitch(c), _pat_base(c)
+    p, py, base = _pat_pitch(c), _pat_pitch_y(c), _pat_base(c)
     so, se = _cl(_f(c.get("odd"), 1.0), 0.0, 2.0), _cl(_f(c.get("even"), 1.0), 0.0, 2.0)
     ro, re_ = _cl(_f(c.get("rodd"), 1.0), 0.0, 2.0), _cl(_f(c.get("reven"), 1.0), 0.0, 2.0)
     if c.get("alt") == "row" and c.get("rodd") is None and c.get("reven") is None:  # 第40版の「横の行ごと」
@@ -1199,11 +1420,12 @@ def pattern_items(c):
         if isinstance(R, (list, tuple)) and len(R) >= 5:
             rules.append((_iround(_f(R[0], 1)) - 1, max(0, _iround(_f(R[1], 0))) + 1, _iround(_f(R[2], 1)) - 1, max(0, _iround(_f(R[3], 0))) + 1,
                           _cl(_f(R[4], 1.0), 0.0, 3.0)))
-    nq, nr = max(1, _iround(w / p)), max(1, _iround(h / p))
-    mx, my = c["x"] + w / 2, c["y"] + h / 2
+    nq, nr = max(1, _iround(w / p)), max(1, _iround(h / py))
+    # 開始位置をずらす(1 つ分の間かくに対しての割合)
+    mx, my = c["x"] + w / 2 + _cl(_f(c.get("offX"), 0.0), -1.0, 1.0) * p, c["y"] + h / 2 + _cl(_f(c.get("offY"), 0.0), -1.0, 1.0) * py
     out = []
     for r in range(-2, nr + 2):  # 大きいとはしの外の物も入るので、1 つ外まで
-        y = my + (r - (nr - 1) / 2) * p
+        y = my + (r - (nr - 1) / 2) * py
         sx = p / 2 if c.get("stagger") and r & 1 else 0.0
         for q in range(-3, nq + 2):
             x = mx + (q - (nq - 1) / 2) * p + sx
@@ -1559,9 +1781,36 @@ def _outline_alpha(a, t, blur, ax, ay, ox, oy, sm):
     return B.astype(np.float32), pad
 
 
-def with_outline(im, t, blur, rgb, alpha):
-    """im(RGBA)の後ろに縁を付けた絵(上下左右に pad ずつ大きい。真ん中は同じ)"""
-    B, pad = outline_alpha(np.asarray(im.getchannel("A"), dtype=np.float32) / 255, t, blur)
+def inner_alpha(a, t, blur):
+    """ふち取り(内側): 不透明な所(0.5 以上)のふち(透明な所・絵の端)から t px までの縁の濃さ(画面の innerOutlineCanvas と同じ)"""
+    if t < 0.05:
+        return None
+    obj = np.pad(a >= 0.5, 1, constant_values=False)
+    if not obj.any():
+        return None
+    try:
+        from scipy.ndimage import distance_transform_edt
+        d = distance_transform_edt(obj)[1:-1, 1:-1]
+        B = np.clip(t + 1 - d, 0.0, 1.0) * a
+    except Exception:  # noqa: BLE001
+        er = Image.fromarray((obj[1:-1, 1:-1] * 255).astype(np.uint8), "L").filter(ImageFilter.MinFilter(2 * int(math.ceil(t)) + 1))
+        B = np.clip(a - np.asarray(er, dtype=np.float32) / 255.0, 0.0, 1.0)
+    if blur > 0.3:
+        B = np.asarray(Image.fromarray(np.clip(B * 255, 0, 255).astype(np.uint8), "L").filter(ImageFilter.GaussianBlur(blur)), dtype=np.float32) / 255.0 * a
+    return B.astype(np.float32)
+
+
+def with_outline(im, t, blur, rgb, alpha, inner=None):
+    """im(RGBA)の後ろに縁を付けた絵(上下左右に pad ずつ大きい。真ん中は同じ)。inner: 内側の縁 (太さ px, ぼかし px, 色, 不透明度)"""
+    if inner:
+        Bi = inner_alpha(np.asarray(im.getchannel("A"), dtype=np.float32) / 255, inner[0], inner[1])
+        if Bi is not None:
+            lay = np.zeros(Bi.shape + (4,), dtype=np.uint8)
+            lay[..., 0], lay[..., 1], lay[..., 2] = inner[2]
+            lay[..., 3] = np.clip(Bi * inner[3] * 255 + 0.5, 0, 255).astype(np.uint8)
+            im = im.copy()
+            im.alpha_composite(Image.fromarray(lay, "RGBA"))
+    B, pad = outline_alpha(np.asarray(im.getchannel("A"), dtype=np.float32) / 255, t, blur) if max(t) >= 0.05 else (None, 0)
     if B is None:
         return im
     out = np.zeros(B.shape + (4,), dtype=np.uint8)
@@ -1579,9 +1828,11 @@ def outline_of(o, H):
         return None
     w = _f(ol.get("w"), 0.01)
     sides = tuple(_cl(_f(ol.get(k), w), 0.0, 0.2) * H for k in ("t", "b", "l", "r"))  # 上・下・左・右(無ければ w)
-    if max(sides) < 0.05:
+    iw = _cl(_f(ol.get("iw"), 0.0), 0.0, 0.2) * H  # 内側
+    inner = (iw, _cl(_f(ol.get("ib"), 0.0), 0.0, 0.1) * H, _rgb(ol.get("ic") or "#ffffff"), _cl(_f(ol.get("ia"), 1.0), 0.0, 1.0)) if iw >= 0.05 else None
+    if max(sides) < 0.05 and not inner:
         return None
-    return sides, _cl(_f(ol.get("blur"), 0.0), 0.0, 0.1) * H, _rgb(ol.get("color") or "#ffffff"), _cl(_f(ol.get("alpha"), 1.0), 0.0, 1.0)
+    return sides, _cl(_f(ol.get("blur"), 0.0), 0.0, 0.1) * H, _rgb(ol.get("color") or "#ffffff"), _cl(_f(ol.get("alpha"), 1.0), 0.0, 1.0), inner
 
 
 def edge_blur_px(edge, w, h):
@@ -1589,9 +1840,33 @@ def edge_blur_px(edge, w, h):
     return max(0.5, min(3.0, max(0.0, _f(edge.get("amt"), 1.0))) * 0.025 * min(w, h))
 
 
-def draw_item(canvas, img, cx, cy, w, h, rot=0.0, opacity=1.0, masks=(), dip=None, edge=None, blur=0.0, outline=None):
+def vis_rect(cx, cy, w, h, tr):
+    """見える範囲(レイヤーのトランジション中)。止まる位置の枠を、上下左右それぞれ 枠の大きさ × visT / visB / visL / visR だけ広げた
+    (マイナスは狭めた)範囲と、ふちから内側へだんだん透明にする幅(枠の短い辺 × visF)。(x0, y0, x1, y1, 幅)。画面の visRect と同じ"""
+    def v(k):
+        return _cl(_f(tr.get(k), 0.5), -0.5, 5.0)
+    x0, y0 = cx - w / 2 - v("visL") * w, cy - h / 2 - v("visT") * h
+    x1, y1 = max(x0, cx + w / 2 + v("visR") * w), max(y0, cy + h / 2 + v("visB") * h)
+    return x0, y0, x1, y1, min(_cl(_f(tr.get("visF"), 0.0), 0.0, 1.0) * min(w, h), (x1 - x0) / 2, (y1 - y0) / 2)
+
+
+def _vis_alpha(vis, x, y, w, h):
+    """見える範囲の不透明度(画面の (x, y) から w×h の所)"""
+    x0, y0, x1, y1, f = vis
+    X = np.arange(x, x + w, dtype=np.float32) + 0.5
+    Y = np.arange(y, y + h, dtype=np.float32) + 0.5
+    if f > 0.5:
+        mx = np.clip((X - x0) / f, 0, 1) * np.clip((x1 - X) / f, 0, 1)
+        my = np.clip((Y - y0) / f, 0, 1) * np.clip((y1 - Y) / f, 0, 1)
+    else:
+        mx = ((X >= x0) & (X < x1)).astype(np.float32)
+        my = ((Y >= y0) & (Y < y1)).astype(np.float32)
+    return my[:, None] * mx[None, :]
+
+
+def draw_item(canvas, img, cx, cy, w, h, rot=0.0, opacity=1.0, masks=(), dip=None, edge=None, blur=0.0, outline=None, blend=None, vis=None):
     """img(RGBA)を w×h にして、中心 (cx, cy) に、回転・不透明度・形のトランジション・色を混ぜて重ねる。
-    edge: ふちのぼかし / blur: 全体のぼかし(px。トランジション・ループ) / outline: ふち取り (太さ px, ぼかし px, 色, 不透明度)"""
+    edge: ふちのぼかし / blur: 全体のぼかし(px。トランジション・ループ) / outline: ふち取り (太さ px, ぼかし px, 色, 不透明度) / vis: 見える範囲(vis_rect)"""
     w, h = int(round(w)), int(round(h))
     if w < 1 or h < 1 or opacity <= 0.001:
         return
@@ -1618,7 +1893,12 @@ def draw_item(canvas, img, cx, cy, w, h, rot=0.0, opacity=1.0, masks=(), dip=Non
         im = big.filter(ImageFilter.GaussianBlur(blur))
     if abs(rot) > 0.01:
         im = im.rotate(-rot, resample=Image.BICUBIC, expand=True)
-    _paste_clip(canvas, im, int(round(cx - im.width / 2)), int(round(cy - im.height / 2)))
+    px, py = int(round(cx - im.width / 2)), int(round(cy - im.height / 2))
+    if vis is not None:
+        a = np.asarray(im, dtype=np.float32).copy()
+        a[..., 3] *= _vis_alpha(vis, px, py, im.width, im.height)
+        im = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), "RGBA")
+    _paste_clip(canvas, im, px, py, blend)
 
 
 _WRAP_TOKEN = re.compile(r"[ \t]+|[A-Za-z0-9'’\-.,:;!?%&@#/_()\[\]]+|.")
@@ -1673,9 +1953,76 @@ def text_lines(o, font, W):
     return raw.split("\n")
 
 
-def text_image(o, H, font_path, size=None, reveal=None, W=None):
-    """文字の画像(RGBA)。中心が文字の中心になるようにまわりを空ける。縁(ずらす・透明度 = 影にもなる)と背景(大きさ・位置・角の丸み)。
-    wrap(画面の幅に対しての折り返し幅)・reveal(一文字ずつ出すときの進み 0〜1)"""
+def _erode(a, r):
+    """形(0〜1)を r px 細らせる(文字の内側にも縁を入れるとき)"""
+    if r <= 0:
+        return a
+    try:
+        from scipy.ndimage import distance_transform_edt
+        d = distance_transform_edt(a >= 0.5)
+        return np.minimum(np.clip(d - r, 0.0, 1.0), a).astype(np.float32)
+    except Exception:  # noqa: BLE001
+        im = Image.fromarray(np.clip(a * 255, 0, 255).astype(np.uint8), "L").filter(ImageFilter.MinFilter(2 * int(math.ceil(r)) + 1))
+        return np.asarray(im, dtype=np.float32) / 255.0
+
+
+def _tf_mask(m, it, sx, sy):
+    """文字ごとの動き(位置のずれ・大きさ・回転)を形の画像に掛ける。中心は文字の真ん中(ずらした所)"""
+    tf = it.get("tf")
+    if not tf:
+        return m
+    sc = max(1e-3, _f(tf.get("sc"), 1.0))
+    th = math.radians(_f(tf.get("rot"), 0.0))
+    c, sn = math.cos(th), math.sin(th)
+    cx, cy = it["cx"] + sx, it["cy"] + sy
+    tx, ty = cx + _f(tf.get("dx"), 0.0), cy + _f(tf.get("dy"), 0.0)
+    a, b, d, e = c / sc, sn / sc, -sn / sc, c / sc
+    return m.transform(m.size, Image.AFFINE, (a, b, cx - a * tx - b * ty, d, e, cy - d * tx - e * ty), resample=Image.BILINEAR)
+
+
+def _text_masks(size, font, items, r, sx=0.0, sy=0.0, erode=0.0, alpha=True, only=None):
+    """文字を r px 太らせた形(r = 0 は文字の形。erode > 0 なら細らせた形)を重ねたもの(0〜1)。
+    文字ごとの不透明度(alpha)は重ね合わせる(1 - Π(1 - 不透明度 × 形))"""
+    IW, IH = size
+    if not any(it.get("tf") for it in items) and not erode and only is None:
+        m = Image.new("L", (IW, IH), 0)
+        d = ImageDraw.Draw(m)
+        for it in items:
+            d.text((it["x"] + sx, it["y"] + sy), it["s"], font=font, fill=255, anchor="ls", stroke_width=int(r), stroke_fill=255)
+        return np.asarray(m, dtype=np.float32) / 255.0
+    keep = np.ones((IH, IW), np.float32)
+    for it in items:
+        op = min(1.0, max(0.0, _f((it.get("tf") or {}).get("op"), 1.0)))
+        if op <= 0.001 or (only is not None and not only(it)):
+            continue
+        m = Image.new("L", (IW, IH), 0)
+        ImageDraw.Draw(m).text((it["x"] + sx, it["y"] + sy), it["s"], font=font, fill=255, anchor="ls", stroke_width=int(r), stroke_fill=255)
+        if erode:
+            m = Image.fromarray(np.clip(_erode(np.asarray(m, dtype=np.float32) / 255.0, erode) * 255, 0, 255).astype(np.uint8), "L")
+        tf = it.get("tf") or {}
+        if tf.get("clips"):  # 形で出す効果: 文字の枠の中で
+            bx, by, bw, bh = it["box"]
+            x0, y0, w0, h0 = int(round(bx + sx)), int(round(by + sy)), max(1, int(round(bw))), max(1, int(round(bh)))
+            keep_box = np.zeros((IH, IW), np.float32)
+            mk = np.ones((h0, w0), np.float32)
+            for tr, q in tf["clips"]:
+                cm = trans_mask(tr, q, w0, h0)
+                if cm is not None:
+                    mk *= cm
+            ax0, ay0, ax1, ay1 = max(0, x0), max(0, y0), min(IW, x0 + w0), min(IH, y0 + h0)
+            if ax1 > ax0 and ay1 > ay0:
+                keep_box[ay0:ay1, ax0:ax1] = mk[ay0 - y0:ay1 - y0, ax0 - x0:ax1 - x0]
+            m = Image.fromarray(np.clip(np.asarray(m, dtype=np.float32) * keep_box, 0, 255).astype(np.uint8), "L")
+        m = _tf_mask(m, it, sx, sy)
+        if _f(tf.get("blur"), 0.0) > 0.3:
+            m = m.filter(ImageFilter.GaussianBlur(_f(tf.get("blur"), 0.0)))
+        keep *= 1.0 - (op if alpha else 1.0) * (np.asarray(m, dtype=np.float32) / 255.0)
+    return 1.0 - keep
+
+
+def text_image(o, H, font_path, size=None, reveal=None, W=None, fx=None):
+    """文字の画像(RGBA)。中心が文字の中心になるようにまわりを空ける。縁(ずらす・透明度 = 影にもなる。離す・文字の前に描く)と背景(大きさ・位置・角の丸み)。
+    wrap(画面の幅に対しての折り返し幅)・reveal(一文字ずつ出すときの進み 0〜1)・fx(i, n) → 一文字ずつ動かすときの文字ごとの動き(char_fx)"""
     text = str(o.get("text") or "")
     if not text.strip():
         return None
@@ -1685,6 +2032,14 @@ def text_image(o, H, font_path, size=None, reveal=None, W=None):
     sdx, sdy = _f(o.get("strokeDx"), 0) * px, _f(o.get("strokeDy"), 0) * px
     sa = min(1.0, max(0.0, _f(o.get("strokeAlpha"), 1.0)))
     sb = max(0.0, _f(o.get("strokeBlur"), 0)) * px  # 縁(影)のぼかし
+    # 縁を離す(文字と縁の間をあける。マイナスは縁を文字の内側へ寄せる)・縁を文字の前に描く。縁の太さが 0 なら縁は無いので使わない。ow: 文字の外へ縁が届く幅
+    gap = int(round(min(1.0, max(-1.0, _f(o.get("strokeGap"), 0))) * px)) if sw > 0 else 0
+    front = sw > 0 and bool(o.get("strokeFront"))
+    fa = min(1.0, max(0.0, _f(o.get("colorA"), 1.0)))  # 文字の色の不透明度(縁・影はそのまま)
+    ow = max(0, sw + gap)
+    # 縁の輪: 文字のふちから外へ inner 〜 sw + gap の所(マイナスは文字の内側)。内側に入るときは、縁を文字の前に描く
+    inner = gap - sw if front else gap
+    in_front = front or gap < 0
     spacing = int(px * 0.2)
     lines = text_lines(o, font, W)
     try:
@@ -1694,8 +2049,8 @@ def text_image(o, H, font_path, size=None, reveal=None, W=None):
     line_h = asc + desc + spacing
     widths = [font.getlength(l) for l in lines]
     align = str(o.get("align") or "center")  # 文字の寄せ(left / center / right)
-    tw = max(widths + [1.0]) + 2 * sw
-    th = len(lines) * line_h - spacing + 2 * sw
+    tw = max(widths + [1.0]) + 2 * ow
+    th = len(lines) * line_h - spacing + 2 * ow
     ba = _f(o.get("bgAlpha"), 0)
     padx, pady = _f(o.get("bgPadX"), 0.3) * px, _f(o.get("bgPadY"), 0.3) * px
     bgx, bgy = _f(o.get("bgOffX"), 0) * px, _f(o.get("bgOffY"), 0) * px
@@ -1705,6 +2060,8 @@ def text_image(o, H, font_path, size=None, reveal=None, W=None):
     if ba > 0:
         ex = max(ex, tw / 2 + padx + abs(bgx) + 2)
         ey = max(ey, th / 2 + pady + abs(bgy) + 2)
+    if fx is not None:  # 一文字ずつ動かすときは、動いた文字が入るように広げる
+        ex, ey = ex + 2 * px, ey + 2 * px
     IW, IH = int(np.ceil(ex * 2)), int(np.ceil(ey * 2))
     cx, cy = IW / 2, IH / 2
     layer = Image.new("RGBA", (IW, IH), (0, 0, 0, 0))
@@ -1720,21 +2077,65 @@ def text_image(o, H, font_path, size=None, reveal=None, W=None):
     # 一文字ずつ出す: 先頭から k 文字だけ描く(位置は全部出したときと同じ)
     total = sum(len(l) for l in lines)
     k = total if reveal is None else int(math.floor(min(1.0, max(0.0, reveal)) * total + 1e-9))
-    top = cy - th / 2 + sw
+    top = cy - th / 2 + ow
     shown = []
     for i, l in enumerate(lines):
         n = max(0, min(len(l), k))
         k -= len(l)
         if align == "left":
-            lx = cx - tw / 2 + sw
+            lx = cx - tw / 2 + ow
         elif align == "right":
-            lx = cx + tw / 2 - sw - widths[i]
+            lx = cx + tw / 2 - ow - widths[i]
         else:
             lx = cx - widths[i] / 2
         shown.append((lx, top + i * line_h + asc, l[:n]))
     fill = (*_rgb(o.get("color")), 255)
     stroke = _rgb(o.get("stroke"), (0, 0, 0))
     shadow = abs(sdx) > 0.5 or abs(sdy) > 0.5 or sb > 0.3
+    if gap != 0 or front or fx is not None or fa < 0.999:
+        # 縁を輪の形で別の層に作る(画面の drawTextAt と同じ手順)。文字(塗り)と重ねる順は front で決める
+        items = []
+        for x, y, l in shown:
+            if not l:
+                continue
+            if fx is None:
+                items.append({"s": l, "x": x, "y": y})
+                continue
+            pre = ""
+            for ch in l:
+                if not ch.isspace():
+                    xx, cw = x + font.getlength(pre), font.getlength(ch)
+                    items.append({"s": ch, "x": xx, "y": y, "w": cw, "h": asc + desc, "cx": xx + cw / 2, "cy": y + (desc - asc) / 2,
+                                  "box": (xx - ow, y - asc - ow, cw + 2 * ow, asc + desc + 2 * ow)})
+                pre += ch
+        if fx is not None:
+            for i, it in enumerate(items):
+                it["tf"] = fx(i, len(items), it)
+        size_ = (IW, IH)
+        fa_ = _text_masks(size_, font, items, 0)  # 文字(塗り)
+        if sw > 0 or shadow:
+            # 文字を r だけ太らせた形(r < 0 は |r| だけ細らせた形)
+            shape = lambda r: _text_masks(size_, font, items, r, sdx, sdy) if r >= 0 else _text_masks(size_, font, items, 0, sdx, sdy, erode=-r)  # noqa: E731
+            sa_ = shape(sw + gap)
+            if in_front or gap > 0 or fa < 0.999:  # 離す・前に描く・内側へ寄せる・文字が透けるときは、内側を抜いて輪にする
+                sa_ *= 1.0 - shape(inner)
+            elif fx is not None:  # 消えかけの文字の中に縁の色が透けないように
+                sa_ *= 1.0 - _text_masks(size_, font, items, 0, alpha=False, only=lambda it: _f((it.get("tf") or {}).get("op"), 1.0) < 0.999)
+            sl = Image.new("RGBA", size_, (*stroke, 0))
+            sl.putalpha(Image.fromarray(np.clip(sa_ * 255, 0, 255).astype(np.uint8), "L"))
+            if sb > 0.3:
+                sl = sl.filter(ImageFilter.GaussianBlur(sb))
+            sl = _alpha(sl, sa)
+        else:
+            sl = None
+        fl = Image.new("RGBA", size_, fill[:3] + (0,))
+        fl.putalpha(Image.fromarray(np.clip(fa_ * fa * 255, 0, 255).astype(np.uint8), "L"))
+        if sl is not None and not in_front:
+            layer.alpha_composite(sl)
+        layer.alpha_composite(fl)
+        if sl is not None and in_front:
+            layer.alpha_composite(sl)
+        return layer
     if (sw > 0 or shadow) and (shadow or sa < 0.999):
         # 縁を別の層に描いてずらす・透かす・ぼかす(影になる。縁の太さが 0 でも、ずらすかぼかせば文字の形の影)。文字はその上に縁なしで
         sl = Image.new("RGBA", (IW, IH), (0, 0, 0, 0))
@@ -2103,6 +2504,9 @@ def render(project, progress=None, interrupted=None):
     overlays = [o for o in (p.get("overlays") or []) if _f(o.get("end"), 0) > _f(o.get("start"), 0)]
     # 第26版: 段(row)の順に描く(下の段から。同じ段は並び順)
     overlays.sort(key=lambda o: _f(o.get("row"), 0))
+    # 非表示のレイヤー(hidden)は描かない(長さには入れる。タイムラインに残っているので)
+    all_overlays = overlays
+    overlays = [o for o in overlays if not o.get("hidden")]
     fmt = p.get("format") if p.get("format") in FORMATS else "mp4"
     bg = BG_COLORS.get(p.get("bg"), BG_COLORS["black"])
     if fmt == "mp4" and bg[3] == 0:
@@ -2114,9 +2518,9 @@ def render(project, progress=None, interrupted=None):
     for c in clips:
         starts.append(t)
         t += clip_len(c)
-    total = t if clips else max(_f(o.get("end"), 0) for o in overlays)
+    total = t if clips else max(_f(o.get("end"), 0) for o in all_overlays)
     nframes = max(1, int(round(total * out_fps)))
-    first = clips[0]["src"] if clips else next((o["src"] for o in overlays if o.get("src")), "video.png [output]")
+    first = clips[0]["src"] if clips else next((o["src"] for o in all_overlays if o.get("src")), "video.png [output]")
     folder, fname, typ, sub = target_for(first, FORMATS[fmt], p.get("out_prefix"))
     path = os.path.join(folder, fname)
     font = find_font()
@@ -2128,6 +2532,9 @@ def render(project, progress=None, interrupted=None):
             arr = np.asarray(im.convert("RGBA"))
             imgs[id(o)] = to_rgba(arr, o.get("key"), use_alpha=True) if (o.get("key") or {}).get("mode") in ("chroma", "ai") \
                 else Image.fromarray(np.ascontiguousarray(arr), "RGBA")
+            osel = None if o.get("adjOff") else o.get("asel")  # 範囲を選ぶ
+            if not o.get("adjOff") and (adj_on(o.get("adj")) or sel_on(osel)) and not adj_kf_on(o):  # 色・明るさの補正(キーフレームで変わるときは、コマごとに)
+                imgs[id(o)] = adjust_image(imgs[id(o)], o.get("adj"), osel)
     alpha_src = {}
     for it in clips + [o for o in overlays if o.get("kind") == "video"]:
         alpha_src[id(it)] = (it.get("key") or {}).get("mode") == "alpha" or ((it.get("key") or {}).get("mode") is None and video_has_alpha(full_path(it["src"])))
@@ -2179,14 +2586,15 @@ def render(project, progress=None, interrupted=None):
                 if k in ("text", "mosaic", "shape"):
                     draw_overlay(target, o, None, local, s1 - s0, font)
                 elif k == "image":
-                    draw_overlay(target, o, imgs[id(o)], local, s1 - s0, font)
+                    im_o = adjust_image(imgs[id(o)], adj_at(o, local), None if o.get("adjOff") else o.get("asel")) if adj_kf_on(o) else imgs[id(o)]
+                    draw_overlay(target, o, im_o, local, s1 - s0, font)
                 elif k == "video":
                     if id(o) not in ov_readers:
                         ov_readers[id(o)] = FrameReader(full_path(o["src"]), _f(o.get("in"), 0), alpha=True)
                     sp = min(16.0, max(0.05, _f(o.get("speed"), 1)))
                     f = ov_readers[id(o)].at(_f(o.get("in"), 0) + local * sp)
                     if f is not None:
-                        draw_overlay(target, o, to_rgba(crop_arr(f, o.get("crop")), o.get("key"), use_alpha=alpha_src[id(o)]), local, s1 - s0, font)
+                        draw_overlay(target, o, adjust_image(to_rgba(crop_arr(f, o.get("crop")), o.get("key"), use_alpha=alpha_src[id(o)]), adj_at(o, local), None if o.get("adjOff") else o.get("asel")), local, s1 - s0, font)
                 if b is not None:
                     clip_composite(canvas, target, alphas.get(id(b)), o.get("clip"))
                 elif id(o) in need:
@@ -2222,7 +2630,7 @@ def draw_clip(canvas, c, frame, local, length, use_alpha):
     """つなげる動画を描く。枠に収めた大きさ × 大きさ(s)、位置・回転・不透明度・動き・トランジション・背景の透明化"""
     W, H = canvas.size
     arr = crop_arr(frame, c.get("crop"))
-    im = to_rgba(arr, c.get("key"), use_alpha)
+    im = adjust_image(to_rgba(arr, c.get("key"), use_alpha), adj_at(c, local), None if c.get("adjOff") else c.get("asel"))  # 色・明るさの補正(キーフレームがあればその時刻の値)・範囲を選ぶ
     st = anim_state(c, ANIM_KEYS["clip"], local)
     pin, pout = _trans_all(c, local, length, "clip")
     dip = apply_trans_state(st, c.get("tin"), pin, "clip") or apply_trans_state(st, c.get("tout"), pout, "clip")
@@ -2300,18 +2708,30 @@ def draw_overlay(canvas, o, img, local, length, font):
         st = anim_state(o, ANIM_KEYS["media"], local)
     pin, pout = _trans_all(o, local, length, "text" if o.get("kind") == "text" else "media")
     key = "text" if o.get("kind") == "text" else "media"
-    dip = apply_trans_state(st, o.get("tin"), pin, key) or apply_trans_state(st, o.get("tout"), pout, key)
+    dip = apply_trans_state(st, o.get("tin"), pin, key, "tin") or apply_trans_state(st, o.get("tout"), pout, key, "tout")
     if o.get("kind") == "text":
-        img = text_image(o, H, font, size=st["size"], reveal=st.get("_reveal"), W=W)
+        fx = None
+        if st.get("_pc") or pc_loop(o):
+            px = max(6, int(round(_f(st["size"], 0.08) * H)))
+            pcs, lp = st.get("_pc") or [], (o.get("loop") if pc_loop(o) else None)
+            fx = lambda i, n, it: char_fx(pcs, i, n, px, it, lp, local)  # noqa: E731
+        img = text_image(o, H, font, size=st["size"], reveal=st.get("_reveal"), W=W, fx=fx)
         if img is None:
             return
         w, h = img.width, img.height
+        bw, bh = (w - 4 * px, h - 4 * px) if fx is not None else (w, h)  # 止まる位置の枠(一文字ずつ動かすときの余白は除く)
     else:
         w, h = st["w"] * W, st["h"] * H
+        bw, bh = w, h
+    # 見える範囲(トランジション中だけ)
+    vtr = o.get("tin") if pin is not None and pin < 1 and (o.get("tin") or {}).get("vis") else o.get("tout") if pout is not None and pout < 1 and (o.get("tout") or {}).get("vis") else None
+    vis = vis_rect(st["x"] * W, st["y"] * H, bw, bh, vtr) if vtr else None
     cx, cy = slide_pos(st, st["x"] * W, st["y"] * H, w, h, W, H)
     cx, cy, w, h = apply_motion(st, cx, cy, w, h, W, H)
-    cx, cy, w, h = apply_loop(st, o.get("loop"), local, cx, cy, w, h)
-    masks = (trans_mask(o.get("tin"), pin, int(round(w)), int(round(h))), trans_mask(o.get("tout"), pout, int(round(w)), int(round(h))))
+    if not pc_loop(o):  # 一文字ずつのループは文字ごとに(text_image)
+        cx, cy, w, h = apply_loop(st, o.get("loop"), local, cx, cy, w, h)
+    masks = (None if pc_on(o.get("tin"), key) else trans_mask(o.get("tin"), pin, int(round(w)), int(round(h))),
+             None if pc_on(o.get("tout"), key) else trans_mask(o.get("tout"), pout, int(round(w)), int(round(h))))
     if o.get("kind") in ("image", "video"):
         masks += (shape_mask(o.get("mask"), w, h, local),)  # 図形マスク
     if o.get("kind") == "shape":
@@ -2321,7 +2741,8 @@ def draw_overlay(canvas, o, img, local, length, font):
         img = mosaic_image(canvas, o, cx, cy, w, h, st["rot"])
         if isinstance(edge, dict) and edge.get("mode") != "feather":
             edge = None  # モザイクは「ふちを透明に」だけ
-    draw_item(canvas, img, cx, cy, w, h, st["rot"], st["opacity"], masks, dip, edge=edge, blur=st.get("blur", 0.0) * H, outline=outline_of(o, H))
+    draw_item(canvas, img, cx, cy, w, h, st["rot"], st["opacity"], masks, dip, edge=edge, blur=st.get("blur", 0.0) * H, outline=outline_of(o, H),
+              blend=o.get("blend") if o.get("blend") in BLEND_MODES else None, vis=vis)
 
 
 class CCAVideoEdit:

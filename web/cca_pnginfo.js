@@ -244,7 +244,7 @@ async function saveStripped() {
 }
 // ---------------------------------------------------------------- 主要項目のみ残して保存(PNG・JPEG・WebP。再エンコードしない)
 // 残す: プロンプト(範囲別・マイナスプロンプトを含む)・ネガティブプロンプト・モデル(VAE・テキストエンコーダ・LoRA を含む)・ Hires. fix の設定・CFG・ステップ数・サンプラー・シード・CCA の版
-const KEEP_SET = ["Steps", "Sampler", "Schedule type", "CFG scale", "Seed", "Model", "Model hash", "VAE", "VAE hash", "Text encoder", "Text encoder 2", "Lora hashes", "Denoising strength", "Hires upscale", "Hires steps", "Hires upscaler", "Hires CFG Scale", "CCA Minus Prompt", "CCA Range"];
+const KEEP_SET = ["Steps", "Sampler", "Schedule type", "CFG scale", "Seed", "Model", "Model hash", "Model type", "VAE", "VAE hash", "Text encoder", "Text encoder 2", "Lora hashes", "Denoising strength", "Hires upscale", "Hires steps", "Hires upscaler", "Hires CFG Scale", "CCA Minus Prompt", "CCA Range"];
 const quoteVal = (s) => (/[,\n:"]/.test(String(s)) ? JSON.stringify(String(s)) : String(s));
 async function mainText(file) {
   const ch = await readMeta(file), set = {};
@@ -257,7 +257,7 @@ async function mainText(file) {
   } else { // ComfyUI の prompt などから読める分だけ
     const { info } = interpret(ch);
     pos = info.positive || ""; neg = info.negative || "";
-    const map = { Steps: info.steps, Sampler: info.sampler, "Schedule type": info.scheduler, "CFG scale": info.cfg, Seed: info.seed, Model: info.model, "Model hash": info.hash, "CCA Minus Prompt": info.negw, "CCA Range": info.range };
+    const map = { Steps: info.steps, Sampler: info.sampler, "Schedule type": info.scheduler, "CFG scale": info.cfg, Seed: info.seed, Model: info.model, "Model hash": info.hash, "Model type": info.model_type, "CCA Minus Prompt": info.negw, "CCA Range": info.range };
     for (const [k, v] of Object.entries(map)) if (v != null && v !== "") set[k] = v;
   }
   const keys = Object.keys(set);
@@ -385,6 +385,8 @@ function parseComfy(txt) {
       const v = lit(i[a]);
       if (o[k] == null && v !== undefined && (typeof v !== "string" || v !== "")) o[k] = v;
     }
+    // CCA のノードに残っているモデルの種別(モデルを反映するとき、先に種別を切り替える)
+    if (o.model_type == null && /^CCAGen/.test(n.class_type || "") && typeof i.model_type === "string" && i.model_type) o.model_type = i.model_type;
     if (typeof i.negw_settings === "string" && i.negw_settings) o.negw = o.negw ?? i.negw_settings;
     if (typeof i.layout_boxes === "string" && i.layout_boxes && o.range == null) {
       try { const l = JSON.parse(i.layout_boxes), st = i.regional_settings ? JSON.parse(i.regional_settings) : null; if (l?.boxes?.length) o.range = JSON.stringify(st ? { ...l, settings: st } : l); } catch { /* 読めない枠は使わない */ }
@@ -407,7 +409,7 @@ function interpret(ch) {
     used.add("parameters");
     const a = parseParams(ch.parameters), s = a.set, o = { positive: a.positive, negative: a.negative };
     const num = (k) => (s[k] != null && s[k] !== "" && !isNaN(Number(s[k])) ? Number(s[k]) : undefined);
-    Object.assign(o, { steps: num("Steps"), cfg: num("CFG scale"), seed: num("Seed"), sampler: s.Sampler, scheduler: s["Schedule type"], model: s.Model, hash: s["Model hash"] });
+    Object.assign(o, { steps: num("Steps"), cfg: num("CFG scale"), seed: num("Seed"), sampler: s.Sampler, scheduler: s["Schedule type"], model: s.Model, hash: s["Model hash"], model_type: s["Model type"] });
     const sz = /^(\d+)x(\d+)$/.exec(s.Size || ""); if (sz) { o.width = +sz[1]; o.height = +sz[2]; }
     take(o);
     if (s["CCA Minus Prompt"]) take({ negw: s["CCA Minus Prompt"] });
@@ -421,7 +423,7 @@ function interpret(ch) {
         if (Object.keys(rg).length) { const r = (() => { try { return JSON.parse(s["CCA Range"]); } catch { return {}; } })(); take({ range: JSON.stringify({ ...r, settings: rg }) }); }
       } catch { /* 読めない設定は使わない */ }
     }
-    const done = new Set(["CCA Minus Prompt", "CCA Range", "CCA Tile", "CCA Adv", "Steps", "CFG scale", "Seed", "Sampler", "Schedule type", "Model", "Model hash", "Size"]);
+    const done = new Set(["CCA Minus Prompt", "CCA Range", "CCA Tile", "CCA Adv", "Steps", "CFG scale", "Seed", "Sampler", "Schedule type", "Model", "Model hash", "Model type", "Size"]);
     for (const [k, v] of Object.entries(s)) if (!done.has(k) || (k === "CFG scale" && num(k) === undefined) || (k === "Steps" && num(k) === undefined) || (k === "Seed" && num(k) === undefined)) extra.push([k, v]);
     if (!a.set.Steps && !a.positive && !a.negative) extra.push(["parameters", ch.parameters]);
   }
@@ -435,7 +437,7 @@ function interpret(ch) {
 // ---------------------------------------------------------------- 項目の作成と反映
 function buildItems(info) {
   const L = [["positive", "プロンプト", true], ["negative", "ネガティブプロンプト", true], ["negw", "マイナスプロンプト", true], ["range", "範囲別指定", true], ["tile", "タイル設定", true], ["model", "利用モデル"], ["cfg", "CFG"], ["steps", "ステップ数"], ["sampler", "サンプラー"], ["scheduler", "スケジューラー"], ["seed", "シード"], ["width", "幅"], ["height", "高さ"]];
-  return L.filter(([k]) => info[k] != null && info[k] !== "").map(([k, label, long]) => ({ k, label: T(label), value: String(info[k]), long: !!long, note: k === "model" && info.hash ? `${T("モデルハッシュ")}: ${info.hash}` : "" }));
+  return L.filter(([k]) => info[k] != null && info[k] !== "").map(([k, label, long]) => ({ k, label: T(label), value: String(info[k]), long: !!long, mt: k === "model" ? info.model_type : undefined, note: k === "model" && info.hash ? `${T("モデルハッシュ")}: ${info.hash}` : "" }));
 }
 const NEGW_METHODS = { auto: "自動(モデルに合わせる)", value: "Value に負の重みを掛ける(UNet 系だけ)", diff: "予測の差を引く" };
 const negwFix = (o) => (o && typeof o === "object" && NEGW_METHODS[o.negw_method] ? { ...o, negw_method: NEGW_METHODS[o.negw_method] } : o);
@@ -474,6 +476,11 @@ async function apply(it) {
     return ctx.applyTile?.(a) ? null : T("読み取れません");
   }
   if (it.k === "model") {
+    // 種別が違うまま別の種別のモデルを入れると、生成できない組み合わせになるので、先に種別を合わせる
+    if (it.mt && ctx.get("model_type") !== it.mt) {
+      if (!ctx.options("model_type").includes(it.mt)) return T("このモデルの種別がありません") + `: ${it.mt}`;
+      await ctx.set("model_type", it.mt);
+    }
     const w = ctx.modelWidget(), opts = ctx.options(w), n = baseName(v);
     const hit = opts.find((o) => baseName(o) === n) || (n.length >= 4 ? opts.find((o) => baseName(o).includes(n) || n.includes(baseName(o))) : null);
     if (!hit) return T("一致するモデルが見つかりません");

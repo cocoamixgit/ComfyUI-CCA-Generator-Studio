@@ -7,7 +7,7 @@
 """
 
 NONE = "(none)"
-TASKS_ALL = ["T2I", "I2I", "T2V", "I2V", "R2V", "TTS", "TTD", "TTC", "T2M", "VC", "LIP"]
+TASKS_ALL = ["T2I", "I2I", "T2V", "I2V", "R2V", "TTS", "TTD", "TTC", "T2M", "VC", "LIP", "I23D"]
 TASK_LABELS = {
     "T2I": "テキスト → 画像",
     "I2I": "画像 → 画像",
@@ -21,8 +21,10 @@ TASK_LABELS = {
     "T2M": "テキスト → 音楽",
     "VC": "ボイスチェンジ(音声 → 音声)",
     "LIP": "リップシンク(動画 + 音声)",
+    # 3D
+    "I23D": "画像 → 3D",
 }
-ROUTE_COUNT = 27
+ROUTE_COUNT = 28
 # 入力画像の欄(1 枚目は標準のアップロード/マスク付き。FLUX.3 Klein は最大 10 枚)
 MAX_IMAGE_SLOTS = 10
 IMAGE_WIDGETS = ["image"] + [f"image_{i}" for i in range(2, MAX_IMAGE_SLOTS + 1)]
@@ -39,6 +41,13 @@ REF_SIZES = {REF_SIZE_AUTO: -1, REF_SIZE_SAME: 0, "長辺 512": 512, "長辺 768
 REF_SIZE_OLD = {"出力と同じ(推奨)": REF_SIZE_SAME, "長辺 512(背景・場面を変えるとき)": "長辺 512",
                 "長辺 768(メモリが足りないとき)": "長辺 768"}
 # 出力サイズの決め方(画像→画像・画像→動画)。Forge の「Resize to / Resize by」と同じ考え方
+# VRAM の補い方(足りない分のモデルの層を CPU 側のメモリに置き、必要なときだけ GPU に送る)
+VRAM_AUTO = "自動"
+VRAM_FULL = "full"
+VRAM_FAST = "fast"
+VRAM_BALANCED = "balanced"
+VRAM_LOW = "low"
+VRAM_MODES = [VRAM_AUTO, VRAM_FULL, VRAM_FAST, VRAM_BALANCED, VRAM_LOW]
 SIZE_MODE_KEEP = "サイズ指定"       # 今まで通り(幅・高さ、または種別ごとの決まった方法)
 SIZE_MODE_SCALE = "倍率指定"        # 画像1の大きさ × 倍率
 SIZE_MODES = [SIZE_MODE_KEEP, SIZE_MODE_SCALE]
@@ -116,6 +125,8 @@ BASES = {
     **{name: dict(
         loader="unet", kind="image", tasks=["T2I", "I2I"], family="FLUX.2 Klein",
         routes={"T2I": 23, "I2I": 23}, negative=True, turbo=False, max_images={"I2I": 4}, denoise=False,
+        # マスクを描いたら、塗っていない所は元の画像のまま(最後に貼り戻す。CCAHiresFix)
+        mask={"I2I": True},
         image_names={"I2I": ("image 1", "image 2", "image 3", "image 4")},
         image_roles={"I2I": ("編集する画像", "参照画像(任意)", "参照画像(任意)", "参照画像(任意)")},
     ) for name in ("FLUX.2 Klein 4B", "FLUX.2 Klein 4B Base", "FLUX.2 Klein 9B", "FLUX.2 Klein 9B Base")},
@@ -124,15 +135,26 @@ BASES = {
     **{name: dict(
         loader="unet", kind="image", tasks=["T2I", "I2I"], family="FLUX.3 Klein",
         routes={"T2I": 24, "I2I": 24}, negative=True, turbo=False, max_images={"I2I": 10}, denoise=False,
+        # マスクを描いたら、塗っていない所は元の画像のまま(最後に貼り戻す。CCAHiresFix)
+        mask={"I2I": True},
         # 枠で配置を指定できる(FLUX 3 Image Layout Prompt。プロンプトでは <obj_1> のように枠の番号で指す)
         layout={"T2I": "flux3", "I2I": "flux3"},
         image_names={"I2I": tuple(f"<ref_image_{i}>" for i in range(10))},
         image_roles={"I2I": ("編集する画像",) + ("参照画像(任意)",) * 9},
     ) for name in ("FLUX.3 Klein", "FLUX.3 Klein Distilled")},
+    # SenseNova-U1.6(追加ノード ComfyUI-SenseNova-U1 / OpenSenseNova)。モデルは追加ノードの読み込み方で選ぶ
+    # (Hugging Face の名前なら初めて使うときに自動で入手、手元のものは models/sensenova)。参照画像は最大 10 枚
+    "SenseNova-U1.6": dict(
+        loader="sn", kind="image", tasks=["T2I", "I2I"], needs_node="SenseNovaU1ModelLoader",
+        routes={"T2I": 27, "I2I": 27}, negative=False, turbo=True, sampler=False, denoise=False, max_images={"I2I": 10},
+        image_roles={"I2I": ("編集する画像",) + ("参照画像(任意)",) * 9},
+        lists={"unet_name": "sn_models"}, labels={"*": {"unet_name": "モデル"}},
+    ),
     # 使わない(ワークフローには残すが、選べる一覧からは外す)
     "MiniMax-H3-Image": dict(
         loader="unet", kind="image", tasks=["T2I", "I2I"], hidden=True,
         routes={"T2I": 12, "I2I": 13}, negative=False, turbo=True, max_images={"I2I": 2},
+        mask={"I2I": True},  # マスクを描いたら、塗っていない所は元の画像のまま(最後に貼り戻す)
         auto_size_i2i=True,
         image_names={"I2I": ("<Picture 1>", "<Picture 2>")},
         image_roles={"I2I": ("編集する画像", "参照画像(任意)")},
@@ -207,6 +229,16 @@ BASES = {
         negative=False, turbo=False, steps=True, cfg=True, sampler=False, denoise=False,
         labels={"*": {"steps": "ステップ数", "cfg": "リップシンクの強さ"}},
     ),
+    # ---- 3D(画像・動画のワークフローは使わず、gen3d.py が小さな処理を作る)----
+    # TRELLIS.2(ComfyUI 本体のノード。同梱のテンプレート「画像 → 3D」と同じ手順)。入力画像 1 枚 → 3D モデル(GLB)
+    "TRELLIS.2": dict(
+        loader="3d", kind="3d", tasks=["I23D"], gen="trellis2", needs_node="Trellis2Conditioning", output="3d",
+        negative=False, turbo=False, steps=False, cfg=False, sampler=False, denoise=False, max_images={"I23D": 1},
+        image_roles={"I23D": ("3D にする画像",)},
+        lists={"clip_name": "clip_visions", "clip_name_2": "bg_models"},
+        labels={"*": {"unet_name": "モデル", "vae_name": "形の VAE", "audio_vae_name": "色の VAE",
+                      "clip_name": "画像エンコーダー", "clip_name_2": "背景除去モデル"}},
+    ),
 }
 
 BASE_DEFAULT_FLAGS = dict(
@@ -222,6 +254,8 @@ BASE_DEFAULT_FLAGS = dict(
     layout={}, audio=False,
     # 第42版: gen = 声・音楽の作り方(audiogen.py)/ labels = 欄の名前と入力例 / output = 結果(audio / video)
     gen=None, labels={}, output="audio", max_images={}, routes={},
+    # lists = 欄の選択肢を、その種別だけ別の一覧にする {欄: 一覧名}(SenseNova のモデル・TRELLIS.2 の画像エンコーダーなど)
+    lists={},
 )
 
 # モデル種別の短い説明(プルダウンを開いたときと、選んだ種別の下に出す)。Turbo は自動で「… を少ないステップで」
@@ -248,6 +282,8 @@ TYPE_NOTES = {
     "Qwen3-TTS": "テキスト読み上げ・声を文章で指定・ボイスクローン(10 言語)",
     "RVC": "ボイスチェンジ: 音声の声を、RVC で学習した声に変える(Qwen3-TTS の結果にも使える)",
     "LatentSync 1.6": "リップシンク: 動画の人物の口の動きを音声に合わせて作り直す",
+    "SenseNova-U1.6": "文章で細かく書く・参照画像 10 枚までで編集・追加ノード ComfyUI-SenseNova-U1 が必要",
+    "TRELLIS.2": "画像 1 枚から、色付きの 3D モデル(GLB)を作る",
 }
 TURBO_NOTE = "{base} を少ないステップで速く(Turbo LoRA が必要)"
 
@@ -550,7 +586,22 @@ TASK_DEFAULTS = {
 # 動画の長さ(フレーム数)と fps の既定値(元のワークフローの値)。MiniMax H3 は音声が 24fps 前提のため fps は固定
 # 第42版: 声・音楽。ACE-Step 1.5 はテンプレート「Text to Audio (ACE-Step 1.5)」のファイルと値(8 ステップ・CFG 1・euler・simple)、
 # LatentSync はノードの既定値(20 ステップ・リップシンクの強さ 1.5)、HeartMuLa はノードの既定値(CFG 1.5)。使わない値は画像と同じ形で持つだけ
+# SenseNova-U1.6: 追加ノードの読み込み方の名前(HF | Hugging Face の名前 / Local | models/sensenova の中)
+SN_DEFAULT = "HF | sensenova/SenseNova-U1.6-8B-MoT"
+SN_CORE_INT8 = "Core | sensenova_u1.6_8b_mot_int8_convrot.safetensors"  # ComfyUI 本体のノードで使うモデル(models/checkpoints)
+SN_PE_CLIP = "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot"  # プロンプト書き直し(PE)用のテキストエンコーダー(テキスト→画像用)
+SN_PE_CLIP_I2I = "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot"  # 同(画像→画像用)。生成するときに、タスクに合う方へ自動で切り替える
+# 軽い版(GGUF。選んだ 1 ファイルだけ models/sensenova に自動でダウンロードする。LoRA・Turbo とは一緒に使えない)
+SN_LIGHT = [f"HF | sensenova/SenseNova-U1.6-8B-MoT-GGUF/SenseNova-U1.6-8B-MoT-{q}.gguf" for q in ("Q8_0", "Q6_K", "Q4_0")]
 TYPE_DEFAULTS.update({
+    "SenseNova-U1.6": dict(unet_name=SN_DEFAULT, clip_name=SN_PE_CLIP),
+    # SenseNova-U1.6 Turbo: ComfyUI 本体のノードで動かす組み合わせ(Comfy-Org/SenseNova-U1 の int8 モデル + 8 ステップ LoRA)。自己修正も使える
+    "SenseNova-U1.6 Turbo": dict(unet_name=SN_CORE_INT8, clip_name=SN_PE_CLIP, turbo_lora_strength=1.0, sn_passes=2,
+                                 turbo_lora_name=Hint("sensenova_u1.6", "8step", "lora", exclude=("comfyui",),
+                                                      fallback="sensenova_u1.6_8b_mot_8step_lora_bf16")),
+    # TRELLIS.2: ComfyUI 同梱のテンプレートのファイル(Comfy-Org/TRELLIS.2・Comfy-Org/Pixal3D・Comfy-Org/BiRefNet)
+    "TRELLIS.2": dict(unet_name="trellis_2_int8_convrot", vae_name="trellis_2_shape_vae_bf16",
+                      audio_vae_name="trellis_2_texture_vae_bf16", clip_name="dino_v3_L_naf_fp32", clip_name_2="birefnet"),
     "ACE-Step 1.5": dict(unet_name="acestep_v1.5_turbo", clip_name="qwen_0.6b_ace15", clip_name_2="qwen_4b_ace15",
                          clip_type="ace", vae_name="ace_1.5_vae"),
 })
@@ -560,6 +611,12 @@ TASK_DEFAULTS.update({
     "LatentSync 1.6": {"LIP": _p(20, 1.5, "euler", "simple", 1.0, 512, 512)},
     "HeartMuLa": {"T2M": _p(1, 1.5, "euler", "simple", 1.0, 512, 512)},
     "ACE-Step 1.5": {"T2M": _p(8, 1.0, "euler", "simple", 1.0, 512, 512)},
+    # SenseNova-U1.6: 追加ノードの既定値(50 ステップ・CFG 4・2048 x 2048)
+    "SenseNova-U1.6": {t: _p(50, 4.0, "euler", "simple", 1.0, 2048, 2048) for t in ("T2I", "I2I")},
+    # SenseNova-U1.6 Turbo: 配布元の説明(ステップは LoRA に合わせる = 8、LoRA の強度と CFG は 1.0)
+    "SenseNova-U1.6 Turbo": {t: _p(8, 1.0, "euler", "simple", 1.0, 2048, 2048) for t in ("T2I", "I2I")},
+    # TRELLIS.2: ステップ・CFG はテンプレートの固定値(欄は出さない)
+    "TRELLIS.2": {"I23D": _p(12, 7.5, "euler", "normal", 1.0, 1024, 1024)},
 })
 
 VIDEO_DEFAULTS = {"Wan2.2 14B": (81, 16), "Wan2.2 5B": (121, 24), "MiniMax H3": (124, 24),
@@ -581,7 +638,7 @@ COMMON_TYPE_DEFAULTS = dict(
     clip_device=None, vae_name=NONE, audio_vae_name=NONE, clip_name_2=NONE, latent_upscale_name=NONE,
     loras=[],
     turbo_lora_name=NONE, turbo_lora_strength=1.0, turbo_lora_low_name=NONE,
-    audio_opts="{}",
+    audio_opts="{}", sn_passes=0, sn_pe=False, vram_mode=VRAM_AUTO,
 )
 COMMON_TASK_DEFAULTS = dict(
     wan_high_unet=NONE, wan_low_unet=NONE, edit_lora_name=NONE, edit_lora_strength=1.0,
@@ -605,6 +662,8 @@ TYPE_KEYS = [
     "clip_name_2", "latent_upscale_name",
     # 第42版: 音楽・音声の設定(JSON。種別ごとに覚える)
     "audio_opts",
+    "sn_passes", "sn_pe",
+    "vram_mode",
 ]
 TASK_KEYS = [
     "wan_high_unet", "wan_low_unet", "edit_lora_name", "edit_lora_strength",
@@ -636,6 +695,10 @@ ALL_WIDGETS = [
     "negw_enable", "negw_strength", "regional_enable", "regional_mode", "regional_ratio",
     "regional_common", "regional_prompts", "regional_negatives", "regional_crop", "regional_switch", "layout_native",
     "negw_preset", "negw_method", "negw_turbo_gain", "regional_feather", "regional_margin", "regional_preset",
+    # SenseNova-U1.6 の自己修正(最大回数。0 で使わない)
+    "sn_passes", "sn_pe",
+    # VRAM の補い方(自動 / full / fast / balanced / low)
+    "vram_mode",
 ]
 
 LABELS = {
@@ -670,7 +733,7 @@ LABELS = {
     "negw_preset": "おすすめ設定", "regional_preset": "おすすめ設定", "negw_method": "マイナスの処理方法", "negw_turbo_gain": "CFG が無いモデルでの倍率",
     "regional_feather": "範囲の縁のぼかし", "regional_margin": "範囲の外側の余白",
     "mid_frame_pos": "途中のフレームの位置(%)",
-    "image_output_prefix": "画像の保存先", "video_output_prefix": "動画の保存先",
+    "image_output_prefix": "画像の保存先", "video_output_prefix": "動画の保存先", "sn_passes": "自己修正(最大回数・0 で使わない)", "sn_pe": "テキストエンコーダーでプロンプトを書き直す(PE)", "vram_mode": "VRAM の補い方",
     "audio_opts": "音楽・音声の設定", "audio_output_prefix": "音声の保存先",
 }
 
@@ -688,7 +751,7 @@ def max_images(model_type, task):
 
 
 def needs_image(task):
-    return task in ("I2I", "I2V", "R2V")
+    return task in ("I2I", "I2V", "R2V", "I23D")
 
 
 def image_roles(model_type, task):
@@ -706,6 +769,9 @@ def uses_mask(model_type, task):
 def visible_widgets(model_type, task):
     """種別とタスクで表示する項目(それ以外は UI で隠す)。"""
     info = TYPE_INFO[model_type]
+    if info["kind"] == "3d":
+        # 3D: 入力画像 1 枚・モデルのファイル・シード(手順と値は ComfyUI 同梱のテンプレートと同じ)
+        return ["model_type", "task", "image", "unet_name", "vae_name", "audio_vae_name", "clip_name", "clip_name_2", "seed"]
     if info["kind"] == "audio":
         # 第42版: 声・音楽。文の欄・ステップなどは作り方ごと、ほかは「音楽・音声の設定」(audio_opts)
         g = info["gen"]
@@ -734,9 +800,13 @@ def visible_widgets(model_type, task):
               "vae_name", "loras"]
     elif loader == "k6":  # Kandinsky 6: テキストエンコーダー 2 本(種類は kandinsky5 固定)
         v += ["unet_name", "unet_dtype", "clip_name", "clip_name_2", "clip_device", "vae_name", "loras"]
+    elif loader == "sn":  # SenseNova-U1.6: モデル(追加ノードの読み込み方)と LoRA 1 つ・自己修正の回数
+        v += ["unet_name", "loras", "sn_passes"]
+        v += ["sn_pe", "clip_name"]  # テキストエンコーダー(PE)の ON/OFF と、ファイルの選択(テキスト→画像・画像→画像のどちらも)
     else:  # wan14
         v += ["wan_high_unet", "wan_low_unet", "unet_dtype", "clip_name", "clip_type",
               "clip_device", "vae_name", "loras"]
+    v.append("vram_mode")  # SenseNova も含む(画面ではベースモデルの欄のすぐ右に出る)
     if info["audio_vae"]:
         v.append("audio_vae_name")
     if info["latent_upscale"]:
@@ -822,6 +892,8 @@ def size_step(model_type):
         return 64
     if info["base"] == "Kandinsky 6":
         return 16
+    if info["base"] == "SenseNova-U1.6":
+        return 32
     return 32 if info["kind"] == "video" or info["base"].startswith("MiniMax") else 16
 
 
@@ -983,6 +1055,24 @@ FLUX_T2I_SET = [  # FLUX の テキスト→画像(自然な英文で、見え�
     ("建物・室内", "A cozy Scandinavian living room with a grey sofa, plants and large windows, warm afternoon light, interior design photo."),
     ("ロゴ・アイコン", "A flat vector logo of a fox head inside a circle, orange and white, clean lines, plain white background."),
     ("人物の全身写真", "A full-body fashion photo of a woman in a beige trench coat walking on a city street, morning light, 50mm lens."),
+    ("夜の街(雨)", "A rainy night street in Tokyo with neon signs reflected on wet asphalt, a lone person with a transparent umbrella, cinematic mood."),
+    ("水彩イラスト", "A soft watercolor illustration of a small cottage by a river in spring, pale washes of color, visible paper texture."),
+    ("油絵", "An oil painting of a vase of sunflowers on a wooden table, thick brush strokes, warm impasto texture, rich colors."),
+    ("動物の写真", "A wildlife photo of a red fox standing in tall grass at dawn, shallow depth of field, soft backlight, sharp eyes."),
+    ("空撮", "An aerial photo of a winding turquoise river through a green valley, early morning light, crisp details, wide angle."),
+    ("宇宙", "A realistic view of a ringed planet rising over a barren moon surface, a small rover in the foreground, deep black sky with stars."),
+    ("雪の景色", "A quiet snowy village at dusk, warm light in the windows, snow falling softly, long exposure, calm blue tones."),
+    ("和室", "A tidy Japanese tatami room with a low table and a window to a small garden, soft afternoon light, minimal interior photo."),
+    ("ファッション", "A studio fashion photo of a model in a bright yellow coat against a gray backdrop, strong side light, sharp fabric detail."),
+    ("マクロ写真", "A macro photo of a dewdrop on a green leaf, tiny reflection of a flower inside the drop, creamy background blur."),
+    ("雑誌の表紙", 'A magazine cover with the title "MONDAY" in large letters, a smiling woman in a white shirt, clean layout with small headlines.'),
+    ("レトロ写真", "A retro 1970s snapshot of a family at a picnic in a park, faded colors, film grain, slightly overexposed highlights."),
+    ("ドット絵", "A pixel art scene of a small village with a river and a bridge, limited color palette, clean pixels, 16-bit game style."),
+    ("手書きの看板", 'A hand-painted wooden sign reading "OPEN" in white paint, hanging on a brick wall of a small cafe, soft morning light.'),
+    ("水中", "An underwater photo of a sea turtle swimming above a coral reef, sunbeams from the surface, clear blue water."),
+    ("未来都市", "A futuristic city with tall glass towers and elevated trains at sunset, flying cars, warm orange sky, detailed concept art."),
+    ("ペットの写真", "A close-up photo of a fluffy white cat sleeping on a knitted blanket by a window, soft light, shallow depth of field."),
+    ("料理(俯瞰)", "A top-down photo of a bowl of ramen with a soft egg, green onions and nori on a dark table, steam rising, natural light."),
 ]
 FLUX2_EDIT_SET = [  # FLUX.2 Klein 画像→画像(画像は image 1〜image 4 と書く。最大 4 枚)
     ("服の色を変える", "Change the color of the clothes to red. Keep everything else unchanged."),
@@ -1447,6 +1537,39 @@ ACE_ONLY_SET += [
 ]
 
 
+SENSENOVA_EDIT_SET = [  # SenseNova-U1.6 画像→画像(画像1を編集。参照画像は the reference image と書く。最大 10 枚)
+    ("服の色を変える", "Change the color of the clothes to deep red. Keep the person, pose, lighting and background unchanged."),
+    ("背景を変える", "Replace the background with a quiet coastal cliff at sunset. Keep the person and the pose unchanged."),
+    ("オブジェクト除去", "Remove the object in the background and fill the area naturally. Keep everything else unchanged."),
+    ("画風を変える", "Turn the image into a soft watercolor illustration. Keep the composition and the pose."),
+    ("笑顔にする", "Make the person smile gently. Keep the face identity, hairstyle and everything else unchanged."),
+    ("照明を変える", "Change the lighting to warm golden hour light from the left. Keep the subject and the composition unchanged."),
+    ("昼を夜にする", "Change the scene from day to night with lit windows and a dark blue sky. Keep the buildings and the layout unchanged."),
+    ("季節を冬にする", "Change the season to winter with snow on the ground and the trees. Keep the composition unchanged."),
+    ("髪の色を変える", "Change the hair color to silver. Keep the hairstyle, the face and the background unchanged."),
+    ("眼鏡を掛ける", "Put round black glasses on the person. Keep the face and everything else unchanged."),
+    ("帽子をかぶらせる", "Put a knitted beige beanie on the person. Keep the face, the clothes and the background unchanged."),
+    ("文字を書き換える", 'Change the text on the sign to "OPEN". Keep the font style, the color and the rest of the image unchanged.'),
+    ("文字を入れる", 'Add the title "SUMMER" in large white letters at the top. Keep everything else unchanged.'),
+    ("白黒をカラーにする", "Colorize the black and white photo with natural colors. Keep the details and the composition unchanged."),
+    ("写真をイラストにする", "Turn the photo into a clean anime-style illustration with clear lineart. Keep the composition and the pose."),
+    ("イラストを写真にする", "Turn the illustration into a realistic photo. Keep the composition, the pose and the colors."),
+    ("背景をぼかす", "Blur the background with a soft lens blur. Keep the subject sharp and unchanged."),
+    ("背景を白にする", "Replace the background with plain white. Keep the subject and its edges clean."),
+    ("人物を足す", "Add a small child standing next to the person, holding a balloon. Keep the rest unchanged."),
+    ("空を変える", "Replace the sky with a dramatic sunset sky with orange clouds. Keep the ground and the buildings unchanged."),
+    ("雨にする", "Make it a rainy day with wet ground and reflections. Keep the people and the layout unchanged."),
+    ("表情を変える", "Change the expression to surprised with wide open eyes. Keep the identity and everything else unchanged."),
+    ("髪型を変える", "Change the hairstyle to a short bob cut. Keep the face, the clothes and the background unchanged."),
+    ("参照画像の服を着せる", "Dress the person in the first image in the outfit from the reference image. Keep the identity, the pose and the background."),
+    ("参照画像の物を持たせる", "Let the person in the first image hold the object from the reference image. Keep the face, the clothes and the background."),
+    ("参照画像の画風にする", "Redraw the first image in the art style of the reference image. Keep the composition and the pose."),
+    ("参照画像の場所に置く", "Place the person from the first image into the scene of the reference image, with matching light and shadows."),
+    ("画質を上げる", "Improve the image quality: sharper details, cleaner edges, less noise. Keep the content unchanged."),
+    ("合成を馴染ませる", "Blend the pasted object naturally into the scene by matching the light, shadow and color. Keep the composition unchanged."),
+    ("色味を整える", "Adjust the color grading to a soft, warm and slightly faded film look. Keep the content unchanged."),
+]
+
 BUILTIN_PRESETS = (
     _set(["SD1.5", "SDXL", "Illustrious", "Anima"], [], TAG_SET)
     + _set(["MOSS", "Krea2", "Qwen Image", "MiniMax-H3-Image"], ["T2I"], NATURAL_SET)
@@ -1463,6 +1586,8 @@ BUILTIN_PRESETS = (
     + _set(["FLUX.2 Klein", "FLUX.3 Klein"], ["T2I"], FLUX_T2I_SET)
     + _set(["FLUX.2 Klein"], ["I2I"], FLUX2_EDIT_SET)
     + _set(["FLUX.3 Klein"], ["I2I"], FLUX3_EDIT_SET)
+    + _set(["SenseNova-U1.6"], ["T2I"], NATURAL_SET)
+    + _set(["SenseNova-U1.6"], ["I2I"], SENSENOVA_EDIT_SET)
     + _set(["LTX-2.5"], ["T2V"], LTX_T2V_SET)
     + _set(["LTX-2.5"], ["I2V"], LTX_I2V_SET)
     + _set(["Kandinsky 6"], ["T2V"], K6_T2V_SET, K6_NEG)
@@ -1605,6 +1730,26 @@ STANDARD_FILES = {
         "clip_name": [("", "qwen_0.6b_ace15.safetensors", "標準")],
         "clip_name_2": [("", "qwen_4b_ace15.safetensors", "標準(テンプレート)"), ("", "qwen_1.7b_ace15.safetensors", "軽い")],
         "vae_name": [("", "ace_1.5_vae.safetensors", "標準")],
+    },
+    # SenseNova-U1.6 Turbo: sensenova/SenseNova-U1.6-8B-MoT-LoRAs(SenseNova-U1 Python 用のファイル)
+    "SenseNova-U1.6": {
+        "unet_name": [("", SN_CORE_INT8, "標準(Turbo・自己修正。約 17.6 GB。models/checkpoints に入れる)"),
+                      ("", "HF | sensenova/SenseNova-U1.6-8B-MoT", "選ぶだけで自動でダウンロード(約 35 GB)"),
+                      ("", SN_LIGHT[2], "軽い版(約 12 GB)。選ぶだけで自動でダウンロード。LoRA・Turbo とは一緒に使えない"),
+                      ("", "Local | SenseNova-U1.6-8B-MoT", "手で入れるとき。入れ方は「📋 モデルの選び方・ライセンス」")],
+        "clip_name": [("", "qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors", "テキスト→画像の PE 用(約 8.8 GB)"),
+                      ("", "qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors", "画像→画像の PE 用(約 8.8 GB)")],
+        "turbo_lora_name": [("", "sensenova_u1.6_8b_mot_8step_lora_bf16.safetensors", "8 ステップ(標準・Core 用)"),
+                            ("", "SenseNova-U1.6-8B-MoT-LoRA-8step-v1.0.safetensors", "8 ステップ(追加ノード用)"),
+                            ("", "SenseNova-U1.6-8B-MoT-LoRA-4step-v1.0.safetensors", "4 ステップ(ステップ数を 4 に)")],
+    },
+    # TRELLIS.2: ComfyUI 同梱のテンプレート「画像 → 3D」のファイル
+    "TRELLIS.2": {
+        "unet_name": [("", "trellis_2_int8_convrot.safetensors", "標準(テンプレートと同じ)")],
+        "vae_name": [("", "trellis_2_shape_vae_bf16.safetensors", "形の VAE")],
+        "audio_vae_name": [("", "trellis_2_texture_vae_bf16.safetensors", "色の VAE(VAE フォルダ)")],
+        "clip_name": [("", "dino_v3_L_naf_fp32.safetensors", "models/clip_vision")],
+        "clip_name_2": [("", "birefnet.safetensors", "models/background_removal")],
     },
 }
 

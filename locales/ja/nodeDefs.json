@@ -98,5 +98,9 @@
  "CCARVCConvert": {
   "display_name": "CCA RVC で声を変える",
   "description": "RVC で声を変える(ボイスチェンジ)。models/rvc の声のモデル(.pth)を使う。HuBERT と RMVPE は初めて使うときに自動でダウンロードする。RVC(RVC-Project、MIT License)の推論を同梱。"
+ },
+ "CCASenseNova": {
+  "display_name": "CCA SenseNova-U1.6",
+  "description": "SenseNova-U1.6(テキスト→画像 / 参照画像 10 枚までの編集)。追加ノード ComfyUI-SenseNova-U1 の Local Text to Image / Local Image Edit と同じ処理(モデルはパネルで読み込んだもの)。"
  }
 }

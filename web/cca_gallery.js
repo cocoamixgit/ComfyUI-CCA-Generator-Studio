@@ -42,7 +42,7 @@ function css() {
 #cca-gal .hd .sp{flex:1}
 #cca-gal button{background:#20252e;color:#e4e7eb;border:1px solid #3a4250;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit;font-size:14px}
 #cca-gal .hd select{background:#0e1115;color:#e4e7eb;border:1px solid #3a4250;border-radius:6px;padding:5px 8px;font:inherit;font-size:14px}
-#cca-gal .grid{flex:1;overflow:auto;padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;align-content:start}
+#cca-gal .grid{flex:1;overflow:auto;padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));grid-auto-rows:max-content;gap:12px;align-content:start}
 #cca-gal .it{position:relative;border:1px solid #303744;border-radius:8px;overflow:hidden;background:#0b0d10;cursor:pointer;display:flex;flex-direction:column}
 #cca-gal .it:hover{border-color:#3db4a6}
 #cca-gal .it.on{border-color:#3db4a6;box-shadow:0 0 0 2px #3db4a6}
@@ -53,6 +53,8 @@ function css() {
 #cca-gal .zoom{position:absolute;right:6px;top:6px;padding:2px 8px;display:none;z-index:1}
 #cca-gal .it:hover .zoom{display:block}
 #cca-gal .none{color:#959eab;padding:20px}
+#cca-gal .ph{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;height:100%;color:#b8c0cc;font-size:28px;font-weight:700}
+#cca-gal .ph span{font-size:12px;font-weight:400;max-width:90%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cca-vthumb{position:relative;width:100%;height:100%}
 .cca-vthumb video{width:100%;height:100%;object-fit:cover;pointer-events:none;display:block}
 .cca-vthumb::after{content:"";position:absolute;left:50%;top:50%;width:0;height:0;transform:translate(-35%,-50%);
@@ -260,7 +262,7 @@ export function openGallery(items, opts = {}) {
     const grid = gal.querySelector(".grid");
     grid.innerHTML = list.length ? list.map(({ it, i }) => `<div class="it${it === opts.current ? " on" : ""}" data-i="${i}">
         <button class="zoom" title="拡大表示">🔍</button>
-        <div class="th">${it.isVideo ? videoThumb(it.url, true) : `<img src="${esc(it.url)}" loading="lazy" alt="">`}${it.pdf ? '<span class="pdfb">PDF</span>' : ""}</div>
+        <div class="th">${it.isVideo ? videoThumb(it.url, true) : it.is3d ? '<div class="ph">3D</div>' : it.isAudio ? '<div class="ph">🎵</div>' : `<img src="${esc(it.url)}" loading="lazy" alt="">`}${it.pdf ? '<span class="pdfb">PDF</span>' : ""}</div>
         <div class="cap">${esc(opts.caption ? opts.caption(it) : "")}</div></div>`).join("")
       : '<div class="none">まだ結果がありません。</div>';
     for (const el of grid.querySelectorAll(".it")) {

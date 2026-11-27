@@ -26,8 +26,7 @@ from .panel import parse_loras
 from .specs import NONE, TYPE_INFO, hires_supported
 from .store import _base_dir
 
-TOOL_NAME = "CCA Generator"
-TOOL_VERSION = "1.2.0"  # pyproject.toml の version と同じにする
+from .version import TOOL_NAME, VERSION as TOOL_VERSION  # 版は pyproject.toml の version の 1 か所で設定する
 HASH_FILE = "model_hashes.json"
 _lock = threading.Lock()
 
@@ -248,6 +247,8 @@ def build_parameters(v, width, height):
         if h:
             f.append(("Model hash", h))
         f.append(("Model", _stem(name)))
+    if mt:  # CCA のモデルの種別(PNGinfo で反映するとき、先に種別を切り替えるため)
+        f.append(("Model type", str(mt)))
     if loader != "ckpt" and v.get("vae_name") not in (None, "", NONE):
         h = model_hash("vae", v["vae_name"])
         if h:

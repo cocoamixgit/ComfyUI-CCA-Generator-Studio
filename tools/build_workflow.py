@@ -32,7 +32,7 @@ import uuid
 
 
 def _load_specs():
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "specs.py")
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cca", "specs.py")
     spec = importlib.util.spec_from_file_location("cca_specs_build", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -149,6 +149,9 @@ NEW_ROUTES = [
       ("negative", "STRING"), ("seed", "INT"), ("steps", "INT"), ("cfg", "FLOAT"), ("sampler_name", "COMBO"),
       ("scheduler", "COMBO"), ("width", "INT"), ("height", "INT"), ("video_length", "INT"), ("video_fps", "FLOAT"),
       ("ref_images", "CCA_IMAGES")], "VIDEO"),
+    ("SenseNova-U1.6", "CCASenseNova", "SenseNova-U1.6(テキスト→画像 / 画像→画像)※追加ノード ComfyUI-SenseNova-U1", 27,
+     [("model", "MODEL"), ("positive", "STRING"), ("seed", "INT"), ("steps", "INT"), ("cfg", "FLOAT"), ("width", "INT"),
+      ("height", "INT"), ("size_by_scale", "BOOLEAN"), ("ref_images", "CCA_IMAGES")], "IMAGE"),
 ]
 
 

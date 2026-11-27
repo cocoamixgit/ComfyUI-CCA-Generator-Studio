@@ -44,7 +44,33 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 ---
 ## Changelog
 - If you installed using the Quick Installer, updating is as simple as overwriting all existing files.
+Note: The file structure was reorganized between versions 1.2 and 1.3. Overwriting the existing files is fine, but for a cleaner installation, it is recommended to delete the existing files first and then install all files again.
 
+### Version 1.5 – Changes & Fixes  -2026/11/26
+* Added a Forge-style layout as Default Settings 2.
+* Added support for SenseNova-U1.6.
+* Added support for TRELLIS.2 3D generation.
+* Added Drawing Mode.
+
+
+### Version 1.4 – Changes & Fixes  -2026/11/25
+* Added font previews to the font list.
+* Added layer blending modes, including Normal, Multiply, Screen, and Overlay.
+* Added color and brightness adjustment tools with selectable adjustment areas.
+* Added support for importing and exporting PDF files.
+* Added previews to text-only lists.
+* Added grouping functionality for videos, making it easier to move individual elements independently.
+* Performance improvement: Switched display rendering calculations to the GPU.
+* Fixed an issue where masks were ignored in FLUX.2, FLUX.3 Klein, and MiniMax-H3-Image, causing the entire image to be regenerated instead of only the masked area.
+
+
+### Version 1.3 – Changes & Fixes  -2026/11/24
+* Added theme creation features (template creation and import, theme creation from images or text, and theme_view.html)
+* Added a customizable generation panel layout with four areas: top, left, right, and bottom, allowing generation buttons, generated images, history, and other elements to be freely rearranged
+* Organized the settings screen
+* Fixed an issue preventing Google Fonts from opening in the image editor
+* Fixed an issue where text frames could not be moved using the left and right arrow keys
+  
 
 ### Version 1.2 – Changes & Fixes  -2026/11/23
 * Added the ability to retrieve PNG Info and apply the information to settings.
@@ -215,6 +241,7 @@ Background removal in one click, with threshold, shrink / grow and edge softness
 
 Edited in CCA Generator:
 
+<video src="assets/ccageneratormoview1.mp4" controls width="100%"></video>
 <video src="assets/video-edited.mp4" controls width="100%"></video>
 
 With mosaic added:

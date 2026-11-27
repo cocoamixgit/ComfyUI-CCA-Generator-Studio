@@ -98,5 +98,9 @@
  "CCARVCConvert": {
   "display_name": "CCA Change voice with RVC",
   "description": "Changes the voice with RVC (voice changer) using a voice model (.pth) in models/rvc. HuBERT and RMVPE are downloaded automatically on first use. Includes the RVC (RVC-Project, MIT License) inference code."
+ },
+ "CCASenseNova": {
+  "display_name": "CCA SenseNova-U1.6",
+  "description": "SenseNova-U1.6 (text → image / editing with up to 10 reference images). Same processing as the ComfyUI-SenseNova-U1 add-on's Local Text to Image / Local Image Edit (the model is the one loaded by the panel)."
  }
 }

@@ -111,11 +111,19 @@ export async function setWidget(node, name, value) {
   if (w.callback) await w.callback(value, app.canvas, node);
   node.setDirtyCanvas?.(true, true);
 }
+// その種別だけ別の選択肢にする欄(SenseNova のモデル・TRELLIS.2 の画像エンコーダーなど)の選択肢。無ければ null
+export const typeList = (node, name) => CCA.SPEC?.types_info?.[W(node, "model_type")?.value]?.lists?.[name] || null;
+// 欄のファイルの種類(入れる場所の案内に使う)。種別で一覧が変わる欄は、その一覧の種類
+export function listKindOf(node, name) {
+  const ln = CCA.SPEC?.types_info?.[W(node, "model_type")?.value]?.list_names?.[name] || (CCA.SPEC?.list_keys || CCA.SPEC?.file_keys)?.[name];
+  return CCA.SPEC?.list_kind?.[ln];
+}
 export function isMissingFile(node, name) {
   const w = W(node, name);
   const v = w?.value;
-  return !!(w && isFileKey(name) && v && v !== NONE && Array.isArray(w.options?.values)
-    && !w.options.values.includes(v) && !/\[(input|output|temp)\]$/.test(v));
+  const vals = typeList(node, name) || w?.options?.values;
+  return !!(w && isFileKey(name) && v && v !== NONE && Array.isArray(vals)
+    && !vals.includes(v) && !/\[(input|output|temp)\]$/.test(v));
 }
 function resize(node) {
   const sz = node.computeSize();
@@ -143,7 +151,7 @@ export function imageUrl(value) {
 // こちらの編集画面(画像編集・動画編集・画像の合成・マスクを描く・一覧の小窓)を開いている間は、ComfyUI 本体の
 // ワークフローの「元に戻す / やり直す」(Ctrl+Z / Ctrl+Y)を動かさない。本体はキー入力を先に受け、マスクエディターを
 // 開いているときだけ止めるので、同じ扱いにしてもらう(本体の作りが違う版では何もしない)
-const CCA_OVERLAYS = "#cca-imged.open, #cca-vedit.open, #cca-comp.open, #cca-mask.open, #cca-hbox.open, #cca-wm.open, #cca-vpick.open, #cca-gfont.open";
+const CCA_OVERLAYS = "#cca-imged.open, #cca-vedit.open, #cca-comp.open, #cca-mask.open, #cca-hbox.open, #cca-wm.open, #cca-vpick.open, #cca-pdfpick.open, #cca-gfont.open";
 export function guardComfyKeys() {
   try {
     const C = app?.constructor;

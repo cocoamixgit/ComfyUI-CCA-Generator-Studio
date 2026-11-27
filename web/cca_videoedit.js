@@ -8,12 +8,17 @@
 // 生成パネル(cca_ui.js)から openVideoEditor() で開く。
 import { api } from "../../scripts/api.js";
 import { T, confirm, prompt } from "./cca_i18n.js";
+import { setFontPreview } from "./cca_theme.js";
+import { blendOf, blendOptions, viewBg, setViewBg, attachDroppers, pickColor, selectKey } from "./cca_text.js";
+import { isPdf, pdfToImages, pdfKey, PDF_ACCEPT } from "./cca_pdf.js";
+import { adjOn, adjSig, adjustCanvas, adjStats, adjPanelHtml, adjPanelCss, bindAdjPanel, lerpAdj, syncAdjPanel, syncAdjAll, adjActive, selSig, flattenPath } from "./cca_adjust.js";
 import { openWatermark, watermarkKey } from "./cca_watermark.js";
+import { hoverPreview, hidePreview } from "./cca_hoverpv.js";
 import { frameHlHtml, frameHlCss, bindFrameHl, frameHlPad } from "./cca_framehl.js";
-import { rulesHtml, setRule, addRule, SHAPES, SHAPE_KEYS, MASK_DEF, applyShapeMask, PATTERNS, PAT_KEYS, outlineCanvas, outlineSides, shapeMaskCanvas, decodePath, tracePath, toggleCurvePoint, nearPathLine, askClose, sideSplitter } from "./cca_shapes.js";
+import { rulesHtml, setRule, addRule, SHAPES, SHAPE_KEYS, MASK_DEF, applyShapeMask, PATTERNS, PAT_KEYS, patSizeSpace, patFromSizeSpace, outlineCanvas, outlineSides, innerOutlineCanvas, shapeMaskCanvas, decodePath, tracePath, toggleCurvePoint, nearPathLine, askClose, sideSplitter } from "./cca_shapes.js";
 import { saveEntry, openHistory, historyKey, makeThumb, newSid, fmtTime, HIST_EVERY } from "./cca_history.js";
 import { setupSections, sectionEditBar, SECTIONS_CSS, cardCss } from "./cca_sections.js";
-import { sectionCss, wrapLines, bboxHtml, bboxCss, bboxDrag, textSectionsHtml, STYLE_RESET, clipboard, pickText, isField, isTextField, textLayout, drawTextAt,
+import { sectionCss, wrapLines, bboxHtml, bboxCss, bboxDrag, textSectionsHtml, STYLE_RESET, clipboard, pickText, isField, isTextField, textLayout, drawTextAt, textItems,
   snapLines, snapMove, snapResize, showSnapGuides, enhanceNotes } from "./cca_text.js";
 
 const MAX_UNDO = 50;
@@ -22,6 +27,7 @@ const GUT = 64; // タイムラインの左の見出し(動画・文字・重ね
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const r3 = (v) => Math.round(v * 1000) / 1000;
+const r6 = (v) => Math.round(v * 1e6) / 1e6; // 方向キーで 1px ずつ動かすとき(割合の位置)
 const rf3 = (v) => Math.floor(v * 1000 + 1e-6) / 1000; // 再生位置より後ろにならないよう切り捨て(貼り付け・追加位置用)
 const fmt = (s) => { s = Math.max(0, s || 0); const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`; };
 const nameOf = (v) => { const m = /^(.*?)\s*\[(input|output|temp|cca_wm)\]$/.exec(String(v || "")); return (m ? m[1] : String(v || "")).split("/").pop(); };
@@ -37,6 +43,8 @@ function viewUrl(value) {
 }
 
 let ui = null;
+// 画像の上に重ねて描く色: テーマの look.overlay(CSS の変数 --ov-<名前>)。書いていなければ d(今の色)
+const ovc = (k, d) => { try { return (ui && getComputedStyle(ui).getPropertyValue(`--ov-${k}`).trim()) || d; } catch { return d; } };
 let ctx = null;
 let uid = 1;
 const st = {
@@ -65,14 +73,26 @@ function css() {
 #cca-vedit .main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--sidew,360px)}
 #cca-vedit .left{display:flex;flex-direction:column;min-width:0;min-height:0}
 #cca-vedit .stage{position:relative;flex:1;min-height:160px;background:#0b0d10;overflow:hidden}
-#cca-vedit .frame{position:absolute;background:#000;overflow:hidden;box-shadow:0 0 0 1px #303744}
+#cca-vedit .frame{position:absolute;background:#000;overflow:hidden;box-shadow:0 0 0 1px #303744;isolation:isolate}
 #cca-vedit .win{position:absolute;overflow:hidden;isolation:isolate}
 #cca-vedit .win video{position:absolute;left:0;top:0;max-width:none;z-index:1}
 #cca-vedit .ovl{position:absolute;inset:0}
 #cca-vedit .ov{position:absolute;box-sizing:border-box;cursor:move;user-select:none}
+#cca-vedit .ov.locked{pointer-events:none}
+#cca-vedit .blk.hid{opacity:.45;background-image:repeating-linear-gradient(135deg,rgba(0,0,0,.28) 0 6px,transparent 6px 12px)}
+#cca-vedit .ov.locked [data-h]{display:none}
+#cca-vedit [data-c="insp"].locked{opacity:.55;pointer-events:none}
 #cca-vedit .ov:not([data-kind="mosaic"]){isolation:isolate}
 #cca-vedit .ov.txt{transform:translate(-50%,-50%);white-space:pre;text-align:center;line-height:1.2;font-weight:700;padding:0;
   font-family:"Hiragino Sans","Yu Gothic UI",Meiryo,"Noto Sans CJK JP",sans-serif;paint-order:stroke fill}
+#cca-vedit .ov .ovc{position:absolute;inset:0}
+#cca-vedit .tl .blk .gl{display:inline-block;width:3px;height:14px;margin-right:4px;vertical-align:-2px;border-radius:1px;background:hsl(var(--g) 70% 60%)}
+#cca-vedit .tl .blk .gtag{font-weight:700}
+#cca-vedit .tl-in > .gfr{position:absolute;border:1.5px solid color-mix(in srgb,var(--text,#e4e7eb) 60%,transparent);border-radius:6px;pointer-events:none;z-index:4;box-sizing:border-box}
+#cca-vedit .tl-in > .gfr > .gfh{position:absolute;top:0;bottom:0;width:10px;pointer-events:auto;cursor:ew-resize}
+#cca-vedit .tl-in > .gfr > .gfh.l{left:-6px}
+#cca-vedit .tl-in > .gfr > .gfh.r{right:-6px}
+#cca-vedit .ov.txt .ovc{position:relative;inset:auto}
 #cca-vedit .ov img,#cca-vedit .ov video{width:100%;height:100%;display:block;pointer-events:none;position:relative;z-index:1}
 #cca-vedit .ov.chide > :not(.bb){visibility:hidden}
 #cca-vedit .ov .vcr{position:relative;width:100%;height:100%;overflow:hidden;pointer-events:none;z-index:1}
@@ -80,6 +100,7 @@ function css() {
 #cca-vedit .ov .eb,#cca-vedit .win .eb{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:0;display:none}
 #cca-vedit .ov .kc,#cca-vedit .win .kc{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:2}
 #cca-vedit .ov .olc{position:absolute;pointer-events:none;z-index:0;display:none}
+#cca-vedit .ov .ilc{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3;display:none}
 #cca-vedit .ov canvas.shp{width:100%;height:100%;display:block;position:relative;z-index:1;pointer-events:none}
 #cca-vedit .pathcv{position:absolute;left:0;top:0;width:100%;height:100%;z-index:8;display:none;cursor:crosshair;touch-action:none}
 #cca-vedit .blk.shape{background:#4f8a7a}
@@ -92,8 +113,13 @@ function css() {
 #cca-vedit .ov.txt .tstk{position:absolute;left:0;top:0;right:0;z-index:0;white-space:pre;pointer-events:none;
   color:var(--sc);-webkit-text-stroke:var(--sw) var(--sc);transform:translate(var(--sdx),var(--sdy));opacity:var(--sa)}
 #cca-vedit .ov.txt .tw{visibility:hidden}
+#cca-vedit .ov.txt .tcv{position:absolute;pointer-events:none;z-index:2;display:none}
+#cca-vedit .ov.txt.cvm .tcv{display:block}
+#cca-vedit .ov.txt.cvm .tfil{color:transparent!important}
+#cca-vedit .ov.txt.cvm .tstk{display:none!important}
 #cca-vedit .wbox{position:absolute;pointer-events:none;display:none}
 ${bboxCss("#cca-vedit")}
+${adjPanelCss("#cca-vedit")}
 ${SECTIONS_CSS("#cca-vedit")}
 ${cardCss("#cca-vedit .side", "> section[data-sec]", { export: "yellow", insp: "blue", guide: "gray" })}
 #cca-vedit .secbar{gap:6px;order:999;margin-top:6px}
@@ -116,6 +142,9 @@ ${cardCss("#cca-vedit .side", "> section[data-sec]", { export: "yellow", insp: "
 #cca-vedit .transport{display:flex;gap:6px;align-items:center;padding:6px 10px;border-top:1px solid #303744;flex-wrap:wrap}
 #cca-vedit .transport .tm{font-variant-numeric:tabular-nums;color:#cfd5dc;min-width:9em}
 #cca-vedit .tl{height:190px;overflow:auto;border-top:1px solid #303744;background:#13161b;position:relative}
+#cca-vedit .tlsplit{flex:none;height:7px;cursor:ns-resize;background:#1a1e25;border-top:1px solid #303744;position:relative;touch-action:none}
+#cca-vedit .tlsplit::after{content:"";position:absolute;left:50%;top:2px;width:44px;height:3px;margin-left:-22px;border-radius:2px;background:#4a5566}
+#cca-vedit .tlsplit:hover::after,#cca-vedit .tlsplit.on::after{background:#ffd24d}
 #cca-vedit .tl-in{position:relative;min-height:100%}
 #cca-vedit .tl,#cca-vedit .transport,#cca-vedit .stage{user-select:none;-webkit-user-select:none}
 #cca-vedit .ruler{position:sticky;top:0;height:22px;background:#1a1e25;border-bottom:1px solid #303744;cursor:pointer;z-index:2}
@@ -189,7 +218,7 @@ ${cardCss("#cca-vedit .side", "> section[data-sec]", { export: "yellow", insp: "
 #cca-vedit .blk .lpm{position:absolute;right:10px;top:0;font-style:normal;color:#ffb38f;font-weight:700;pointer-events:none}
 #cca-vedit .blk .trm.l{left:0;background:linear-gradient(90deg,#ffffff70,#ffffff00)}
 #cca-vedit .blk .trm.r{right:0;background:linear-gradient(270deg,#ffffff70,#ffffff00)}
-#cca-vedit .blk.sel{box-shadow:0 0 0 2px #fff inset}
+#cca-vedit .blk.sel{box-shadow:0 0 0 2px #fff inset,0 0 0 2px #ffcc33;filter:brightness(1.18);z-index:3}
 #cca-vedit .blk .eh{position:absolute;top:0;bottom:0;width:7px;background:#fff4;cursor:ew-resize}
 #cca-vedit .blk .eh.l{left:0}
 #cca-vedit .blk .eh.r{right:0}
@@ -265,9 +294,10 @@ function build() {
           <div class="busy" data-c="busy"><span data-c="busytext"></span><div class="bar"><i data-c="busybar"></i></div>
             <div class="row" style="margin-top:6px"><button data-c="cancel">中止</button></div></div>
         </div>
+        <div class="tlsplit" data-c="tlsplit" title="上下にドラッグすると、プレビューとタイムラインの境目を動かせます(ダブルクリックで元の高さ)"></div>
         <div class="transport">
           <button data-c="play" title="再生 / 停止(スペース)">▶ 再生</button><span class="tm" data-c="time">0:00.0 / 0:00.0</span>
-          <span class="zm" title="プレビューの拡大: ホイールで拡大・縮小、中ボタンのドラッグ(拡大中は、画面の外側の灰色の所をドラッグしても)で動かす"><button data-c="zout" title="縮小">－</button><span data-c="zoomp">100%</span><button data-c="zin" title="拡大">＋</button><button data-c="zfit" title="全体を表示">全体</button></span>
+          <span class="zm" title="プレビューの拡大: ホイールで拡大・縮小、右ボタン・中ボタンのドラッグ(拡大中は、画面の外側の灰色の所をドラッグしても)で動かす"><button data-c="zout" title="縮小">－</button><span data-c="zoomp">100%</span><button data-c="zin" title="拡大">＋</button><button data-c="zfit" title="全体を表示">全体</button></span>
           <span class="sp"></span>
           <button data-c="add-video" title="動画を再生位置に入れます(何も無ければ、いちばん下の段の 1 本目)">＋ 動画の挿入</button>
           <button data-c="add-image">＋ 画像の挿入</button>
@@ -275,9 +305,12 @@ function build() {
           <button data-c="add-audio" title="音声ファイル(mp3・wav など)や、動画の音だけを音声の段に置きます">＋ 音声の挿入</button>
           <button data-c="split" title="選んだもの(動画・文字・画像)を、再生位置で 2 つに分ける(S)。再生位置が外なら真ん中で分けます">✂ 分割</button>
           <button data-c="dup" title="選んだものを複製する(Ctrl+D)。すぐ後ろに置きます。Ctrl+C でコピー・Ctrl+X で切り取り・Ctrl+V で再生位置に貼り付け">⧉ 複製</button>
+          <button data-c="lock" title="ロックすると、動かす・伸び縮み・分割・変える・消すができなくなります。プレビューでは押しても選ばれず、後ろのものを選べます(タイムラインからは選べます)">ロック</button>
+          <button data-c="hide" title="選んだレイヤー(文字・画像・動画・図形・モザイク)を、プレビューと書き出しに出さないようにします(タイムラインには残ります。もう一度押すと表示)">非表示</button>
+          <button data-c="group" title="選んだレイヤーをグループにする(Ctrl+G)。Shift / Ctrl を押しながら押すと、いくつも選べます">⛓ グループ</button><button data-c="ungroup" title="グループを解く(Ctrl+Shift+G)">解く</button>
           <button data-c="del" title="選んだものを消す(Delete)">🗑 消す</button>
           <button data-c="stretch" title="オンのとき、タイムラインで動画・音声の端をドラッグすると、切り取らずに速さを変えて伸び縮みさせます(タイムストレッチ。速さ % も変わります)。Shift を押しながらドラッグしても同じ">⇔ 伸縮(タイムストレッチ)</button>
-          <button data-c="snap" class="on" title="ドラッグしたときに、ほかのレイヤーの始まり・終わり・再生位置にそろえる。プレビューの枠も、画面やほかのレイヤーの端・真ん中にそろえる(Alt を押しながらドラッグすると、そろえない)">🧲 スナップ</button>
+          <button data-c="snap" class="on" title="ドラッグしたときに、ほかのレイヤーの始まり・終わり・再生位置にそろえる(近くに無ければ 0.1 秒ずつ)。プレビューの枠も、画面やほかのレイヤーの端・真ん中にそろえる(Alt を押しながらドラッグすると、そろえない)">🧲 スナップ</button>
           <label class="row" style="font-size:12px;color:#9fb0c2">表示の幅<input type="range" data-c="zoom" min="10" max="400" value="60" style="width:110px"></label>
         </div>
         <div class="tl" data-c="tl"><div class="tl-in" data-c="tlin"><div class="ruler" data-c="ruler"></div><div data-c="rows"></div><div class="ph" data-c="ph"></div><div class="snapl" data-c="snapl"></div><div class="dmark" data-c="dmark"><div class="v"></div><div class="h"></div><div class="lb"></div></div></div></div>
@@ -302,6 +335,9 @@ function build() {
             <option value="mp4">MP4(H.264・音あり)</option><option value="webm">WebM(VP9・透明と音あり)</option>
             <option value="webp">WebP アニメ(透明あり・音なし)</option><option value="gif">GIF アニメ(透明あり・音なし)</option></select></label>
           <label class="fl">背景<select data-p="bg"><option value="black">黒</option><option value="white">白</option><option value="transparent">透明</option></select></label>
+          <label class="fl" title="背景が透明のときの、プレビューでの見え方です(書き出しには関係しません)">透明の表示<span class="row" style="flex-wrap:nowrap;gap:6px;min-width:0">
+            <select data-c="vbg" style="flex:1;min-width:0"><option value="checker">透明柄</option><option value="white">白</option><option value="black">黒</option><option value="color">色を選ぶ</option></select>
+            <input type="color" data-c="vbgc" style="width:3em"></span></label>
           <div data-c="expopts"></div>
           <div class="note" data-c="fmtnote"></div>
           <div class="note" data-c="info"></div>
@@ -478,12 +514,12 @@ function drawWaves() {
       }
     }
     // 音量の線(0〜200%)
-    g.strokeStyle = "#ffd24d";
+    g.strokeStyle = ovc("volume", "#ffd24d");
     g.lineWidth = 1.5;
     g.beginPath();
     for (let x = 0; x <= w; x += 2) { const y = h - 2 - clamp(volAt(a, x / k) / 2, 0, 1) * (h - 4); if (x) g.lineTo(x, y); else g.moveTo(x, y); }
     g.stroke();
-    g.fillStyle = "#ffd24d";
+    g.fillStyle = ovc("volume", "#ffd24d");
     for (const q of a.vkf || []) { const x = q.t * k, y = h - 2 - clamp(q.v / 2, 0, 1) * (h - 4); g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill(); }
   }
 }
@@ -514,7 +550,16 @@ function animState(it, keys, tl) {
   return out;
 }
 // 第20版: 登場・退場の動き(書き出し videoedit.MOTION_IN と同じ)と、ずっと続ける動き(LOOPS)
-const MOTION_IN = ["pop", "boing", "drop", "bungee", "rise", "tumble", "drift", "stagger", "flicker", "typing"];
+const MOTION_IN = ["pop", "boing", "drop", "bungee", "rise", "tumble", "drift", "stagger", "flicker", "typing", "swing"];
+// 文字を一文字ずつ動かせる効果(tin / tout の perChar: true。stagger: ずらす割合 0〜0.95、order: fwd / rev / rand。書き出し videoedit.PER_CHAR と同じ)
+const PER_CHAR = ["fade", "zoom", "spin", "pop", "boing", "drop", "bungee", "rise", "tumble", "drift", "stagger", "flicker", "swing",
+  "slide_h", "slide_v", "blur", "wipe_h", "wipe_v", "split_h", "split_v", "iris_circle", "iris_box", "iris_diamond", "clock"];
+// 形で出す・消す効果(一文字ずつのときは、文字ごとの枠の中で)
+const CLIP_TYPES = new Set(["wipe_h", "wipe_v", "split_h", "split_v", "iris_circle", "iris_box", "iris_diamond", "clock"]);
+// 文字の一文字ずつのトランジションか
+const pcOn = (tr, key) => key === "text" && !!tr?.perChar && PER_CHAR.includes(tr.type);
+const pcLoop = (o) => o?.kind === "text" && !!o.loop?.perChar && LOOPS.includes(o.loop?.type);
+const SWING_DEG = 28; // くいっ(傾きから戻る)の傾き(度)
 const TRANS = ["fade", "dip_black", "dip_white", "wipe_h", "wipe_v", "slide_h", "slide_v", "split_h", "split_v", "iris_circle", "iris_box", "iris_diamond", "clock", "zoom", "spin", ...MOTION_IN, "blur"];
 const MOTION_DIR = { drop: "top", bungee: "top", rise: "bottom", tumble: "left", drift: "left", stagger: "left" };
 const DIR_VEC = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -554,15 +599,67 @@ function applyMotion(stt, cx, cy, w, h, W, H) {
       if (t === "stagger") { stt.rot += Math.sin(q * 4 * Math.PI) * (1 - q) * 18; stt.opacity *= Math.min(1, q * 3); } else stt.opacity *= e;
     } else if (t === "flicker") {
       if (!(q >= 1 || hash01(Math.floor(q * 14) + 1) < 0.2 + 0.8 * q)) stt.opacity *= 0.05;
+    } else if (t === "swing") {
+      stt.rot += SWING_DEG * (1 - outBack(q)) * (d === "right" ? 1 : -1);
+      stt.opacity *= Math.min(1, q * 2);
     }
   }
   return [cx, cy, w, h];
 }
+// ばらばらの順(決まった乱数。書き出しと同じ)。i 番目の文字が何番目に動くか
+const randRank = (n) => { const idx = [...Array(n).keys()].sort((a, b) => hash01(a * 7919 + 13) - hash01(b * 7919 + 13) || a - b); const r = []; idx.forEach((i, k) => { r[i] = k; }); return r; };
+// 一文字ずつ動かすときの、i 文字目(空白を除いて数える。全部で n 文字)の動き。px: 文字の大きさ(書き出し videoedit.char_fx と同じ式)
+function charFx(pcs, i, n, px, it = null, lp = null, t = 0) {
+  let dx = 0, dy = 0, rot = 0, sc = 1, op = 1, blur = 0;
+  const clips = [];
+  for (const [tr, p, which] of pcs) {
+    const s = tr.order === "sync" ? 0 : clamp(Number(tr.stagger ?? 0.7), 0, 0.95); // 同時: 全部の文字が一緒に
+    let k = tr.order === "rev" ? n - 1 - i : tr.order === "rand" ? randRank(n)[i] : i;
+    if (which === "tout") k = n - 1 - k; // 出るときも、先の文字から先に動く
+    const q0 = n > 1 ? clamp((p - (s * k) / (n - 1)) / (1 - s), 0, 1) : p;
+    if (q0 >= 1) continue;
+    const t = tr.type, q = easeF(q0);
+    const d = DIR_VEC[tr.dir] ? tr.dir : MOTION_DIR[t] || "left";
+    const [vx, vy] = DIR_VEC[d];
+    if (t === "fade") op *= q;
+    else if (t === "zoom" || t === "spin") {
+      sc *= tr.rev ? 1 + 2 * (1 - q) : Math.max(0.001, q);
+      if (t === "spin") rot += (1 - q) * 360 * (tr.flipH ? -1 : 1);
+      if (tr.rev) op *= q;
+    } else if (t === "pop") { sc *= Math.max(0.001, outBack(q0)); op *= Math.min(1, q0 * 3); }
+    else if (t === "boing") { sc *= Math.max(0.001, outElastic(q0)); op *= Math.min(1, q0 * 4); }
+    else if (t === "drop" || t === "bungee" || t === "tumble") {
+      const e = t === "drop" ? outBounce(q0) : t === "bungee" ? outElastic(q0) : easeF(q0);
+      dx += vx * 1.5 * px * (1 - e); dy += vy * 1.5 * px * (1 - e);
+      if (t === "tumble") rot += (vx < 0 || vy < 0 ? -360 : 360) * (1 - e);
+    } else if (t === "rise" || t === "drift" || t === "stagger") {
+      const e = easeF(q0), dist = (t === "stagger" ? 1.2 : 0.8) * px;
+      dx += vx * dist * (1 - e); dy += vy * dist * (1 - e);
+      if (t === "stagger") { rot += Math.sin(q0 * 4 * Math.PI) * (1 - q0) * 18; op *= Math.min(1, q0 * 3); } else op *= e;
+    } else if (t === "flicker") { if (!(hash01(Math.floor(q0 * 14) + 1 + i * 7) < 0.2 + 0.8 * q0)) op *= 0.05; }
+    else if (t === "swing") { rot += SWING_DEG * (1 - outBack(q0)) * (d === "right" ? 1 : -1); op *= Math.min(1, q0 * 2); }
+    else if (t === "slide_h" || t === "slide_v") {
+      const sg = t === "slide_h" ? (tr.flipH ? 1 : -1) : (tr.flipV ? 1 : -1);
+      if (t === "slide_h") dx += sg * 2 * px * (1 - q); else dy += sg * 2 * px * (1 - q);
+      op *= Math.min(1, q0 * 2.5);
+    } else if (t === "blur") blur += (1 - q) * 0.5 * px;
+    else if (CLIP_TYPES.has(t)) clips.push([tr, q0]);
+  }
+  // ずっと動かす(ループ)を一文字ずつ: 文字ごとに少しずつ遅らせ、文字の大きさで動かす
+  if (lp && it) {
+    const k = lp.order === "rev" ? n - 1 - i : lp.order === "rand" ? randRank(n)[i] : i; // 順番(同時なら遅らせない)
+    const v = loopVals(lp, t - (lp.order === "sync" ? 0 : k * clamp(Number(lp.lag ?? 0.1), 0, 2)), it.w, it.h);
+    const rx = v.pin[0] * it.w, ry = v.pin[1] * it.h, th = (v.rot * Math.PI) / 180;
+    const qx = (rx * Math.cos(th) - ry * Math.sin(th)) * v.sc, qy = (rx * Math.sin(th) + ry * Math.cos(th)) * v.sc;
+    dx += rx - qx + v.dx; dy += ry - qy + v.dy; rot += v.rot; sc *= v.sc; op *= v.op; blur += v.focus * 0.4 * px;
+  }
+  return { dx, dy, sc, rot, op, blur, clips };
+}
 // ずっと続ける動き。支点(pin)のまわりに回す・大きさを変える。返り値 [cx, cy, w, h]
-function applyLoop(stt, lp, t, cx, cy, w, h) {
-  if (!lp || !LOOPS.includes(lp.type)) return [cx, cy, w, h];
+// ずっと続ける動きの値(w・h: 動かすものの大きさ)。focus: ぼんやりの強さ(0〜)
+function loopVals(lp, t, w, h) {
   const f = clamp(Number(lp.speed) || 1, 0.05, 10), a = clamp(Number(lp.amt ?? 1), 0, 3), TAU = 2 * Math.PI;
-  let rot = 0, sc = 1, dx = 0, dy = 0, op = 1;
+  let rot = 0, sc = 1, dx = 0, dy = 0, op = 1, focus = 0;
   switch (lp.type) {
     case "sway": rot = Math.sin(TAU * 0.8 * f * t) * 10 * a; break;
     case "pendulum": rot = Math.sin(TAU * 0.6 * f * t) * 28 * a; break;
@@ -577,8 +674,14 @@ function applyLoop(stt, lp, t, cx, cy, w, h) {
     case "blink": op = 1 - Math.min(1, 0.65 * a) * (0.5 - 0.5 * Math.cos(TAU * 1.2 * f * t)); break;
     case "flicker": op = hash01(Math.floor(t * 12 * f) + 3) < 0.22 * a ? 0.1 : 1; break;
     case "breeze": rot = Math.sin(TAU * 0.9 * f * t) * 5 * a; dx = Math.sin(TAU * 0.9 * f * t + 1) * 0.02 * w * a; break;
-    case "focus": stt.blur = (stt.blur || 0) + BLUR_LOOP * a * (0.5 - 0.5 * Math.cos(TAU * 0.5 * f * t)); break;
+    case "focus": focus = a * (0.5 - 0.5 * Math.cos(TAU * 0.5 * f * t)); break;
   }
+  return { rot, sc, dx, dy, op, focus, pin: PIN_VEC[lp.pin || LOOP_PIN[lp.type] || "c"] || [0, 0] };
+}
+function applyLoop(stt, lp, t, cx, cy, w, h) {
+  if (!lp || !LOOPS.includes(lp.type)) return [cx, cy, w, h];
+  const { rot, sc, dx, dy, op, focus } = loopVals(lp, t, w, h);
+  if (focus) stt.blur = (stt.blur || 0) + BLUR_LOOP * focus;
   const [px, py] = PIN_VEC[lp.pin || LOOP_PIN[lp.type] || "c"] || [0, 0];
   const rx = px * w, ry = py * h, b = (stt.rot * Math.PI) / 180;
   const rwx = rx * Math.cos(b) - ry * Math.sin(b), rwy = rx * Math.sin(b) + ry * Math.cos(b);
@@ -590,14 +693,15 @@ function applyLoop(stt, lp, t, cx, cy, w, h) {
 }
 function transP(tr, v) { return tr && TRANS.includes(tr.type) ? clamp(v / Math.max(0.01, Number(tr.dur) || 0.5), 0, 1) : null; }
 // 位置・大きさ・回転・不透明度で表すもの。返り値: ディップ { amt, color } または null
-function transState(stt, tr, p, key) {
+function transState(stt, tr, p, key, which = "tin") {
   if (p == null || p >= 1) return null;
   const q = easeF(p);
   const t = tr.type;
   const sk = key === "clip" ? ["s"] : key === "text" ? ["size"] : ["w", "h"];
   // ぼかし → 鮮明(出るときは 鮮明 → ぼかし)。ほかの効果にも「ぼかしも重ねる」で足せる
-  if (t === "blur" || tr.blur) stt.blur = (stt.blur || 0) + (1 - q) * BLUR_TRANS;
-  if (t === "fade") stt.opacity *= q;
+  if ((t === "blur" && !pcOn(tr, key)) || tr.blur) stt.blur = (stt.blur || 0) + (1 - q) * BLUR_TRANS;
+  if (pcOn(tr, key)) (stt._pc ||= []).push([tr, p, which]); // 一文字ずつ: 文字を描くときに文字ごとに動かす(charFx)
+  else if (t === "fade") stt.opacity *= q;
   else if (t === "slide_h" || t === "slide_v") (stt._slide ||= []).push([t, q, t === "slide_h" ? !!tr.flipH : !!tr.flipV]);
   else if (t === "zoom" || t === "spin") {
     const f = tr.rev ? 1 + 2 * (1 - q) : Math.max(0.001, q);
@@ -647,7 +751,7 @@ function lookAt(it, type, tl, len) {
   const key = kindKey(type, it);
   const stt = animState(it, AKEYS[key], tl);
   const pin = transP(it.tin, tl), pout = transP(it.tout, len - tl);
-  const dip = transState(stt, it.tin, pin, key) || transState(stt, it.tout, pout, key);
+  const dip = transState(stt, it.tin, pin, key, "tin") || transState(stt, it.tout, pout, key, "tout");
   return { stt, dip, pin, pout };
 }
 function snapshot() { return JSON.stringify(P()); }
@@ -684,6 +788,149 @@ function toggleOv(id) {
   st.msel = next.length > 1 ? next : [];
   st.sel = next.length ? { type: "ov", id: next.at(-1) } : null;
 }
+// 選んでいるもの(複数のレイヤーなら全部)
+function selItems() {
+  if (st.msel.length > 1) return selOvs();
+  const s = findSel();
+  return s ? [s] : [];
+}
+// ロック: 動かす・伸び縮み・分割・変える・消すをできなくする(タイムラインからは選べる。複製はできる)
+function toggleLockSel() {
+  const list = selItems();
+  if (!list.length) return;
+  const on = !list.every((x) => x.locked);
+  change(() => { for (const x of list) x.locked = on || undefined; });
+}
+// ---- グループ(画像編集と同じ操作。押すとまとめて選ぶ)。o.gid: グループ、o.gi: グループの中の順番(タイムラインで上の段から)。
+// P().groups[gid] = { tin: { order, stagger }, tout: { order, stagger } }: 入る・出る動きを、中の順番で少しずつずらす(位置はそれぞれの場所のまま。一文字ずつ動かすのと同じ割り当て)。
+// order が "sync"(同時)なら、全部が一緒に動く
+function groupSelV(on) {
+  const list = selOvs();
+  if (on) {
+    if (list.length < 2) { ctx.notify(T("2 つ以上のレイヤーを選んでください(Shift / Ctrl を押しながら押すと、いくつも選べます)"), "info"); return; }
+    if (list.some((x) => x.locked)) { lockedNotifyV(); return; }
+    const gid = `g${Date.now().toString(36)}`;
+    const ord = [...list].sort((a, b) => rowOf(b) - rowOf(a) || a.start - b.start);
+    change(() => {
+      for (const x of list) if (x.gid && !P().overlays.some((y) => y.gid === x.gid && !list.includes(y))) delete P().groups?.[x.gid];
+      ord.forEach((x, i) => { x.gid = gid; x.gi = i; }); // それぞれの長さはそのまま
+      (P().groups ||= {})[gid] = { tin: { order: "fwd", stagger: 0.7 }, tout: { order: "fwd", stagger: 0.7 } };
+      st.msel = list.map((x) => x.id);
+    });
+    ctx.notify(T("グループにしました(押すとまとめて選びます)"), "info");
+  } else {
+    const gs = new Set(list.map((x) => x.gid).filter(Boolean));
+    if (!gs.size) return;
+    change(() => { for (const x of P().overlays) if (gs.has(x.gid)) { delete x.gid; delete x.gi; } for (const g of gs) delete P().groups?.[g]; });
+    ctx.notify(T("グループを解きました"), "info");
+  }
+}
+// タイムラインのグループの外枠(仲間のバーを囲む線。左右の端を引くと、中全体の長さが同じ割合で変わる)
+function drawGroupFrames() {
+  const tin = $('[data-c="tlin"]');
+  for (const f of tin.querySelectorAll(":scope > .gfr")) f.remove();
+  const R = tin.getBoundingClientRect();
+  for (const [gid, list] of groupMap()) {
+    const rs = list.map((o) => tin.querySelector(`.blk[data-type="ov"][data-id="${o.id}"]`)?.getBoundingClientRect()).filter((r) => r?.width);
+    if (rs.length < 2) continue;
+    const l = Math.min(...rs.map((r) => r.left)) - R.left - 3, t = Math.min(...rs.map((r) => r.top)) - R.top - 3;
+    const w = Math.max(...rs.map((r) => r.right)) - R.left + 3 - l, h = Math.max(...rs.map((r) => r.bottom)) - R.top + 3 - t;
+    const f = document.createElement("div");
+    f.className = "gfr";
+    f.dataset.gid = gid;
+    Object.assign(f.style, { left: `${l}px`, top: `${t}px`, width: `${w}px`, height: `${h}px` });
+    f.innerHTML = `<div class="gfh l" data-gedge="l" title="${esc(T("ドラッグで、グループの中全体の長さを同じ割合で変えます"))}"></div><div class="gfh r" data-gedge="r" title="${esc(T("ドラッグで、グループの中全体の長さを同じ割合で変えます"))}"></div>`;
+    for (const hd of f.querySelectorAll(".gfh")) hd.addEventListener("pointerdown", (e) => startGroupFrameDrag(e, gid, hd.dataset.gedge));
+    tin.appendChild(f);
+  }
+}
+function startGroupFrameDrag(e, gid, side) {
+  e.preventDefault();
+  e.stopPropagation();
+  const mem = P().overlays.filter((x) => x.gid === gid);
+  if (mem.some((x) => x.locked)) { lockedNotifyV(); return; }
+  const S0 = Math.min(...mem.map((x) => x.start)), E0 = Math.max(...mem.map((x) => x.end)), x0 = e.clientX, before = snapshot();
+  const org = new Map(mem.map((x) => [x.id, { s: x.start, e: x.end, sp: spd(x) }]));
+  const move = (ev) => {
+    const dt = Math.round(((ev.clientX - x0) / st.pxs) * 10) / 10; // 0.1 秒ごと
+    const S = side === "l" ? clamp(S0 + dt, 0, E0 - MIN_LEN) : S0, E = side === "r" ? Math.max(S0 + MIN_LEN, E0 + dt) : E0;
+    const k = (E - S) / Math.max(1e-6, E0 - S0);
+    for (const x of mem) {
+      const o = org.get(x.id);
+      x.start = r3(S + (o.s - S0) * k);
+      x.end = r3(Math.max(x.start + MIN_LEN, S + (o.e - S0) * k));
+      if (x.kind === "video") x.speed = r3(o.sp / k); // 動画は速さで長さを合わせる
+    }
+    renderTimeline();
+    renderOverlays();
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    commit(before);
+    refresh();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+// グループの仲間(gid → 順番に並べたレイヤー)
+function groupMap() {
+  const m = new Map();
+  for (const x of P().overlays) if (x.gid) { if (!m.has(x.gid)) m.set(x.gid, []); m.get(x.gid).push(x); }
+  for (const l of m.values()) l.sort((a, b) => (a.gi ?? 0) - (b.gi ?? 0));
+  return m;
+}
+// 押したレイヤーがグループなら、仲間をまとめて選ぶ
+function expandGroupSel(id) {
+  const o = P().overlays.find((x) => x.id === id);
+  if (!o?.gid || (st.msel.length > 1 && st.msel.includes(id))) return;
+  const ids = P().overlays.filter((x) => x.gid === o.gid).map((x) => x.id);
+  if (ids.length > 1) st.msel = ids;
+}
+// グループの中のレイヤーの、実際の始まり・終わり・入る / 出る動き。表示と書き出しで使う。
+// 順番(前から・後ろから・ばらばら): グループ全体(最初の始まり〜最後の終わり)を使い、入る・出る動きを中の順番で少しずつずらす。
+// 個別("sync"): それぞれのタイムラインの始まり・終わり・動きのまま
+function effOv(o, gm) {
+  const list = o.gid ? gm.get(o.gid) : null, n = list?.length || 0;
+  if (n < 2) return o;
+  const k = list.indexOf(o), g = P().groups?.[o.gid] || {}, out = { ...o };
+  const gS = Math.min(...list.map((x) => x.start)), gE = Math.max(...list.map((x) => x.end));
+  for (const which of ["tin", "tout"]) {
+    const tr = o[which], gs = g[which] || { order: "fwd", stagger: 0.7 };
+    if (gs.order === "sync") continue;
+    if (which === "tin") out.start = gS; else out.end = gE;
+    if (!tr?.type) continue;
+    const s = clamp(Number(gs.stagger ?? 0.7), 0, 0.95);
+    let kk = gs.order === "rev" ? n - 1 - k : gs.order === "rand" ? randRank(n)[k] : k;
+    if (which === "tout") kk = n - 1 - kk; // 出るときも、先のものから先に動く
+    const D = Number(tr.dur) || 0.5, off = (D * s * kk) / (n - 1);
+    out[which] = { ...tr, dur: r3(Math.max(0.05, D * (1 - s))) };
+    if (which === "tin") out.start = r3(gS + off); else out.end = r3(gE - off);
+  }
+  if (out.end - out.start < MIN_LEN) out.end = r3(out.start + MIN_LEN);
+  return out;
+}
+// グループの順番(個別 = それぞれのタイムラインのまま)
+const GROUP_ORDER_OPTS = [["fwd", "順番(前から)"], ["rev", "順番(後ろから)"], ["rand", "順番(ばらばら)"], ["sync", "個別"]];
+// グループの動きの欄
+function grpSec(s) {
+  const g = P().groups?.[s.gid] || {};
+  const row = (which, title) => {
+    const x = g[which] || { order: "fwd", stagger: 0.7 }, ord = ["rev", "rand", "sync"].includes(x.order) ? x.order : "fwd";
+    return `<label class="fl">${esc(T(title))}<select data-k="grp.${which}.order">${GROUP_ORDER_OPTS.map(([v, l]) => `<option value="${v}" ${ord === v ? "selected" : ""}>${esc(T(l))}</option>`).join("")}</select></label>`
+      + (ord === "sync" ? "" : num(`grp.${which}.stagger`, "ずらす(%)", r3((x.stagger ?? 0.7) * 100), 0, 95, 5, `title="${esc(T("動きの長さのうち、順番にずらすのに使う割合。大きいほど 1 つずつ順に動きます"))}"`));
+  };
+  return sec("grp", T("グループの動き"), row("tin", "入るときの順番") + row("tout", "出るときの順番")
+    + `<div class="note">${esc(T("順番のときは、グループ全体(最初の始まりから最後の終わりまで)を使い、入る・出る動きを中の順番で少しずつずらします(位置はそれぞれの場所のまま)。「個別」は、それぞれのタイムラインの始まり・終わりで動きます。タイムラインのバーの端を引くとそのレイヤーだけ、グループの外枠の端を引くと中全体の長さが変わります。入る・出る動きを変えると、グループの全部のレイヤーが同じ動きになります。"))}</div>`, st.secOpen.grp ?? true);
+}
+// 非表示: プレビューと書き出しに出さない(タイムラインには残る)。レイヤーだけ
+function toggleHideSel() {
+  const list = selOvs();
+  if (!list.length) return;
+  const on = !list.every((x) => x.hidden);
+  change(() => { for (const x of list) x.hidden = on || undefined; });
+}
+function lockedNotifyV() { ctx.notify(T("ロック中です(ロック解除すると、動かす・変える・消すができます)"), "error"); }
 function findSel() {
   if (!st.sel) return null;
   if (st.sel.type === "au") return (P().audios || []).find((a) => a.id === st.sel.id);
@@ -846,6 +1093,7 @@ function splitSel() {
     s = at.c; type = "clip";
   }
   if (type === "au" && s.link != null) { s = P().clips.find((c) => c.id === s.link); type = "clip"; if (!s) return; }
+  if (s.locked) { lockedNotifyV(); return; }
   const s0 = type === "clip" ? starts()[P().clips.indexOf(s)] : type === "au" ? s.start : s.start;
   const len = type === "clip" ? lenOf(s) : type === "au" ? audioLen(s) : s.end - s.start;
   if (len < MIN_LEN * 2) { ctx.notify("短すぎて分けられません", "error"); return; }
@@ -885,6 +1133,7 @@ function splitSel() {
 // キーフレームを後ろの部分に合わせてずらす(分けた後ろの部分の始まりが 0 秒)
 function shiftKf(kf, dt) { return kf?.length ? kf.map((k) => ({ ...k, t: r3(k.t - dt) })) : kf; }
 function deleteSel() {
+  if (selItems().some((x) => x.locked)) { lockedNotifyV(); return; }
   if (st.msel.length > 1) {
     const ids = new Set(selOvIds());
     change(() => {
@@ -921,7 +1170,7 @@ function duplicateSel() {
   let seekTo = null;
   change(() => {
     if (type === "clip") {
-      const c2 = JSON.parse(JSON.stringify({ ...s, id: uid++ }));
+      const c2 = JSON.parse(JSON.stringify({ ...s, id: uid++, locked: undefined }));
       const i = P().clips.indexOf(s);
       P().clips.splice(i + 1, 0, c2);
       for (const a of P().audios.filter((x) => x.link === s.id)) P().audios.push({ ...a, id: uid++, link: c2.id });
@@ -929,13 +1178,13 @@ function duplicateSel() {
       seekTo = starts()[i + 1];
     } else if (type === "au") {
       const v = audioView(s), len = audioLen(s);
-      const a2 = { ...s, id: uid++, link: null, start: r3(v.start + len), in: v.in, out: v.out, speed: v.speed };
+      const a2 = { ...s, id: uid++, locked: undefined, link: null, start: r3(v.start + len), in: v.in, out: v.out, speed: v.speed };
       P().audios.splice(P().audios.indexOf(s) + 1, 0, a2);
       st.sel = { type: "au", id: a2.id };
       seekTo = a2.start;
     } else {
       const len = s.end - s.start;
-      const o2 = JSON.parse(JSON.stringify({ ...s, id: uid++, start: r3(s.end), end: r3(s.end + len) }));
+      const o2 = JSON.parse(JSON.stringify({ ...s, id: uid++, locked: undefined, start: r3(s.end), end: r3(s.end + len) }));
       P().overlays.splice(P().overlays.indexOf(s) + 1, 0, o2);
       for (const a of P().audios.filter((x) => x.link === s.id)) P().audios.push({ ...a, id: uid++, link: o2.id });
       st.sel = { type: "ov", id: o2.id };
@@ -983,8 +1232,10 @@ function pasteClip() {
       const rs = (c.items || []).map((it) => rowOf(it.ov));
       const lo = Math.min(...rs), hi = Math.max(...rs), gap = hi - lo + 1;
       for (const x of P().overlays) if (rowOf(x) > hi) x.row = rowOf(x) + gap;
+      const gmap = new Map(); // グループは、新しいグループにする(元のグループの動きを写す)
       for (const it of c.items || []) {
         const o = { ...deep(it.ov), id: uid++ };
+        if (o.gid) { if (!gmap.has(o.gid)) { const ng = `g${Date.now().toString(36)}${gmap.size}`; gmap.set(o.gid, ng); (P().groups ||= {})[ng] = deep(P().groups?.[o.gid] || { tin: { order: "fwd", stagger: 0.7 }, tout: { order: "fwd", stagger: 0.7 } }); } o.gid = gmap.get(o.gid); }
         o.row = rowOf(it.ov) + gap;
         P().overlays.push(o);
         for (const a of it.audios || []) P().audios.push({ ...deep(a), id: uid++, link: o.id });
@@ -1017,6 +1268,7 @@ function pasteClip() {
     } else {
       // レイヤー: この画面でコピーしたレイヤーは、元のレイヤーの一段上に、同じ始まりで(上の段は 1 つずつ上へ)。画像編集の文字は、再生位置からいちばん上の段に 3 秒
       const o = c.ov ? { ...deep(c.ov), id: uid++ } : { id: uid++, kind: "text", ...c.text, start: 0, end: 3 };
+      delete o.gid; delete o.gi; // 1 つだけ貼るときは、グループに入れない
       const len = Math.max(MIN_LEN, (o.end ?? 3) - (o.start ?? 0));
       if (c.ov && Number.isInteger(c.ov.row)) {
         const r0 = c.ov.row;
@@ -1090,6 +1342,7 @@ function placeMain(at = P().clips.length ? clipAt(st.t) : null) {
   const r = layoutFrame();
   const frame = $('[data-c="frame"]');
   frame.dataset.bg = P().bg || "black";
+  { const v = viewBg(); frame.style.background = (P().bg || "black") === "transparent" && v.mode !== "checker" ? (v.mode === "white" ? "#fff" : v.mode === "black" ? "#000" : v.color) : ""; } // 透明の表示
   const win = $('[data-c="win"]'), v = vmain();
   const co = st.cropMode && st.sel?.type === "ov" ? findSel() : null;
   if (co?.kind === "video") { cropModeObj(co, r, win, v); return; }
@@ -1141,10 +1394,13 @@ function placeMain(at = P().clips.length ? clipAt(st.t) : null) {
     Object.assign(wb.style, { display: "block", left: win.style.left, top: win.style.top, width: win.style.width, height: win.style.height, transform: tf });
   } else wb.style.display = "none";
   // 背景を透明にする(色で抜く)は、プレビューでもコマごとに抜く。AI は書き出しのときだけ
-  const chroma = c.key?.mode === "chroma";
-  v.style.opacity = chroma ? 0 : 1;
-  kc.style.display = chroma ? "" : "none";
-  if (chroma) drawKeyed(kc, v, cr, c.key, w, h);
+  const cadj = adjAt(c, tl); // 色・明るさの補正(キーフレームがあればその時刻の値)
+  const casel = c.adjOff ? null : c.asel; // 範囲を選ぶ
+  const chroma = c.key?.mode === "chroma", adj = adjActive(cadj, casel), viaK = chroma || adj;
+  v.style.opacity = viaK ? 0 : 1;
+  kc.style.display = viaK ? "" : "none";
+  if (chroma) drawKeyed(kc, v, cr, c.key, w, h); else if (adj) drawPlain(kc, v, cr, w, h);
+  if (adj) adjustCanvas(kc, cadj, casel); // 色・明るさの補正(コマごとに)
   $('[data-c="aibadge"]').hidden = !(c.key?.mode === "ai" || P().overlays.some((o) => o.key?.mode === "ai" && st.t >= o.start && st.t < o.end));
 }
 // レイヤーの動画の切り取りの指定: 元の画面全体を出して、切り取る範囲の枠を重ねる
@@ -1415,7 +1671,7 @@ function clipBases() {
   let last = null;
   if (st.cropMode) return { bases, hide };
   for (const o of orderedOverlays()) {
-    if (!(st.t >= o.start && st.t < o.end)) continue;
+    if (!(st.t >= o.start && st.t < o.end) || o.hidden) continue;
     if ((o.clip === "in" || o.clip === "out") && (o.kind === "image" || o.kind === "video" || o.kind === "shape")) {
       if (last) { bases.set(o.id, last); if (o.clipHide || o.clip === "out") hide.add(last.id); } // 除外するときは、抜く形に使うレイヤーは見せない
       continue;
@@ -1467,6 +1723,17 @@ function drawOutline(olc, kc, ol, w, h, fh, ef) {
   olc._on = true;
   olc._px = res.pad / kx; olc._py = res.pad / ky;
   olc._dw = w + 2 * olc._px; olc._dh = h + 2 * olc._py;
+}
+// ふち取り(内側): kc(レイヤーの絵)の不透明な所のふちから内側の縁を ilc に描く(レイヤーと同じ大きさ、絵の上に置く)
+function drawInner(ilc, kc, ol, w, h, fh) {
+  const kx = kc.width / Math.max(1e-6, w), ky = kc.height / Math.max(1e-6, h), k = (kx + ky) / 2;
+  const cv = innerOutlineCanvas(kc, clamp(Number(ol.iw) || 0, 0, 0.2) * fh * k, clamp(Number(ol.ib ?? 0), 0, 0.1) * fh * k, ol.ic || "#ffffff", clamp(Number(ol.ia ?? 1), 0, 1));
+  if (!cv) { ilc._on = false; return; }
+  if (ilc.width !== cv.width || ilc.height !== cv.height) { ilc.width = cv.width; ilc.height = cv.height; }
+  const g = ilc.getContext("2d");
+  g.clearRect(0, 0, ilc.width, ilc.height);
+  g.drawImage(cv, 0, 0);
+  ilc._on = true;
 }
 // ---------------------------------------------------------------- 図形のレイヤー(マスクに使う)とパス
 // o.kind = "shape": shape(形。"path" はパス)・fill(塗りの色)・fillA(塗りの不透明度)・radius・points・タイル / 水玉の並べ方・
@@ -1568,6 +1835,8 @@ function pathPanelHtml() {
     <label class="fl">${esc(T("境目のぼかし(%)"))}<input type="number" data-pb="feather" min="0" max="50" step="1" value="${o.feather}"></label>
     <div class="row" style="margin-top:6px"><button data-pa="in" ${media ? "" : "disabled"} title="${esc(T("パスの内側を、選んでいた画像・動画のレイヤーから消します(パスの形の図形マスク)"))}">✂ ${esc(T("内側を削除"))}</button>
       <button data-pa="out" ${media ? "" : "disabled"} title="${esc(T("パスの外側を、選んでいた画像・動画のレイヤーから消します(パスの形の図形マスク)"))}">✂ ${esc(T("外側を削除"))}</button></div>
+    <div class="row" style="margin-top:4px"><button data-pa="selin" ${media ? "" : "disabled"} title="${esc(T("パスの内側を、選んでいた画像・動画のレイヤーの「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)"))}">${esc(T("内側を選ぶ"))}</button>
+      <button data-pa="selout" ${media ? "" : "disabled"} title="${esc(T("パスの外側を、選んでいた画像・動画のレイヤーの「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)"))}">${esc(T("外側を選ぶ"))}</button></div>
     <div class="row" style="margin-top:4px"><button data-pa="fill" title="${esc(T("パスの内側を塗りつぶした図形のレイヤーにします"))}">■ ${esc(T("塗りつぶし"))}</button>
       <button data-pa="line" title="${esc(T("パスに沿った線の図形のレイヤーにします"))}">〰 ${esc(T("線を描画"))}</button></div>
     <div class="row" style="margin-top:4px"><button data-pa="back" title="Backspace">${esc(T("最後の点を削除"))}</button><button data-pa="clear" title="Esc">${esc(T("パスをクリア"))}</button>
@@ -1602,14 +1871,14 @@ function renderPathCv() {
   if (S.length > 1) {
     tracePath(g, S, pd.closed);
     g.strokeStyle = "rgba(0,0,0,0.8)"; g.lineWidth = 3 * dpr; g.stroke();
-    g.strokeStyle = "#ffd24d"; g.lineWidth = 1.5 * dpr; g.setLineDash([6 * dpr, 4 * dpr]); g.stroke(); g.setLineDash([]);
+    g.strokeStyle = ovc("path", "#ffd24d"); g.lineWidth = 1.5 * dpr; g.setLineDash([6 * dpr, 4 * dpr]); g.stroke(); g.setLineDash([]);
   }
   for (const q of S) {
     for (const sd of ["hi", "ho"]) {
       if (!q[sd]) continue;
       const hx = q.x + q[sd][0], hy = q.y + q[sd][1];
-      g.beginPath(); g.moveTo(q.x, q.y); g.lineTo(hx, hy); g.strokeStyle = "#7bd3ff"; g.lineWidth = dpr; g.stroke();
-      g.beginPath(); g.arc(hx, hy, 4 * dpr, 0, Math.PI * 2); g.fillStyle = "#7bd3ff"; g.fill();
+      g.beginPath(); g.moveTo(q.x, q.y); g.lineTo(hx, hy); g.strokeStyle = ovc("pathhandle", "#7bd3ff"); g.lineWidth = dpr; g.stroke();
+      g.beginPath(); g.arc(hx, hy, 4 * dpr, 0, Math.PI * 2); g.fillStyle = ovc("pathhandle", "#7bd3ff"); g.fill();
     }
   }
   S.forEach((q, i) => {
@@ -1704,6 +1973,19 @@ async function finishPathDraw(how = "fill") {
   const need = how === "line" ? 2 : 3;
   if (pd.pts.length < need) { ctx.notify(T(need === 3 ? "点を 3 つ以上置いてください" : "点を 2 つ以上置いてください"), "error"); return; }
   const [W, H] = P().size, o = st.popt, tg = pathTarget();
+  if (how === "selin" || how === "selout") {
+    // パスの内側 / 外側を「範囲を選ぶ」に(レイヤーの枠の中の割合。曲線は折れ線に)
+    if (!tg || (tg.kind !== "image" && tg.kind !== "video")) return;
+    const a = curAnim(tg, "ov");
+    const path = flattenPath(pathToBox(pd.pts, a.x * W, a.y * H, Math.max(1, a.w * W), Math.max(1, a.h * H), a.rot || 0)
+      .map((q) => ({ x: q[0], y: q[1], hi: q[2] != null ? [q[2], q[3]] : null, ho: q[4] != null ? [q[4], q[5]] : null })));
+    change(() => { tg.asel = { ...(tg.asel || {}), on: true, path, pmode: how === "selin" ? "in" : "out" }; });
+    pathActV();
+    refresh();
+    renderInspector();
+    ctx.notify(T(how === "selin" ? "パスの内側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)" : "パスの外側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)"), "info");
+    return;
+  }
   if (how === "in" || how === "out") {
     if (!tg || (tg.kind !== "image" && tg.kind !== "video")) return;
     const a = curAnim(tg, "ov");
@@ -1759,8 +2041,9 @@ function renderOverlays() {
   const r = frameRect();
   const alive = new Set();
   let idx = 0;
-  const clips = clipBases();
-  for (const o of orderedOverlays()) {
+  const clips = clipBases(), gm = groupMap();
+  for (const o0 of orderedOverlays()) {
+    const o = effOv(o0, gm); // グループの中は、順番にずらした始まり・終わり・動き
     alive.add(o.id);
     let el = st.ovEls.get(o.id);
     if (!el || el.dataset.kind !== o.kind) {
@@ -1768,19 +2051,21 @@ function renderOverlays() {
       el = document.createElement("div");
       el.dataset.kind = o.kind;
       el.dataset.id = o.id;
-      if (o.kind === "image") el.innerHTML = `<canvas class="olc"></canvas><canvas class="eb"></canvas><img alt=""><canvas class="kc"></canvas>`;
-      if (o.kind === "video") el.innerHTML = `<canvas class="olc"></canvas><canvas class="eb"></canvas><div class="vcr"><video muted playsinline preload="auto"></video></div><canvas class="kc"></canvas>`;
-      if (o.kind === "shape") el.innerHTML = `<canvas class="olc"></canvas><canvas class="eb"></canvas><canvas class="shp"></canvas><canvas class="kc"></canvas>`;
+      if (o.kind === "image") el.innerHTML = `<canvas class="olc"></canvas><canvas class="eb"></canvas><img alt=""><canvas class="kc"></canvas><canvas class="ilc"></canvas>`;
+      if (o.kind === "video") el.innerHTML = `<canvas class="olc"></canvas><canvas class="eb"></canvas><div class="vcr"><video muted playsinline preload="auto"></video></div><canvas class="kc"></canvas><canvas class="ilc"></canvas>`;
+      if (o.kind === "shape") el.innerHTML = `<canvas class="olc"></canvas><canvas class="eb"></canvas><canvas class="shp"></canvas><canvas class="kc"></canvas><canvas class="ilc"></canvas>`;
       if (o.kind === "mosaic") el.innerHTML = `<div class="mzb"></div><canvas class="mz"></canvas>`;
-      if (o.kind === "text") el.innerHTML = `<div class="tbg"></div><span class="tstk" aria-hidden="true"></span><span class="tfil"></span>`;
+      if (o.kind === "text") el.innerHTML = `<div class="tbg"></div><span class="tstk" aria-hidden="true"></span><span class="tfil"></span><canvas class="tcv"></canvas>`;
       el.addEventListener("pointerdown", (e) => { if (ovEdit?.id === o.id && ovEdit.fil.contains(e.target)) return; startOvDrag(e, o.id, e.target.dataset?.h || "move"); }); // 編集中の文字の上は、カーソルを置く(動かさない)
+      el.innerHTML = `<div class="ovc">${el.innerHTML}</div>`; // 中身(見える範囲はここにだけ掛ける。選んだときの枠・ハンドルは外に出す)
       if (o.kind === "text") el.addEventListener("dblclick", (e) => { if (!e.target.dataset?.h) beginOvTextEdit(o.id); }); // ダブルクリックで文字を編集
       st.ovEls.set(o.id, el);
     }
-    const on = st.t >= o.start && st.t < o.end && !st.cropMode;
+    const on = st.t >= o.start && st.t < o.end && !st.cropMode && !o.hidden;
     el.style.display = on ? "" : "none";
     const sel = (st.sel?.type === "ov" && st.sel.id === o.id) || st.msel.includes(o.id);
-    el.className = `ov ${o.kind === "text" ? "txt" : ""} ${sel ? "sel" : ""} ${clips.hide.has(o.id) ? "chide" : ""}`;
+    el.className = `ov ${o.kind === "text" ? "txt" : ""} ${sel ? "sel" : ""} ${clips.hide.has(o.id) ? "chide" : ""} ${o.locked ? "locked" : ""}`;
+    { const bm = blendOf(o); el.style.mixBlendMode = bm === "lighter" ? "plus-lighter" : bm; } // 合成(乗算など)
     const tl = clamp(st.t - o.start, 0, o.end - o.start);
     const { stt, dip, pin, pout } = lookAt(o, "ov", tl, o.end - o.start);
     if (o.kind === "text") {
@@ -1804,7 +2089,8 @@ function renderOverlays() {
       const sb = Math.max(0, Number(o.strokeBlur || 0)) * px;
       const shadow = Math.abs((o.strokeDx || 0) * px) > 0.5 || Math.abs((o.strokeDy || 0) * px) > 0.5 || sb > 0.3;
       stk.style.display = sw > 0 || shadow ? "" : "none";
-      fil.style.color = o.color;
+      const fa = clamp(Number(o.colorA ?? 1), 0, 1);
+      fil.style.color = fa < 0.999 ? hexA(o.color, fa) : o.color;
       el.style.setProperty("--sc", o.stroke || "#000");
       el.style.setProperty("--sw", `${sw * 2}px`);
       el.style.setProperty("--sdx", `${(o.strokeDx || 0) * px}px`);
@@ -1819,7 +2105,7 @@ function renderOverlays() {
       let [cx, cy] = slidePos(stt, stt.x * r.fw, stt.y * r.fh, bw, bh, r.fw, r.fh);
       let w, h;
       [cx, cy, w, h] = applyMotion(stt, cx, cy, bw, bh, r.fw, r.fh);
-      [cx, cy, w, h] = applyLoop(stt, o.loop, tl, cx, cy, w, h);
+      if (!pcLoop(o)) [cx, cy, w, h] = applyLoop(stt, o.loop, tl, cx, cy, w, h); // 一文字ずつのループは文字ごとに(drawTextCanvas)
       const ks = w / Math.max(1e-6, bw);
       // ぼかし(トランジション・ループ)とディップは中身にだけ(バウンディングボックスはぼかさない)。縁の層は縁のぼかしも
       const fx = fxFilter(stt, dip, r.fh);
@@ -1829,8 +2115,12 @@ function renderOverlays() {
       Object.assign(el.style, {
         left: `${cx}px`, top: `${cy}px`, width: "", height: "", opacity: clamp(stt.opacity, 0, 1),
         transform: `translate(-50%,-50%)${Math.abs(stt.rot) > 0.01 ? ` rotate(${stt.rot}deg)` : ""}${Math.abs(ks - 1) > 1e-4 ? ` scale(${ks})` : ""}`,
-        clipPath: clipPathOf(o.tin, pin, bw, bh) || clipPathOf(o.tout, pout, bw, bh) || "", filter: "",
+        clipPath: (pcOn(o.tin, "text") ? "" : clipPathOf(o.tin, pin, bw, bh)) || (pcOn(o.tout, "text") ? "" : clipPathOf(o.tout, pout, bw, bh)) || "", filter: "",
       });
+      // 縁を離す・文字の前に描く・一文字ずつ動かすときは、文字と縁を canvas に描く(画面の文字は透明にして、大きさ・編集に使う)
+      const cvm = on && ovEdit?.id !== o.id && ((sw > 0 && ((Number(o.strokeGap) || 0) !== 0 || !!o.strokeFront)) || ((sw > 0 || shadow) && fa < 0.999) || !!stt._pc?.length || pcLoop(o));
+      el.classList.toggle("cvm", cvm);
+      if (cvm) drawTextCanvas(el.querySelector(".tcv"), o, fil, lines, px, bw, bh, ks, stt, fx, tl);
     } else if (o.kind === "mosaic") {
       const w0 = stt.w * r.fw, h0 = stt.h * r.fh;
       let [cx, cy] = slidePos(stt, stt.x * r.fw, stt.y * r.fh, w0, h0, r.fw, r.fh);
@@ -1888,26 +2178,36 @@ function renderOverlays() {
       const shp = SHAPE_KEYS.has(o.mask?.shape) || (o.mask?.shape === "path" && o.mask.pts?.length > 2) ? o.mask : null; // 図形マスク(時刻で動くので、毎回描き直す)
       const clipB = clips.bases.get(o.id) || null; // 下のレイヤーで切り抜く
       const ol = o.ol?.on && Math.max(...Object.values(outlineSides({ w: 0.01, ...o.ol }))) > 0 ? o.ol : null; // ふち取り
-      const viaKc = chroma || !!shp || !!clipB || !!ol || o.kind === "shape";
+      const oli = o.ol?.on && Number(o.ol.iw) > 0 ? o.ol : null; // ふち取り(内側)
+      const ilc = el.querySelector(".ilc");
+      const oadj = o.kind === "image" || o.kind === "video" ? adjAt(o, tl) : null; // 色・明るさの補正(キーフレームがあればその時刻の値)
+      const osel = (o.kind === "image" || o.kind === "video") && !o.adjOff ? o.asel : null; // 範囲を選ぶ
+      const adj = adjActive(oadj, osel);
+      const viaKc = chroma || !!shp || !!clipB || !!ol || !!oli || adj || o.kind === "shape";
       m.style.opacity = viaKc ? 0 : 1;
       kc.style.display = viaKc ? "" : "none";
       if (viaKc && on) {
         const nw = o.kind === "image" ? m.naturalWidth : o.kind === "shape" ? m.width : m.videoWidth, nh = o.kind === "image" ? m.naturalHeight : o.kind === "shape" ? m.height : m.videoHeight;
         const eg0 = edgeOf(o), ef0 = eg0?.mode === "feather" ? clamp(Number(eg0.size ?? 0.15), 0, 0.5) * Math.min(w, h) : 0;
-        const sig = `${JSON.stringify(o.key)}|${url}|${Math.round(w)}x${Math.round(h)}${ol ? `|${JSON.stringify(ol)}|${Math.round(r.fh)}|${Math.round(ef0)}` : ""}`;
+        const sig = `${JSON.stringify(o.key)}|${url}|${Math.round(w)}x${Math.round(h)}${ol || oli ? `|${JSON.stringify(o.ol)}|${Math.round(r.fh)}|${Math.round(ef0)}` : ""}|${adj ? adjSig(oadj) + selSig(osel) : ""}`;
         if (nw && (o.kind === "video" || shp || clipB || kc._sig !== sig)) {
           const src = o.kind === "video" && o.crop ? o.crop : [0, 0, nw, nh];
           if (chroma) drawKeyed(kc, m, src, o.key, w, h); else drawPlain(kc, m, src, w, h);
+          if (adj) adjustCanvas(kc, oadj, osel);
           if (shp) applyShapeMask(kc, shp, tl);
           // ふち取り(書き出しと同じく、下のレイヤーで切り抜く前の形のまわりに作り、縁も一緒に抜く)
           if (ol) drawOutline(olc, kc, ol, w, h, r.fh, ef0); else olc._on = false;
+          if (oli) drawInner(ilc, kc, oli, w, h, r.fh); else ilc._on = false;
           if (clipB) {
             applyClipKc(kc, o.clip, cx, cy, w, h, stt.rot, clipB);
             if (olc._on) applyClipKc(olc, o.clip, cx, cy, olc._dw, olc._dh, stt.rot, clipB);
+            if (ilc._on) applyClipKc(ilc, o.clip, cx, cy, w, h, stt.rot, clipB);
           }
           kc._sig = shp || clipB ? "" : sig;
         }
       }
+      ilc.style.display = oli && ilc._on && on && viaKc ? "block" : "none";
+      ilc.style.filter = fx;
       if (ol && olc._on && on) Object.assign(olc.style, { display: "block", left: `${-olc._px}px`, top: `${-olc._py}px`, width: `${w + 2 * olc._px}px`, height: `${h + 2 * olc._py}px` });
       else olc.style.display = "none";
       // ふちのぼかし
@@ -1922,6 +2222,7 @@ function renderOverlays() {
         eb.style.display = "";
       } else eb.style.display = "none";
     }
+    visMask(el, o, stt, pin, pout, r); // 見える範囲(トランジション中)
     // ※重ねる動画は辺のつかみを一時的に出さない(辺を引くと枠だけ伸びるため)。
     // 選んでいるときはバウンディングボックス(角: 大きさ・辺: 文字は折り返す幅 / 画像・動画は幅と高さ・下の丸: 回転)
     if (sel) { if (!el.querySelector(".bb")) el.insertAdjacentHTML("beforeend", bboxHtml(o.kind === "text" ? "ew" : o.kind === "video" ? "" : "all")); }
@@ -1932,8 +2233,132 @@ function renderOverlays() {
   }
   for (const [id, el] of st.ovEls) if (!alive.has(id)) { el.remove(); st.ovEls.delete(id); }
 }
+// 文字を 1 文字ずつの画像のレイヤーにする(縁・影などの見た目ごと。書き出す大きさで描く)。
+// 一文字ずつの入る・出る動きは、文字ごとの動く時間(charFx と同じ割り当て)に合わせて、画像ごとに始まり・終わり・長さをずらす。元の文字は非表示にする
+async function textToCharImages(o) {
+  if (!o || o.kind !== "text") return;
+  if (o.locked) { lockedNotifyV(); return; }
+  const fil = st.ovEls.get(o.id)?.querySelector(".tfil");
+  if (!fil) return;
+  const [W, H] = P().size, a = curAnim(o, "ov");
+  const px = Math.max(6, Math.round((a.size ?? o.size ?? 0.08) * H));
+  const cs = getComputedStyle(fil), font = `${cs.fontStyle} ${cs.fontWeight} ${px}px ${cs.fontFamily}`;
+  const t = { ...o, text: textLinesOf({ ...o, size: a.size ?? o.size }, fil, { fw: W, fh: H }).join("\n"), wrap: 0 };
+  const L = textLayout(measureCv, t, px, font, 0), lineH = px * 1.2;
+  const items = textItems(measureCv, t, L, { fx: () => ({}), lineH });
+  const n = items.length;
+  if (!n) return;
+  const M = Math.ceil(px * 0.5), cw = Math.ceil(L.w) + 2 * M, chh = Math.ceil(L.h) + 2 * M;
+  ctx.notify(T("1 文字ずつ画像にしています…"), "info");
+  const made = [];
+  for (let k = 0; k < n; k++) {
+    const c = document.createElement("canvas");
+    c.width = cw; c.height = chh;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.translate(cw / 2, chh / 2);
+    drawTextAt(g, t, L, font, { noBg: true, lineH, margin: M, fx: (i) => ({ op: i === k ? 1 : 0 }) });
+    // 描いた所だけを切り出す
+    const d = g.getImageData(0, 0, cw, chh).data;
+    let x0 = cw, y0 = chh, x1 = -1, y1 = -1;
+    for (let y = 0; y < chh; y++) for (let x = 0; x < cw; x++) if (d[(y * cw + x) * 4 + 3] > 2) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) continue;
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1, out = document.createElement("canvas");
+    out.width = bw; out.height = bh;
+    out.getContext("2d").drawImage(c, x0, y0, bw, bh, 0, 0, bw, bh);
+    const blob = await new Promise((r) => out.toBlob(r, "image/png"));
+    let value;
+    try { value = await ctx.upload(new File([blob], `${(o.name || "text").replace(/[\\/:*?"<>|]/g, "_")}_${k + 1}.png`, { type: "image/png" })); } catch (e) { ctx.notify(`${T("画像を保存できませんでした")}: ${e.message || e}`, "error"); return; }
+    // 文字の真ん中からのずれを、文字の回転に合わせて回す
+    const r = ((a.rot || 0) * Math.PI) / 180, dx = x0 + bw / 2 - cw / 2, dy = y0 + bh / 2 - chh / 2;
+    made.push({ k, value, bw, bh, x: (a.x * W + dx * Math.cos(r) - dy * Math.sin(r)) / W, y: (a.y * H + dx * Math.sin(r) + dy * Math.cos(r)) / H });
+  }
+  // 一文字ずつの動きは、グループの動き(順番・ずらす)にする。画像それぞれは文字全体と同じ時間・動き(書き出しのときに順番にずらす)
+  const plain = (tr) => { const x = deep(tr); for (const key of ["perChar", "order", "stagger"]) delete x[key]; return x; };
+  const gid = `g${Date.now().toString(36)}`, gset = {};
+  change(() => {
+    const r0 = rowOf(o);
+    for (const x of P().overlays) if (rowOf(x) > r0) x.row = rowOf(x) + made.length;
+    for (const which of ["tin", "tout"]) {
+      const tr = o[which];
+      gset[which] = tr?.type === "typing" ? { order: "fwd", stagger: 0.95 } : pcOn(tr, "text") ? { order: ["rev", "rand", "sync"].includes(tr.order) ? tr.order : "fwd", stagger: tr.order === "sync" ? 0 : clamp(Number(tr.stagger ?? 0.7), 0, 0.95) } : { order: "sync", stagger: 0.7 };
+    }
+    made.forEach((m, j) => {
+      const im = { id: uid++, kind: "image", src: m.value, name: nameOf(m.value), start: o.start, end: o.end, opacity: o.opacity ?? 1, row: r0 + made.length - j, gid, gi: j,
+        x: r3(m.x), y: r3(m.y), w: r3(m.bw / W), h: r3(m.bh / H), aspect: m.bw / m.bh, rot: a.rot || 0, ...(o.blend ? { blend: o.blend } : {}) };
+      for (const which of ["tin", "tout"]) {
+        const tr = o[which];
+        if (!tr?.type) continue;
+        im[which] = tr.type === "typing" ? { type: "fade", dur: tr.dur ?? 0.5 } : plain(tr); // カタカタ: 1 文字ずつ現れる
+      }
+      if (o.loop?.type && !o.loop.perChar) im.loop = deep(o.loop);
+      P().overlays.push(im);
+    });
+    (P().groups ||= {})[gid] = gset;
+    o.hidden = true;
+    normRows();
+    st.sel = null; st.msel = made.length ? [] : st.msel;
+  });
+  await loadMedia?.();
+  refresh();
+  renderInspector();
+  ctx.notify(T("{0} 文字を画像にしました(元の文字は非表示にしました。元に戻すで取り消せます)", made.length), "info");
+}
+// 見える範囲(レイヤーのトランジション中): 止まる位置の枠を、上下左右それぞれ 枠の大きさ × visT / visB / visL / visR だけ広げた(マイナスは狭めた)範囲の中だけ見せる。
+// ぼかし: 範囲のふちから内側へ、枠の短い辺 × visF の幅でだんだん透明に。返り値 [x0, y0, x1, y1, ぼかす幅](書き出し vis_rect と同じ)
+function visRect(cx, cy, w, h, tr) {
+  const v = (k) => clamp(Number(tr[k] ?? 0.5), -0.5, 5);
+  const x0 = cx - w / 2 - v("visL") * w, y0 = cy - h / 2 - v("visT") * h, x1 = Math.max(x0, cx + w / 2 + v("visR") * w), y1 = Math.max(y0, cy + h / 2 + v("visB") * h);
+  return [x0, y0, x1, y1, Math.min(clamp(Number(tr.visF ?? 0), 0, 1) * Math.min(w, h), (x1 - x0) / 2, (y1 - y0) / 2)];
+}
+function visMask(el, o, stt, pin, pout, r) {
+  const tr = pin != null && pin < 1 && o.tin?.vis ? o.tin : pout != null && pout < 1 && o.tout?.vis ? o.tout : null;
+  const box = el.querySelector(".ovc") || el, S = box.style; // 中身だけに掛ける(選んだときの枠・ハンドルは消さない)
+  if (!tr) { if (el._vis) { for (const k of ["mask-image", "mask-size", "mask-position", "mask-repeat", "mask-clip", "clip-path"]) S.removeProperty(k); el._vis = false; } return; }
+  const bw = o.kind === "text" ? el.offsetWidth : stt.w * r.fw, bh = o.kind === "text" ? el.offsetHeight : stt.h * r.fh;
+  const [x0, y0, x1, y1, f] = visRect(stt.x * r.fw, stt.y * r.fh, bw, bh, tr);
+  // 枠(el)の中の座標 → 画面の座標(位置・回転・大きさ)。その逆で、範囲を枠の中の座標にする
+  const cs = getComputedStyle(el), [ox, oy] = cs.transformOrigin.split(" ").map(parseFloat);
+  const I = new DOMMatrix().translate(el.offsetLeft + ox, el.offsetTop + oy).multiply(new DOMMatrix(cs.transform === "none" ? undefined : cs.transform)).translate(-ox, -oy).inverse();
+  const pts = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([x, y]) => I.transformPoint({ x, y }));
+  const lx = Math.floor(Math.min(...pts.map((p) => p.x))) - 1, ly = Math.floor(Math.min(...pts.map((p) => p.y))) - 1;
+  const lw = Math.ceil(Math.max(...pts.map((p) => p.x))) + 1 - lx, lh = Math.ceil(Math.max(...pts.map((p) => p.y))) + 1 - ly;
+  const n = (v) => +v.toFixed(3), w = x1 - x0, h = y1 - y0, bx = box === el ? 0 : box.offsetLeft, by = box === el ? 0 : box.offsetTop;
+  // 範囲の外は切り抜いて隠す(はみ出した中身も)。ぼかしはその内側にマスクで
+  S.setProperty("clip-path", `polygon(${pts.map((q) => `${n(q.x - bx)}px ${n(q.y - by)}px`).join(", ")})`);
+  el._vis = true;
+  if (f <= 0.5) { for (const k of ["mask-image", "mask-size", "mask-position", "mask-repeat", "mask-clip"]) S.removeProperty(k); return; }
+  const st = (a, o2) => `<stop offset="${n(a)}" stop-color="#fff" stop-opacity="${o2}"/>`;
+  const ramp = (L) => (f > 0.5 && L > 0 ? st(0, 0) + st(f / L, 1) + st(1 - f / L, 1) + st(1, 0) : st(0, 1) + st(1, 1));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${lw}" height="${lh}" viewBox="${lx} ${ly} ${lw} ${lh}"><defs>`
+    + `<linearGradient id="x" gradientUnits="userSpaceOnUse" x1="${n(x0)}" y1="0" x2="${n(x1)}" y2="0">${ramp(w)}</linearGradient>`
+    + `<linearGradient id="y" gradientUnits="userSpaceOnUse" x1="0" y1="${n(y0)}" x2="0" y2="${n(y1)}">${ramp(h)}</linearGradient>`
+    + `<mask id="m" maskUnits="userSpaceOnUse" x="${n(x0)}" y="${n(y0)}" width="${n(w)}" height="${n(h)}" style="mask-type:alpha"><rect x="${n(x0)}" y="${n(y0)}" width="${n(w)}" height="${n(h)}" fill="url(#y)"/></mask></defs>`
+    + `<g transform="matrix(${[I.a, I.b, I.c, I.d, I.e, I.f].map(n).join(" ")})"><rect x="${n(x0)}" y="${n(y0)}" width="${n(w)}" height="${n(h)}" fill="url(#x)" mask="url(#m)"/></g></svg>`;
+  S.setProperty("mask-image", `url("data:image/svg+xml,${encodeURIComponent(svg)}")`);
+  S.setProperty("mask-size", `${lw}px ${lh}px`); S.setProperty("mask-position", `${lx - bx}px ${ly - by}px`); S.setProperty("mask-repeat", "no-repeat"); S.setProperty("mask-clip", "no-clip");
+  el._vis = true;
+}
 // 表示する行(折り返す幅があれば、もとの大きさの文字で測って折り返す。書き出しにも同じ行を渡す)
 const measureCv = document.createElement("canvas").getContext("2d");
+// 文字のレイヤーを canvas に描く(画面の文字と同じ並び: 行の高さ 1.2 倍。背景の帯は画面の .tbg のまま)
+function drawTextCanvas(cv, o, fil, lines, px, bw, bh, ks, stt, fx, tl = 0) {
+  const cs = getComputedStyle(fil);
+  const font = `${cs.fontStyle} ${cs.fontWeight} ${px}px ${cs.fontFamily}`;
+  const t = { ...o, text: lines.join("\n"), wrap: 0 };
+  const L = textLayout(measureCv, t, px, font, 0);
+  const pcs = stt._pc?.length ? stt._pc : null, lp = pcLoop(o) ? o.loop : null, moving = !!(pcs || lp);
+  const M = Math.ceil(Math.max(L.w - bw, L.h - bh, 0) / 2 + (moving ? 2 * px : 0) + 4);
+  const cw = bw + 2 * M, chh = bh + 2 * M;
+  const res = clamp((window.devicePixelRatio || 1) * Math.max(1, ks), 1, 4);
+  const W = Math.max(1, Math.min(8192, Math.round(cw * res))), H = Math.max(1, Math.min(8192, Math.round(chh * res)));
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  Object.assign(cv.style, { left: `${-M}px`, top: `${-M}px`, width: `${cw}px`, height: `${chh}px`, filter: fx || "" });
+  const g = cv.getContext("2d");
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.setTransform(W / cw, 0, 0, H / chh, W / 2, H / 2);
+  drawTextAt(g, t, L, font, { noBg: true, lineH: px * 1.2, reveal: stt._reveal, margin: moving ? 2 * px : 0, fx: moving ? (i, n, it) => charFx(pcs || [], i, n, px, it, lp, tl) : null });
+}
 function textLinesOf(o, fil, r) {
   const text = String(o.text ?? "");
   if (!(Number(o.wrap) > 0)) return text.split("\n");
@@ -2073,6 +2498,7 @@ function endOvTextEdit() {
 function beginOvTextEdit(id) {
   if (ovEdit?.id === id) return;
   const o = P().overlays.find((x) => x.id === id);
+  if (o?.locked) return;
   const el = st.ovEls.get(id);
   if (!o || o.kind !== "text" || !el || st.playing) return;
   endOvTextEdit();
@@ -2102,11 +2528,12 @@ function startOvDrag(e, id, mode) {
   e.stopPropagation();
   e.preventDefault();
   const o = P().overlays.find((x) => x.id === id);
-  if (!o) return;
+  if (!o || o.locked) return;
   // Shift / Ctrl で足すのはレイヤーの本体を押したときだけ(角・回す丸では Shift は 15 度ずつ・縦横比などに使う)
   if ((e.shiftKey || e.ctrlKey || e.metaKey) && mode === "move") { toggleOv(id); refresh(); return; }
   if (VIDEO_WARP_ENABLED && (e.ctrlKey || e.metaKey) && (o.kind === "image" || o.kind === "video") && WARP_IDX[mode]) { startOvWarpDrag(e, o, mode); return; } // 自由変形(今は無効)
-  if (st.msel.length > 1 && st.msel.includes(id)) { startMultiOvDrag(e, id, mode); return; }
+  expandGroupSel(id); // グループは仲間もまとめて
+  if (st.msel.length > 1 && st.msel.includes(id)) { st.sel = { type: "ov", id }; startMultiOvDrag(e, id, mode); return; }
   st.msel = [];
   st.sel = { type: "ov", id };
   const r = frameRect();
@@ -2138,6 +2565,7 @@ function startOvDrag(e, id, mode) {
 // 選んでいるレイヤーをまとめて動かす(角: まとめて大きさ。真ん中を中心に)
 function startMultiOvDrag(e, id, mode) {
   const list = selOvs();
+  if (list.some((o) => o.locked)) return;
   const r = frameRect(), [W, H] = P().size;
   const s0 = new Map(list.map((o) => [o.id, animState(o, AKEYS[kindKey("ov", o)], clamp(st.t - o.start, 0, o.end - o.start))]));
   const els = list.map((o) => st.ovEls.get(o.id)).filter((x) => x && x.style.display !== "none");
@@ -2174,13 +2602,15 @@ function startMultiOvDrag(e, id, mode) {
 function nudgeOvs(dx, dy) {
   const list = selOvs();
   if (!list.length) return false;
+  if (list.some((o) => o.locked)) return true;
   const [W, H] = P().size;
   const now = Date.now();
   if (!st.nudge || now - st.nudge.at > 800) st.nudge = { before: snapshot() };
   st.nudge.at = now;
   for (const o of list) {
     const a = animState(o, AKEYS[kindKey("ov", o)], clamp(st.t - o.start, 0, o.end - o.start));
-    setAnim("ov", o, { x: r3(a.x + dx / W), y: r3(a.y + dy / H) });
+    // 位置は幅・高さに対する割合。1px は 0.001 より小さいことがある(幅 2000px より大きいとき)ので、細かい桁で丸める
+    setAnim("ov", o, { x: r6(a.x + dx / W), y: r6(a.y + dy / H) });
   }
   const b = st.nudge.before;
   clearTimeout(st.nudgeTimer);
@@ -2195,6 +2625,7 @@ function startClipDrag(e) {
   const at = clipAt(st.t);
   if (!at || st.cropMode || !(st.sel?.type === "clip" && st.sel.id === at.c.id)) return;
   const c = at.c, r = frameRect(), mode = e.target.dataset?.h || "move";
+  if (c.locked) return;
   const s0 = animState(c, AKEYS.clip, st.t - at.s);
   const win = $('[data-c="win"]');
   const br = win.getBoundingClientRect();
@@ -2277,8 +2708,10 @@ function syncInspectorAnim() {
   const s = findSel();
   if (!s?.kf?.length || !ui) return;
   for (const el of $('[data-c="insp"]').querySelectorAll("[data-k]")) if (el !== document.activeElement && ANIM_ALL.has(el.dataset.k)) setField(el, s);
-  const n = $('[data-c="insp"]').querySelector(".kfnote");
-  if (n) n.textContent = T("◆ キーフレームがあります。ここで変えると再生位置({0})のキーフレームに入ります。", fmt(st.t));
+  for (const n of $('[data-c="insp"]').querySelectorAll(".kfnote")) n.textContent = n.closest('[data-sec="adj"]') ? T("◆ キーフレームがあります。補正を変えると再生位置({0})のキーフレームに入り、キーフレームの間でなめらかに変わります。", fmt(st.t))
+    : T("◆ キーフレームがあります。ここで変えると再生位置({0})のキーフレームに入ります。", fmt(st.t));
+  const ab = $('[data-c="insp"]').querySelector('[data-sec="adj"]');
+  if (ab && adjKfOn(s)) syncAdjPanel(ab, adjView(s).adj);
   syncKfList(s);
 }
 function play() {
@@ -2335,8 +2768,12 @@ function renderTimeline() {
     if (it.loop?.type) h += `<i class="lpm" title="${esc(T("ずっと動かす: {0}", T(LOOP_NAMES[it.loop.type])))}">∿</i>`;
     return h;
   };
-  const blk = (cls, id, type, left, w, label, title, extra = "") => `<div class="blk ${cls} ${(st.sel?.type === type && st.sel.id === id) || (type === "ov" && st.msel.includes(id)) ? "sel" : ""}" data-type="${type}" data-id="${id}"
-    style="left:${GUT + left}px;width:${Math.max(6, w)}px" title="${esc(title)}">${extra}<div class="eh l" data-edge="l"></div>${esc(label)}<div class="eh r" data-edge="r"></div></div>`;
+  const lockedOf = (type, id) => !!(type === "clip" ? P().clips.find((c) => c.id === id) : type === "au" ? (P().audios || []).find((a) => a.id === id) : P().overlays.find((o) => o.id === id))?.locked;
+  const hiddenOf = (type, id) => type === "ov" && !!P().overlays.find((o) => o.id === id)?.hidden;
+  const gno = new Map([...new Set(P().overlays.map((o) => o.gid).filter(Boolean))].map((g, i) => [g, i + 1])); // グループの番号
+  const gtag = (o) => (o.gid ? `<span class="gl" style="--g:${(gno.get(o.gid) * 67) % 360}"></span><b class="gtag">⛓${gno.get(o.gid)}</b> ` : "");
+  const blk = (cls, id, type, left, w, label, title, extra = "", pre = "") => `<div class="blk ${cls} ${(st.sel?.type === type && st.sel.id === id) || (type === "ov" && st.msel.includes(id)) ? "sel" : ""} ${hiddenOf(type, id) ? "hid" : ""}" data-type="${type}" data-id="${id}"
+    style="left:${GUT + left}px;width:${Math.max(6, w)}px" title="${esc(title)}">${extra}<div class="eh l" data-edge="l"></div>${hiddenOf(type, id) ? `[${esc(T("非表示中"))}] ` : ""}${lockedOf(type, id) ? `[${esc(T("ロック中"))}] ` : ""}${pre}${esc(label)}<div class="eh r" data-edge="r"></div></div>`;
   // 並び(DOM)は 音声の段(後ろから)→「動画」の段 → レイヤー。画面では逆向き(column-reverse)なので、
   // 上から レイヤー(上ほど手前)→「動画」の段 → 音声の段
   let rows = "";
@@ -2352,9 +2789,10 @@ function renderTimeline() {
   rows += `<div class="trow zero" data-row="ov0"><span class="lab" title="${esc(T("ここへ動かすと、いちばん下の新しい段になります"))}">0</span></div>`;
   for (let r = 0, n = rowCount(); r < n; r++) {
     const items = P().overlays.filter((o) => rowOf(o) === r);
-    rows += `<div class="trow" data-row="ov" data-r="${r}"><span class="lab" title="${esc(T("{0} 段目(上の段ほど手前に重なります)", r + 1))}">${r + 1}</span>${items.map((o) => blk(o.kind, o.id, "ov", o.start * st.pxs, (o.end - o.start) * st.pxs, labelOf(o), labelOf(o), deco(o, o.end - o.start))).join("")}</div>`;
+    rows += `<div class="trow" data-row="ov" data-r="${r}"><span class="lab" title="${esc(T("{0} 段目(上の段ほど手前に重なります)", r + 1))}">${r + 1}</span>${items.map((o) => blk(o.kind, o.id, "ov", o.start * st.pxs, (o.end - o.start) * st.pxs, labelOf(o), labelOf(o), deco(o, o.end - o.start), gtag(o))).join("")}</div>`;
   }
   $('[data-c="rows"]').innerHTML = rows;
+  drawGroupFrames();
   drawWaves();
   drawPlayhead();
 }
@@ -2430,7 +2868,10 @@ function snapShift(times, skip, ev) {
     if (Math.abs(d) <= lim && (best === null || Math.abs(d) < Math.abs(best.d))) best = { d, p };
   }
   showSnap(best ? best.p : null);
-  return best ? best.d : 0;
+  if (best) return best.d;
+  // 近くにそろえる所が無ければ、0.1 秒ずつ(1 つ目の時刻を 0.1 秒の目盛りに)
+  const t0 = times[0];
+  return Number.isFinite(t0) ? Math.round(t0 * 10) / 10 - t0 : 0;
 }
 function showSnap(t) {
   const el = $('[data-c="snapl"]');
@@ -2458,21 +2899,27 @@ function startBlockDrag(e) {
   e.preventDefault();
   const type = b.dataset.type, id = Number(b.dataset.id), edge = e.target.dataset.edge || "";
   if (type === "ov" && (e.shiftKey || e.ctrlKey || e.metaKey) && !edge) { toggleOv(id); refresh(); return; }
+  if (type === "ov") expandGroupSel(id); // グループは仲間もまとめて
   // 選んでいるレイヤーのどれかの本体をドラッグしたら、まとめて時間を動かす
   const group = type === "ov" && !edge && st.msel.length > 1 && st.msel.includes(id) ? selOvs() : null;
-  if (!group) st.msel = [];
+  // 端をドラッグ: 選んでいるレイヤー全部の、同じ側の端を同じだけ動かす(長さをまとめて変える)
+  const gOf = P().overlays.find((x) => x.id === id)?.gid, grpOnly = !!gOf && selOvs().every((x) => x.gid === gOf); // グループだけを選んでいる → 端はそのレイヤーだけ
+  const egroup = type === "ov" && edge && !grpOnly && st.msel.length > 1 && st.msel.includes(id) ? selOvs() : null;
+  if (!group && !egroup) st.msel = [];
   st.sel = { type, id };
   st.cropMode = false;
   const before = snapshot();
   const x0 = e.clientX, y0 = e.clientY;
   const item = type === "clip" ? P().clips.find((c) => c.id === id) : type === "au" ? P().audios.find((a) => a.id === id) : P().overlays.find((o) => o.id === id);
   if (type === "au" && item.link != null) { refresh(); return; } // つながっている音声は動画と一緒に動く(切り離すと動かせる)
+  if (item.locked || group?.some((o) => o.locked) || egroup?.some((o) => o.locked)) { refresh(); return; } // ロック中は選ぶだけ
+  const eorig = egroup ? new Map(egroup.map((o) => [o.id, { start: o.start, end: o.end, in: o.in, speed: spd(o) }])) : null;
   const orig = { ...item };
   const order = type === "clip" ? [...P().clips] : null;
   const start0 = type === "clip" ? starts()[P().clips.indexOf(item)] : item.start;
   const sp = spd(item);
   // 伸縮(タイムストレッチ): 端をドラッグすると、元の同じ所を使ったまま速さを変えて長さを変える(「⇔ 伸縮」か Shift)
-  const stretch = !!edge && (st.stretch || e.shiftKey) && (type === "clip" || type === "au" || item.kind === "video");
+  const stretch = !!edge && (st.stretch || e.shiftKey) && (type === "clip" || type === "au" || item.kind === "video") && !egroup; // 複数のときは下(まとめて)で
   let moved = false, tg = null;
   const move = (ev) => {
     const dt = (ev.clientX - x0) / st.pxs;
@@ -2546,6 +2993,38 @@ function startBlockDrag(e) {
         a = Math.max(0, a + snapShift([a, a + len], item, ev));
         item.start = r3(a);
       }
+    } else if (egroup && (st.stretch || ev.shiftKey || e.shiftKey)) {
+      // まとめて伸縮(タイムストレッチ): どれも同じ秒数だけ長さを変え、動画は使う所はそのまま速さを変える(画像・文字は長さだけ)
+      const v = (edge === "l" ? orig.start : orig.end) + dt;
+      let d = v + snapShift([v], item, ev) - (edge === "l" ? orig.start : orig.end);
+      for (const o of egroup) {
+        const o0 = eorig.get(o.id), L0 = o0.end - o0.start;
+        const src = o.kind === "video" ? L0 * o0.speed : 0;
+        const lo = o.kind === "video" ? Math.max(MIN_LEN, src / 16) : MIN_LEN, hi = o.kind === "video" ? src / 0.05 : Infinity;
+        if (edge === "l") d = clamp(d, Math.max(-o0.start, L0 - hi), L0 - lo); else d = clamp(d, lo - L0, hi - L0);
+      }
+      for (const o of egroup) {
+        const o0 = eorig.get(o.id), L0 = o0.end - o0.start, L = edge === "l" ? L0 - d : L0 + d;
+        if (edge === "l") o.start = r3(o0.start + d); else o.end = r3(o0.end + d);
+        if (o.kind === "video") { o.speed = r3(clamp((L0 * o0.speed) / Math.max(1e-6, L), 0.05, 16)); o.end = r3(o.start + (L0 * o0.speed) / o.speed); } // 使う所はそのまま、速さで長さを合わせる
+      }
+      showStretch(ev, item);
+    } else if (egroup) {
+      // まとめて長さを変える(どれも 0 秒より前・短すぎにはしない。動画は元の動画の頭より前に広げない)
+      const v = (edge === "l" ? orig.start : orig.end) + dt;
+      let d = v + snapShift([v], item, ev) - (edge === "l" ? orig.start : orig.end);
+      for (const o of egroup) {
+        const o0 = eorig.get(o.id), sp = spd(o);
+        if (edge === "l") d = Math.max(d, -o0.start, o.kind === "video" ? -(o0.in || 0) / sp : -Infinity);
+        d = edge === "l" ? Math.min(d, o0.end - MIN_LEN - o0.start) : Math.max(d, o0.start + MIN_LEN - o0.end);
+      }
+      for (const o of egroup) {
+        const o0 = eorig.get(o.id);
+        if (edge === "l") {
+          o.start = r3(o0.start + d);
+          if (o.kind === "video") o.in = r3(Math.max(0, (o0.in || 0) + d * spd(o)));
+        } else o.end = r3(o0.end + d);
+      }
     } else {
       if (edge === "l") {
         const v = orig.start + dt;
@@ -2609,11 +3088,11 @@ function showStretch(ev, item) {
 // 何も入っていなければ 1 本目の動画)
 const VIDEO_EXT = /\.(mp4|webm|mov|mkv|avi|m4v|mpe?g|wmv|flv|ts)$/i;
 const AUDIO_EXT = /\.(mp3|wav|ogg|oga|opus|m4a|aac|flac|wma|aiff?)$/i;
-const fileKind = (f) => (/^audio\//.test(f.type) || AUDIO_EXT.test(f.name || "") ? "audio" : /^video\//.test(f.type) || VIDEO_EXT.test(f.name || "") ? "video" : /^image\//.test(f.type) ? "image" : null);
+const fileKind = (f) => (/^audio\//.test(f.type) || AUDIO_EXT.test(f.name || "") ? "audio" : /^video\//.test(f.type) || VIDEO_EXT.test(f.name || "") ? "video" : /^image\//.test(f.type) ? "image" : isPdf(f) ? "pdf" : null);
 const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
 // ドラッグ中のファイルの種類(名前は取れないので MIME で。わからないものは動画とみなす)
 function dragKinds(e) {
-  const ks = [...(e.dataTransfer?.items || [])].filter((it) => it.kind === "file").map((it) => (/^image\//.test(it.type) ? "image" : /^audio\//.test(it.type) ? "audio" : "video"));
+  const ks = [...(e.dataTransfer?.items || [])].filter((it) => it.kind === "file").map((it) => (/^image\//.test(it.type) || it.type === "application/pdf" ? "image" : /^audio\//.test(it.type) ? "audio" : "video"));
   return ks.length ? ks : ["video"];
 }
 function dropPlan(zone, e) {
@@ -2668,8 +3147,19 @@ async function onDrop(zone, e) {
   const plan = dropPlan(zone, e);
   clearDrop();
   if (st.busy) return;
-  const files = [...(e.dataTransfer?.files || [])].map((f) => ({ f, kind: fileKind(f) })).filter((x) => x.kind);
+  let files = [...(e.dataTransfer?.files || [])].map((f) => ({ f, kind: fileKind(f) })).filter((x) => x.kind);
   if (!files.length) { ctx.notify("動画・画像・音声のファイルを入れてください", "error"); return; }
+  // PDF はページを画像にしてから(ページを選ぶ)
+  if (files.some((x) => x.kind === "pdf")) {
+    const out = [];
+    for (const x of files) {
+      if (x.kind !== "pdf") { out.push(x); continue; }
+      try { for (const f of await pdfToImages(x.f)) out.push({ f, kind: "image" }); }
+      catch (err) { ctx.notify(`${T("PDF を読み込めませんでした")}: ${err.message}`, "error"); }
+    }
+    files = out;
+    if (!files.length) return;
+  }
   if (plan.zone === "none") { ctx.notify(plan.label, "error"); return; }
   let pos = null;
   if (plan.zone === "stage") {
@@ -2736,31 +3226,32 @@ function sec(cls, title, body, forceOpen = false) {
   return `<details class="sec s-${cls}" data-sec="${cls}" ${open ? "open" : ""}><summary>${title}</summary><div class="sb">${body}</div></details>`;
 }
 // 100 倍して % で見せる値
-const PCT = new Set(["x", "y", "s", "w", "h", "size", "opacity", "strokeWidth", "strokeDx", "strokeDy", "strokeAlpha", "bgAlpha", "bgPadX", "bgPadY", "bgOffX", "bgOffY", "bgRadius", "wrap", "volume", "key.tol", "key.soft", "loop.amt", "strokeBlur", "edge.size", "edge.amt", "speed", "block",
+const PCT = new Set(["x", "y", "s", "w", "h", "size", "opacity", "colorA", "strokeWidth", "strokeGap", "tin.stagger", "tout.stagger", ...["visT", "visB", "visL", "visR", "visF"].flatMap((x) => [`tin.${x}`, `tout.${x}`]), "strokeDx", "strokeDy", "strokeAlpha", "bgAlpha", "bgPadX", "bgPadY", "bgOffX", "bgOffY", "bgRadius", "wrap", "volume", "key.tol", "key.soft", "loop.amt", "strokeBlur", "edge.size", "edge.amt", "speed", "block",
   "mask.size", "mask.x", "mask.y", "mask.radius", "mask.feather", "mask.pulseAmt", "mask.pitch", "mask.gap", "mask.odd", "mask.even", "mask.round",
-  "mask.rodd", "mask.reven", "ol.w", "ol.t", "ol.b", "ol.l", "ol.r", "ol.blur", "ol.alpha",
-  "fillA", "radius", "pitch", "gap", "odd", "even", "rodd", "reven", "round", "strokeW"]);
-const FDEF = { strokeWidth: 0.08, strokeDx: 0, strokeDy: 0, strokeAlpha: 1, bgAlpha: 0, bgPadX: 0.3, bgPadY: 0.3, bgOffX: 0, bgOffY: 0, volume: 1, speed: 1, fadeIn: 0, fadeOut: 0,
+  "mask.rodd", "mask.reven", "ol.w", "ol.t", "ol.b", "ol.l", "ol.r", "ol.blur", "ol.alpha", "ol.iw", "ol.ib", "ol.ia",
+  "fillA", "radius", "pitch", "gap", "offX", "offY", "mask.offX", "mask.offY", "odd", "even", "rodd", "reven", "round", "strokeW"]);
+const FDEF = { colorA: 1, strokeWidth: 0.08, strokeGap: 0, "tin.stagger": 0.7, "tout.stagger": 0.7, ...Object.fromEntries(["visT", "visB", "visL", "visR"].flatMap((x) => [[`tin.${x}`, 0.5], [`tout.${x}`, 0.5]])), "tin.visF": 0, "tout.visF": 0, strokeDx: 0, strokeDy: 0, strokeAlpha: 1, bgAlpha: 0, bgPadX: 0.3, bgPadY: 0.3, bgOffX: 0, bgOffY: 0, volume: 1, speed: 1, fadeIn: 0, fadeOut: 0,
   "key.color": "#00ff00", "key.tol": 0.3, "key.soft": 0.1, "key.despill": true, "tin.dur": 0.5, "tout.dur": 0.5, kfEase: "smooth", keepAspect: true,
   bgRadius: 0, wrap: 0, align: "center", "loop.speed": 1, "loop.amt": 1, strokeBlur: 0, "edge.size": 0.15, "edge.amt": 1, block: 0.03, mosaic: "pixel", shape: "rect",
-  ...Object.fromEntries(Object.entries(MASK_DEF).map(([k, v]) => [`mask.${k}`, v])), "ol.w": 0.01, "ol.blur": 0, "ol.color": "#ffffff", "ol.alpha": 1,
-  fill: "#ffffff", fillA: 1, radius: 0.25, points: 5, pitch: 0.25, gap: 0.15, odd: 1, even: 1, rodd: 1, reven: 1, round: 0, stagger: false, strokeW: 0.01 };
+  ...Object.fromEntries(Object.entries(MASK_DEF).map(([k, v]) => [`mask.${k}`, v])), "ol.w": 0.01, "ol.blur": 0, "ol.color": "#ffffff", "ol.alpha": 1, "ol.iw": 0, "ol.ib": 0, "ol.ic": "#ffffff", "ol.ia": 1,
+  fill: "#ffffff", fillA: 1, radius: 0.25, points: 5, pitch: 0.25, gap: 0.15, offX: 0, offY: 0, "mask.offX": 0, "mask.offY": 0, odd: 1, even: 1, rodd: 1, reven: 1, round: 0, stagger: false, strokeW: 0.01 };
 // 範囲(書いた値をこの中に収める。% の欄は 0〜1 の値で)
 const FRANGE = { x: [-1, 2], y: [-1, 2], s: [0.01, 8], w: [0.01, 4], h: [0.01, 4], size: [0.005, 1], rot: [-3600, 3600], opacity: [0, 1],
-  strokeWidth: [0, 0.5], strokeDx: [-1, 1], strokeDy: [-1, 1], strokeAlpha: [0, 1], bgAlpha: [0, 1], bgPadX: [0, 3], bgPadY: [0, 3], bgOffX: [-3, 3], bgOffY: [-3, 3],
+  colorA: [0, 1], strokeWidth: [0, 0.5], strokeGap: [-1, 1], strokeDx: [-1, 1], strokeDy: [-1, 1], strokeAlpha: [0, 1], bgAlpha: [0, 1], bgPadX: [0, 3], bgPadY: [0, 3], bgOffX: [-3, 3], bgOffY: [-3, 3],
+  "tin.stagger": [0, 0.95], "tout.stagger": [0, 0.95], ...Object.fromEntries(["visT", "visB", "visL", "visR"].flatMap((x) => [[`tin.${x}`, [-0.5, 5]], [`tout.${x}`, [-0.5, 5]]])), "tin.visF": [0, 1], "tout.visF": [0, 1],
   volume: [0, 2], speed: [0.05, 16], fadeIn: [0, 600], fadeOut: [0, 600], "key.tol": [0, 1], "key.soft": [0.001, 1], "tin.dur": [0.05, 30], "tout.dur": [0.05, 30],
   bgRadius: [0, 1], wrap: [0, 2], "loop.speed": [0.1, 5], "loop.amt": [0, 3], strokeBlur: [0, 0.5], "edge.size": [0.01, 0.5], "edge.amt": [0.1, 3], block: [0.005, 0.2],
   "mask.size": [0.05, 3], "mask.x": [-1, 1], "mask.y": [-1, 1], "mask.rot": [-360, 360], "mask.radius": [0, 1], "mask.points": [3, 12], "mask.feather": [0, 0.5],
   "mask.spinSpeed": [-5, 5], "mask.swing": [0, 180], "mask.pulseSpeed": [0.05, 5], "mask.pulseAmt": [0, 0.9],
-  "mask.pitch": [0.02, 1], "mask.gap": [-1, 0.95], "mask.odd": [0, 2], "mask.even": [0, 2], "mask.round": [0, 1], "mask.rodd": [0, 2], "mask.reven": [0, 2],
-  "ol.w": [0, 0.2], "ol.t": [0, 0.2], "ol.b": [0, 0.2], "ol.l": [0, 0.2], "ol.r": [0, 0.2], "ol.blur": [0, 0.1], "ol.alpha": [0, 1],
-  fillA: [0, 1], radius: [0, 1], points: [3, 12], pitch: [0.02, 1], gap: [-1, 0.95], odd: [0, 2], even: [0, 2], rodd: [0, 2], reven: [0, 2], round: [0, 1], strokeW: [0, 0.2] };
+  "mask.pitch": [0.005, 1], "mask.gap": [-1, 0.95], "mask.odd": [0, 2], "mask.even": [0, 2], "mask.round": [0, 1], "mask.rodd": [0, 2], "mask.reven": [0, 2],
+  "ol.w": [0, 0.2], "ol.t": [0, 0.2], "ol.b": [0, 0.2], "ol.l": [0, 0.2], "ol.r": [0, 0.2], "ol.blur": [0, 0.1], "ol.alpha": [0, 1], "ol.iw": [0, 0.2], "ol.ib": [0, 0.1], "ol.ia": [0, 1],
+  fillA: [0, 1], radius: [0, 1], points: [3, 12], pitch: [0.005, 1], gap: [-1, 0.95], offX: [-1, 1], offY: [-1, 1], "mask.offX": [-1, 1], "mask.offY": [-1, 1], odd: [0, 2], even: [0, 2], rodd: [0, 2], reven: [0, 2], round: [0, 1], strokeW: [0, 0.2] };
 const TRANS_NAMES = { fade: "じんわり", dip_black: "暗転をはさむ", dip_white: "白をはさむ", wipe_h: "ワイプ(横)", wipe_v: "ワイプ(縦)", slide_h: "すべり込み(横)", slide_v: "すべり込み(縦)",
   split_h: "スプリット(横)", split_v: "スプリット(縦)", iris_circle: "アイリス(円)", iris_box: "アイリス(四角)", iris_diamond: "アイリス(ひし形)", clock: "時計回りに現れる", zoom: "ズーム(寄る・引く)", spin: "くるりん",
   pop: "ぱちん", boing: "ぽよよん", drop: "すとん(落ちて弾む)", bungee: "びよーん(ゴムのように)", rise: "にょきっ", tumble: "ころりん(転がる)", drift: "すーっ(流れ込む)", stagger: "よちよち",
-  flicker: "チカッ(点滅しながら)", typing: "カタカタ(一文字ずつ)", blur: "ぼかし ⇄ 鮮明" };
+  flicker: "チカッ(点滅しながら)", typing: "カタカタ(一文字ずつ)", blur: "ぼかし ⇄ 鮮明", swing: "くいっ(傾きから戻る)" };
 const TRANS_GROUPS = [["じわっと", ["fade", "dip_black", "dip_white", "blur"]], ["形で見せる", ["wipe_h", "wipe_v", "split_h", "split_v", "iris_circle", "iris_box", "iris_diamond", "clock"]],
-  ["動いて入る・出る", ["slide_h", "slide_v", "drop", "bungee", "rise", "tumble", "drift", "stagger"]], ["大きさ・回転", ["zoom", "spin", "pop", "boing"]], ["光・文字", ["flicker", "typing"]]];
+  ["動いて入る・出る", ["slide_h", "slide_v", "drop", "bungee", "rise", "tumble", "drift", "stagger"]], ["大きさ・回転", ["zoom", "spin", "pop", "boing", "swing"]], ["光・文字", ["flicker", "typing"]]];
 // その効果で使えるチェック(左右反転・上下反転・効果反転)。第20版の動きは向き(dir)を選ぶ
 const TRANS_FLAGS = { wipe_h: ["flipH"], wipe_v: ["flipV"], slide_h: ["flipH"], slide_v: ["flipV"], clock: ["flipH"], spin: ["flipH", "rev"], zoom: ["rev"],
   split_h: ["rev"], split_v: ["rev"], iris_circle: ["rev"], iris_box: ["rev"], iris_diamond: ["rev"] };
@@ -2788,6 +3279,8 @@ function showVal(k, v) {
   if (typeof v === "boolean" || typeof v === "string" || v == null) return v ?? "";
   return PCT.has(k) ? r3(v * 100) : k === "rot" ? r3(v) : r3(v);
 }
+// 一文字ずつ動かす順番(同時 = 全部の文字が一緒に、それぞれの文字で動く)
+const ORDER_OPTS = [["fwd", "順番(前から)"], ["rev", "順番(後ろから)"], ["rand", "順番(ばらばら)"], ["sync", "同時"]];
 // 種類ごとの欄
 function transBox(s, which, title) {
   const tr = s[which];
@@ -2805,6 +3298,25 @@ function transBox(s, which, title) {
       h += `<label class="fl">向き<select data-k="${which}.dir" title="入るときはその向きから入り、出るときはその向きへ出ていきます">${Object.entries(DIR_NAMES).map(([k, v]) => `<option value="${k}" ${d === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>`;
     } else if (!MOTION_IN.includes(tr.type) && tr.type !== "blur") {
       h += `<div class="row ckrow">${chk(`${which}.flipH`, "左右反転", tr.flipH, flags.includes("flipH") ? "" : "disabled")}${chk(`${which}.flipV`, "上下反転", tr.flipV, flags.includes("flipV") ? "" : "disabled")}${chk(`${which}.rev`, "効果反転(中から外 ⇄ 外から中)", tr.rev, flags.includes("rev") ? "" : "disabled")}</div>`;
+    }
+    // 文字: 一文字ずつ動かす(ずらす割合・順番)
+    if (isText && PER_CHAR.includes(tr.type)) {
+      h += chk(`${which}.perChar`, "一文字ずつ動かす", tr.perChar, `title="${esc(T("文字を 1 文字ずつ、少しずつずらして動かします"))}"`);
+      if (tr.perChar) {
+        const ord = ["rev", "rand", "sync"].includes(tr.order) ? tr.order : "fwd";
+        h += `<label class="fl">${esc(T("順番"))}<select data-k="${which}.order">${ORDER_OPTS.map(([v, l]) => `<option value="${v}" ${ord === v ? "selected" : ""}>${esc(T(l))}</option>`).join("")}</select></label>`;
+        if (ord !== "sync") h += num(`${which}.stagger`, "ずらす(%)", r3((tr.stagger ?? 0.7) * 100), 0, 95, 5, `title="${esc(T("長さのうち、文字ごとにずらすのに使う割合。大きいほど 1 文字ずつ順に動きます(0 = 全部の文字が同時)"))}"`);
+      }
+    }
+    // 見える範囲(レイヤーだけ): 止まる位置の枠を基準に、その範囲の中だけ見せる
+    if (s.kind) {
+      h += chk(`${which}.vis`, "見える範囲を決める", tr.vis, `title="${esc(T("止まる位置の枠を基準にした範囲の中だけを見せます(遠くから見えてしまうのを防ぎます)"))}"`);
+      if (tr.vis) {
+        const vt = `title="${esc(T("止まる位置の枠から、枠の大きさに対して何 % 外までを見せるか。0 で枠ぴったり、マイナスで枠より内側"))}"`;
+        h += `${num(`${which}.visT`, "上(%)", r3((tr.visT ?? 0.5) * 100), -50, 500, 5, vt)}${num(`${which}.visB`, "下(%)", r3((tr.visB ?? 0.5) * 100), -50, 500, 5, vt)}
+          ${num(`${which}.visL`, "左(%)", r3((tr.visL ?? 0.5) * 100), -50, 500, 5, vt)}${num(`${which}.visR`, "右(%)", r3((tr.visR ?? 0.5) * 100), -50, 500, 5, vt)}`
+          + num(`${which}.visF`, "見える範囲のぼかし(%)", r3((tr.visF ?? 0) * 100), 0, 100, 5, `title="${esc(T("範囲のふちから内側へ、だんだん透明にする幅(枠の短い辺に対しての %)"))}"`);
+      }
     }
     // ぼかしを重ねる(ワイプ + ぼかし など)
     if (tr.type !== "blur") h += chk(`${which}.blur`, "ぼかしも重ねる(入るときは ぼかし → 鮮明、出るときは 鮮明 → ぼかし)", tr.blur);
@@ -2851,12 +3363,16 @@ function maskSec(s) {
 // タイル・水玉の並べ方
 // タイル・水玉の並べ方(pre: 欄のキーの前に付ける。図形マスクは "mask."、図形のレイヤーは "")
 function patFields(v, mk, pre = "mask.") {
-  return `${num(`${pre}pitch`, "並べる間隔(%)", v("pitch"), 2, 100, 1)}${num(`${pre}gap`, "すき間(%)", v("gap"), -100, 95, 1)}
+  const [sz, sp, spy] = patSizeSpace(mk), r2 = (x) => Math.round(x * 100) / 100;
+  // 値のバー付きの欄(バーは使う所だけの範囲。数の欄はもっと広く打てる)
+  const prow = (k, label, val, min, max, step, smin = min, smax = max) => `<label class="adjrow"><span>${esc(T(label))}</span><input type="range" data-k="${k}" min="${smin}" max="${smax}" step="${step}" value="${val}"><input type="number" data-k="${k}" value="${val}" min="${min}" max="${max}" step="${step}"></label>`;
+  return `${prow(`${pre}psize`, "大きさ(%)", r2(sz * 100), 0.1, 100, 0.01, 0.1, 30)}${prow(`${pre}pspace`, "横の間隔(%)", r2(sp * 100), -50, 500, 0.01, -50, 100)}${prow(`${pre}pspacey`, "縦の間隔(%)", r2(spy * 100), -50, 500, 0.01, -50, 100)}
+    ${prow(`${pre}offX`, "横にずらす(%)", r3((mk.offX ?? 0) * 100), -100, 100, 1)}${prow(`${pre}offY`, "縦にずらす(%)", r3((mk.offY ?? 0) * 100), -100, 100, 1)}
     ${rulesHtml(mk.rules, (i, f, val, w) => `<input type="number" data-k="${pre}rules" data-i="${i}" data-f="${f}" value="${val}" style="width:${w}px">`,
     (i) => `<button data-a="ruledel" data-pre="${pre}" data-i="${i}" title="この条件を消す">✕</button>`, `<button data-a="ruleadd" data-pre="${pre}">＋ 大きさを変える条件を追加</button>`, (x) => esc(T(x)))}
     ${mk.shape === "tile" ? num(`${pre}round`, "角の丸み(%)", v("round"), 0, 100, 1) : ""}
     ${chk(`${pre}stagger`, "一行おきに半分ずらす", !!mk.stagger)}
-    <div class="note">並べる間隔は形の短い辺に対しての %、すき間は間隔に対しての %。「大きさを変える条件」は、上から w 番目の段から x 段おき、その段の左から y 番目から z つおきの物の大きさを変えます(0 おきは毎回。0% で無し)。条件はいくつでも足せて、後の条件が優先です。図形マスクの「回す」「大きさの動き」は、並べた 1 つずつが動きます。</div>`;
+    <div class="note">大きさ・間隔は形の短い辺に対しての %。間隔をマイナスにすると、となりと重なります(斜めのすき間も埋まります)。「大きさを変える条件」は、上から w 番目の段から x 段おき、その段の左から y 番目から z つおきの物の大きさを変えます(0 おきは毎回。0% で無し)。条件はいくつでも足せて、後の条件が優先です。図形マスクの「回す」「大きさの動き」は、並べた 1 つずつが動きます。</div>`;
 }
 // 図形のレイヤーの形・色
 function shapeMainHtml(s) {
@@ -2875,16 +3391,45 @@ function shapeMainHtml(s) {
   return h;
 }
 // ふち取り(画像・動画): 不透明な所のまわりに縁を付ける
+// 時刻 tl(始まりからの秒)の補正。補正の入ったキーフレームがあれば、その間をなめらかにつなぐ(書き出し adjust.adj_at と同じ)
+// 補正を使わない(adjOff)ときは null(値は残す)。欄に出す値は adjRaw
+function adjAt(it, tl) { return it?.adjOff ? null : adjRaw(it, tl); }
+function adjRaw(it, tl) {
+  const ks = (it.kf || []).filter((k) => k.adj).sort((a, b) => a.t - b.t);
+  if (!ks.length) return it.adj || null;
+  if (tl <= ks[0].t) return ks[0].adj;
+  if (tl >= ks[ks.length - 1].t) return ks[ks.length - 1].adj;
+  let i = 0;
+  while (i < ks.length - 1 && ks[i + 1].t <= tl) i++;
+  const a = ks[i], b = ks[i + 1];
+  return lerpAdj(a.adj, b.adj, easeF((tl - a.t) / Math.max(1e-6, b.t - a.t), it.kfEase || "smooth"));
+}
+const adjKfOn = (it) => !!it?.kf?.some((k) => k.adj);
+// 欄に出す補正: キーフレームがあれば再生位置の値(変えるとそのキーフレームに入る)
+function adjView(s, type = st.sel?.type) {
+  if (!s?.kf?.length) return s;
+  return { adj: adjRaw(s, clamp(st.t - selStart(s, type), 0, selLen(s, type))), adjBase: s.adjBase, adjName: s.adjName, adjK: s.adjK, adjOff: s.adjOff, asel: s.asel };
+}
+// 色・明るさの補正(ワンボタンの自動補正と、閉じてある詳細設定)
+function adjSec(s) {
+  const kfn = s.kf?.length ? `<div class="note kfnote">${T("◆ キーフレームがあります。補正を変えると再生位置({0})のキーフレームに入り、キーフレームの間でなめらかに変わります。", fmt(st.t))}</div>` : "";
+  return sec("adj", `色・明るさの補正${adjOn(s.adj) || adjKfOn(s) ? " ●" : ""}`, kfn + adjPanelHtml(adjView(s), { open: !!st.adjOpen }), st.secOpen.adj !== false);
+}
+// 補正を掛けるもの(選んでいる、つなげる動画・画像・動画のレイヤー)
+const adjSel = () => { const s = st.sel?.type === "clip" || (st.sel?.type === "ov" && ["image", "video"].includes(findSel()?.kind)) ? findSel() : null; return s || null; };
 function olSec(s) {
   const ol = s.ol || {}, on = !!ol.on;
   const v = (k) => showVal(`ol.${k}`, fieldVal(s, `ol.${k}`));
   let h = chk("ol.on", "ふち取りを付ける", on);
   const sd = outlineSides({ w: 0.01, ...ol }), pc = (x) => r3(x * 100);
-  if (on) h += `${num("ol.w", "太さ・上下左右まとめて(%)", pc(Math.max(sd.t, sd.b, sd.l, sd.r)), 0, 20, 0.1)}
+  if (on) h += `${num("ol.w", "まとめて調節(%)", pc(Math.max(sd.t, sd.b, sd.l, sd.r)), 0, 20, 0.1)}
     ${num("ol.t", "上(%)", pc(sd.t), 0, 20, 0.1)}${num("ol.b", "下(%)", pc(sd.b), 0, 20, 0.1)}${num("ol.l", "左(%)", pc(sd.l), 0, 20, 0.1)}${num("ol.r", "右(%)", pc(sd.r), 0, 20, 0.1)}
     ${num("ol.blur", "ぼかし(%)", v("blur"), 0, 10, 0.1)}
-    <label class="fl">色<input type="color" data-k="ol.color" value="${esc(fieldVal(s, "ol.color"))}"></label>${num("ol.alpha", "不透明度(%)", v("alpha"), 0, 100, 1)}`;
-  h += `<div class="note">レイヤーの不透明な部分(色で抜いた・図形マスクの後の形)のまわりに縁を付けます。上下左右で太さを変えられます。太さ・ぼかしは画面の高さに対しての %。</div>`;
+    <label class="fl">色<input type="color" data-k="ol.color" value="${esc(fieldVal(s, "ol.color"))}"></label>${num("ol.alpha", "不透明度(%)", v("alpha"), 0, 100, 1)}
+    <div class="note" style="margin-top:8px;font-weight:700">内側</div>
+    ${num("ol.iw", "内側の太さ(%)", v("iw"), 0, 20, 0.1)}${num("ol.ib", "内側のぼかし(%)", v("ib"), 0, 10, 0.1)}
+    <label class="fl">内側の色<input type="color" data-k="ol.ic" value="${esc(fieldVal(s, "ol.ic"))}"></label>${num("ol.ia", "内側の不透明度(%)", v("ia"), 0, 100, 1)}`;
+  h += `<div class="note">レイヤーの不透明な部分(色で抜いた・図形マスクの後の形)のまわりに縁を付けます。上下左右で太さを変えられます。内側は、ふちから内側へ付けます(絵の上に重なります。0 で無し)。太さ・ぼかしは画面の高さに対しての %。</div>`;
   return sec("ol", `ふち取り${on ? " ●" : ""}`, h, on && st.secOpen.ol !== false);
 }
 // 下のレイヤーで切り抜く(画像・動画)。その時刻に見えている、すぐ下のレイヤーの透明でない所を使う
@@ -2906,6 +3451,14 @@ function loopSec(s) {
     h += `${num("loop.speed", "速さ(倍)", r3(lp.speed ?? 1), 0.1, 5, 0.1)}${num("loop.amt", "強さ(%)", r3((lp.amt ?? 1) * 100), 0, 300, 10)}
       <label class="fl">支点<select data-k="loop.pin" title="回る・大きさが変わるときの中心">${Object.entries(PIN_NAMES).map(([k, v]) => `<option value="${k}" ${(lp.pin || "") === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>`;
     if (lp.type === "spin") h += `<label class="fl">回る向き<select data-k="loop.dir"><option value="cw" ${lp.dir !== "ccw" ? "selected" : ""}>右回り</option><option value="ccw" ${lp.dir === "ccw" ? "selected" : ""}>左回り</option></select></label>`;
+    if (s.kind === "text") {
+      h += chk("loop.perChar", "一文字ずつ動かす", lp.perChar, `title="${esc(T("文字を 1 文字ずつ、少しずつ遅らせて動かします(波のように)"))}"`);
+      if (lp.perChar) {
+        const ord = ["rev", "rand", "sync"].includes(lp.order) ? lp.order : "fwd";
+        h += `<label class="fl">${esc(T("順番"))}<select data-k="loop.order">${ORDER_OPTS.map(([v, l]) => `<option value="${v}" ${ord === v ? "selected" : ""}>${esc(T(l))}</option>`).join("")}</select></label>`;
+        if (ord !== "sync") h += num("loop.lag", "ずらす(秒)", r3(lp.lag ?? 0.1), 0, 2, 0.02, `title="${esc(T("次の文字を何秒遅らせるか"))}"`);
+      }
+    }
   }
   h += `<div class="note">表示している間、ずっとくり返します。入る・出るのトランジションや、キーフレームの動きと一緒に使えます。</div>`;
   return sec("lp", `ずっと動かす(ループ)${lp.type ? " ●" : ""}`, h, !!lp.type && st.secOpen.lp !== false);
@@ -2920,7 +3473,7 @@ function kfListHtml(s, type) {
   const kf = s.kf || [];
   const keys = AKEYS[kindKey(type, s)];
   const lab = { x: "横", y: "縦", s: "大きさ", w: "幅", h: "高さ", size: "大きさ", rot: "回転", opacity: "不透明度" };
-  const rows = kf.map((k, i) => `<div class="kfrow"><span>◆ ${r3(k.t).toFixed(2)} ${T("秒")}</span><span class="kv">${keys.map((x) => `${T(lab[x])} ${x === "rot" ? r3(k[x] ?? 0) : r3((k[x] ?? DEF[x]) * 100)}${x === "rot" ? "°" : "%"}`).join(" · ")}</span>
+  const rows = kf.map((k, i) => `<div class="kfrow"><span>◆ ${r3(k.t).toFixed(2)} ${T("秒")}</span><span class="kv">${keys.map((x) => `${T(lab[x])} ${x === "rot" ? r3(k[x] ?? 0) : r3((k[x] ?? DEF[x]) * 100)}${x === "rot" ? "°" : "%"}`).join(" · ")}${k.adj ? ` · ${T("補正")}` : ""}</span>
     <button data-a="kfgo" data-i="${i}" title="${T("このキーフレームの時刻へ移る")}">${T("移る")}</button><button data-a="kfdel" data-i="${i}">${T("消す")}</button></div>`).join("");
   return rows || `<div class="note">${T("まだありません")}</div>`;
 }
@@ -2951,7 +3504,7 @@ function keySec(s, type) {
     <option value="ai" ${k.mode === "ai" ? "selected" : ""}>AI で人や物だけ残す</option>
     ${isImg ? "" : `<option value="alpha" ${k.mode === "alpha" ? "selected" : ""}>元の透明度を使う</option>`}</select></label>`;
   if (k.mode === "chroma") {
-    h += `<label class="fl">抜く色<span class="row" style="flex-wrap:nowrap"><input type="color" data-k="key.color" value="${k.color || "#00ff00"}" style="flex:1;min-width:0"><button data-a="eyedrop" class="${st.eyedrop ? "on" : ""}" style="white-space:nowrap" title="プレビューを押して、その所の色を抜く色にします">💧 スポイト</button></span></label>
+    h += `<label class="fl">抜く色<span class="row" style="flex-wrap:nowrap"><input type="color" data-k="key.color" data-no-dropper value="${k.color || "#00ff00"}" style="flex:1;min-width:0"><button data-a="eyedrop" class="${st.eyedrop ? "on" : ""}" style="white-space:nowrap" title="プレビューを押して、その所の色を抜く色にします">💧 スポイト</button></span></label>
       ${num("key.tol", "抜く範囲(%)", r3((k.tol ?? 0.3) * 100), 0, 100, 1)}${num("key.soft", "境目のぼかし(%)", r3((k.soft ?? 0.1) * 100), 0.1, 100, 1)}
       ${chk("key.despill", "色かぶりを消す(縁に残った緑などを抑える)", k.despill !== false)}
       <div class="note">プレビューでもその場で抜けます。抜けすぎるときは「抜く範囲」を小さく、残るときは大きくします。</div>`;
@@ -2968,6 +3521,7 @@ function posSec(s, type, extra = "") {
   else if (s.kind === "text") h += num("size", "文字の大きさ(%)", r3(a.size * 100), 0.5, 100, 0.5);
   else h += `${num("w", "幅(%)", r3(a.w * 100), 1, 400, 0.5)}${num("h", "高さ(%)", r3(a.h * 100), 1, 400, 0.5)}${s.kind === "mosaic" || s.kind === "shape" ? "" : chk("keepAspect", "縦横比を保つ", s.keepAspect !== false)}`;
   h += `${num("rot", "回転(度)", r3(a.rot), -3600, 3600, 1)}${num("opacity", "不透明度(%)", r3(a.opacity * 100), 0, 100, 1)}`;
+  if (type === "ov") h += `<label class="fl" title="${esc(T("下のレイヤー・動画との重ね方(乗算・スクリーンなど)"))}">${esc(T("合成"))}<select data-k="blend">${blendOptions(blendOf(s))}</select></label>`;
   // 動画・画像のレイヤーも、真ん中・画面に収まる大きさに戻せる(第19版の「つなげる動画」と同じ。第27版でレイヤーにも)
   if (type === "ov" && ["video", "image"].includes(s.kind)) h += `<div class="row" style="margin-top:6px"><button data-a="resetpos" title="真ん中・画面に収まる大きさ・回転なし・不透明に戻します(キーフレームも消えます)">↺ 元に戻す</button></div>`;
   if (type === "clip") h += `<div class="row" style="margin-top:6px"><button data-a="resetpos" title="真ん中・元の大きさ・回転なし・不透明に戻します(キーフレームも消えます)">↺ 元に戻す</button></div>
@@ -3002,8 +3556,10 @@ function renderInspector() {
   }
   const type = st.sel.type;
   if (box.contains(document.activeElement) && box.dataset.for === `${type}${s.id}`) {
-    // 入力中は書き換えない(値だけ合わせる)
+    // 入力中は書き換えない(値だけ合わせる)。色・明るさの補正の欄も、値・ボタン・強さを今の状態に合わせる(元に戻したときも表示がずれないように)
     for (const el of box.querySelectorAll("[data-k]")) if (el !== document.activeElement) setField(el, s);
+    const as = box.querySelector('[data-sec="adj"]');
+    if (as && adjSel() === s) syncAdjAll(as, adjView(s), !st.adjBefore);
     return;
   }
   box.dataset.for = `${type}${s.id}`;
@@ -3020,7 +3576,7 @@ function renderInspector() {
     h += sec("crop", "画面を切り取る", `<div class="row"><button data-a="crop" class="${st.cropMode ? "on" : ""}">▭ 画面で範囲を指定</button><button data-a="uncrop">切り取りを外す</button></div>
       <div class="xy" style="margin-top:4px">${["x", "y", "w", "h"].map((k, i) => `<input type="number" data-k="crop${i}" value="${cr[i]}" title="${["左", "上", "幅", "高さ"][i]}(px)">`).join("")}</div>
       <div class="note">左・上・幅・高さ(元の動画の画素)。切り取った範囲は、書き出す大きさに合わせて拡大・縮小します。</div>`);
-    h += posSec(s, type) + edgeSec(s) + keySec(s, type) + kfSec(s, type) + transSec(s) + loopSec(s);
+    h += posSec(s, type) + adjSec(s) + edgeSec(s) + keySec(s, type) + kfSec(s, type) + transSec(s) + loopSec(s);
   } else if (type === "au") {
     const v = audioView(s), linked = s.link != null;
     const dis = linked ? "disabled" : "";
@@ -3053,6 +3609,8 @@ function renderInspector() {
       <div class="note">この PC のフォントと、フォントのフォルダに入れたフォントから選べます。</div>`,
     });
     h += posSec(s, type, timeRows(s)) + kfSec(s, type) + transSec(s) + loopSec(s);
+    h += sec("cimg", T("一文字ずつ画像にする"), `<div class="row"><button data-a="charimg">${esc(T("一文字ずつ画像にする"))}</button></div>
+      <div class="note">${esc(T("文字を、縁・影などの見た目ごと 1 文字ずつの画像のレイヤーにします(元の文字は非表示にします)。画像はグループにまとめ、一文字ずつの入る・出る動きは、グループの動き(順番・ずらす)で同じように動かします。背景の帯と、一文字ずつのずっと続ける動きは入りません。"))}</div>`, st.secOpen.cimg ?? false);
   } else if (s.kind === "mosaic") {
     const mode = ["pixel", "blur", "fill"].includes(s.mosaic) ? s.mosaic : "pixel";
     h = `<h4>モザイク</h4>`;
@@ -3084,8 +3642,9 @@ function renderInspector() {
       <div class="note">${st.cropMode ? "枠の角・中をドラッグして範囲を決め、「✂ この範囲で切り取る」(Enter)で切り取ります。「やめる」(Esc)で指定する前に戻ります。" : "左・上・幅・高さ(元の動画の画素)。「▭ 画面で範囲を指定」で、画面の枠を動かして決められます。"}</div>
       <div class="note">切り取ると、幅はそのままで縦横比が合います。画面いっぱいの動画を切り取ったときは、書き出す大きさも切り取った範囲になります。</div>`);
     }
-    h += posSec(s, type, timeRows(s)) + edgeSec(s) + maskSec(s) + clipSec(s) + olSec(s) + keySec(s, type) + kfSec(s, type) + transSec(s) + loopSec(s);
+    h += posSec(s, type, timeRows(s)) + adjSec(s) + edgeSec(s) + maskSec(s) + clipSec(s) + olSec(s) + keySec(s, type) + kfSec(s, type) + transSec(s) + loopSec(s);
   }
+  if (type === "ov" && s.gid) h = h.replace("</h4>", `</h4>${grpSec(s)}`); // グループの動き
   box.innerHTML = h;
   for (const d of box.querySelectorAll("details.sec")) d.addEventListener("toggle", () => { st.secOpen[d.dataset.sec] = d.open; });
   st.secs?.side.apply(); // 見出しを作り直したので、折りたたみのつまみを付け直す
@@ -3097,6 +3656,8 @@ function setField(el, s) {
   if (el.dataset.f !== undefined) return; // 大きさを変える条件の欄は、作り直すときだけ
   if (/^crop\d$/.test(k)) el.value = (s.crop || (st.sel?.type === "ov" ? [0, 0, s.vw || 16, s.vh || 9] : [0, 0, s.w, s.h]))[Number(k[4])];
   else if (k === "font") el.value = s.font || "";
+  else if (k.startsWith("grp.")) { const [, which, f] = k.split("."), x = P().groups?.[s.gid]?.[which] || { order: "fwd", stagger: 0.7 }; el.value = f === "order" ? x.order || "fwd" : r3((x.stagger ?? 0.7) * 100); }
+  else if (/^(mask\.)?p(size|space|spacey)$/.test(k)) { const v = patSizeSpace(k.startsWith("mask.") ? { ...MASK_DEF, ...(s.mask || {}) } : s); el.value = Math.round(v[/size$/.test(k) ? 0 : /spacey$/.test(k) ? 2 : 1] * 10000) / 100; }
   else if (st.sel?.type === "au" && ["start", "in", "out", "speed"].includes(k)) el.value = r3(audioView(s)[k] * (k === "speed" ? 100 : 1));
   else {
     const v = fieldVal(s, k);
@@ -3107,6 +3668,23 @@ function setField(el, s) {
 // 値を入れる(a.b は入れ子)。入れたら true
 function applyField(s, type, k, el) {
   if (k === "vkEase") { s.vkEase = el.value === "linear" ? "linear" : "smooth"; return true; }
+  // グループの動き(入る・出るときの順番・ずらす)
+  if (k.startsWith("grp.")) {
+    if (!s.gid) return false;
+    const [, which, f] = k.split("."), g = ((P().groups ||= {})[s.gid] ||= {}), x = (g[which] = { order: "fwd", stagger: 0.7, ...(g[which] || {}) });
+    if (f === "order") x.order = ["rev", "rand", "sync"].includes(el.value) ? el.value : "fwd";
+    else { const n = Number(el.value); if (el.value === "" || Number.isNaN(n)) return false; x.stagger = clamp(n, 0, 95) / 100; }
+    return true;
+  }
+  // 並べる形の大きさ・間隔(保存は pitch・gap)
+  if (/^(mask\.)?p(size|space|spacey)$/.test(k)) {
+    const n = Number(el.value);
+    if (el.value === "" || Number.isNaN(n)) return false;
+    const tgt = k.startsWith("mask.") ? (s.mask = { ...MASK_DEF, ...(s.mask || {}) }) : s;
+    const [sz, sp, spy] = patSizeSpace(tgt), e = clamp(n, -50, 500) / 100;
+    Object.assign(tgt, /size$/.test(k) ? patFromSizeSpace(clamp(n, 0.1, 100) / 100, sp, spy) : /spacey$/.test(k) ? patFromSizeSpace(sz, sp, e) : patFromSizeSpace(sz, e, spy));
+    return true;
+  }
   const [a, b] = k.split(".");
   if (/^crop\d$/.test(k)) {
     const n = Number(el.value);
@@ -3228,6 +3806,7 @@ function applyField(s, type, k, el) {
 }
 function onInspectorInput(e) {
   const el = e.target;
+  if (findSel()?.locked) { lockedNotifyV(); renderInspector(); return; }
   if (el.dataset.c === "tpl") { applyTemplate(el.value); return; }
   const k = el.dataset.k;
   const s = findSel();
@@ -3235,10 +3814,12 @@ function onInspectorInput(e) {
   const type = st.sel.type;
   const before = snapshot();
   if (!applyField(s, type, k, el)) return;
+  // グループ: 入る・出る動きを変えたら、仲間も同じ動きに
+  if (type === "ov" && s.gid && /^(tin|tout)\./.test(k)) { const w = k.split(".")[0]; for (const m of P().overlays) if (m !== s && m.gid === s.gid) { if (s[w]) m[w] = deep(s[w]); else delete m[w]; } }
   commit(before);
   if (type === "clip") st.cur = -1;
   // 選ぶもの(効果・方法)を変えたら欄が増減するので作り直す
-  const rebuild = (el.tagName === "SELECT" && (k === "key.mode" || k === "edge.mode" || k === "mosaic" || k === "shape" || k === "alt" || k === "mask.alt" || /\.type$/.test(k) || k === "mask.shape" || k === "mask.spin" || k === "mask.pulse")) || k === "ol.on";
+  const rebuild = (el.tagName === "SELECT" && (k === "key.mode" || k === "edge.mode" || k === "mosaic" || k === "shape" || k === "alt" || k === "mask.alt" || /\.type$/.test(k) || k === "mask.shape" || k === "mask.spin" || k === "mask.pulse")) || k === "ol.on" || /^(tin|tout|loop)\.(perChar|order|vis)$/.test(k) || /^grp\.(tin|tout)\.order$/.test(k);
   if (rebuild) delete $('[data-c="insp"]').dataset.for;
   refresh(!rebuild);
   if (!rebuild) syncKfList(s, type);
@@ -3254,8 +3835,9 @@ function kfAction(a, s, i) {
     const tl = r3(clamp(st.t - s0, 0, len));
     change(() => {
       const cur = curAnim(s, type);
+      const ad = (type === "clip" || ["image", "video"].includes(s.kind)) ? adjRaw(s, tl) : null; // 色・明るさの補正も記録する(使わない設定でも値は記録)
       s.kf = (s.kf || []).filter((k) => Math.abs(k.t - tl) >= 0.03);
-      s.kf.push({ t: tl, ...cur });
+      s.kf.push({ t: tl, ...cur, ...(adjOn(ad) || adjKfOn(s) ? { adj: { ...(ad || {}) } } : {}) });
       s.kf.sort((x, y) => x.t - y.t);
     });
     st.secOpen.kf = true;
@@ -3379,6 +3961,7 @@ function onInspectorAction(e) {
   const a = btn?.dataset.a;
   const s = findSel();
   if (!a || !s) return;
+  if (s.locked) { lockedNotifyV(); return; }
   const type = st.sel.type;
   if (a === "crop") { if (st.cropMode) cancelCrop(); else startCropMode(s); return; }
   else if (a === "cropok") { applyCrop(); return; }
@@ -3387,6 +3970,7 @@ function onInspectorAction(e) {
   else if (a === "here") change(() => { const d = s.end - s.start; s.start = r3(st.t); s.end = r3(st.t + d); });
   else if (a === "toend") change(() => { s.end = r3(Math.max(s.start + MIN_LEN, total())); });
   else if (a === "gfont") { openGoogleFonts(); return; }
+  else if (a === "charimg") { textToCharImages(s); return; }
   else if (a === "fontdir") { ctx.openPath?.(st.media.font_dir, btn); return; }
   else if (a === "fontre") { btn.disabled = true; loadFonts(true).finally(() => { btn.disabled = false; renderInspector(); }); return; }
   else if (a.startsWith("kf")) { kfAction(a, s, Number(btn.dataset.i)); delete $('[data-c="insp"]').dataset.for; }
@@ -3457,6 +4041,15 @@ function refresh(keepInspector = false) {
   $('[data-c="split"]').disabled = !has && !(P().audios || []).length;
   $('[data-c="del"]').disabled = !st.sel;
   $('[data-c="dup"]').disabled = !st.sel;
+  { // ロック: 選んでいるものが全部ロック中なら「ロック解除」
+    const ls = selItems(), on = ls.length > 0 && ls.every((x) => x.locked), lk = $('[data-c="lock"]');
+    lk.disabled = !ls.length;
+    lk.textContent = T(on ? "ロック解除" : "ロック");
+    const hs = selOvs(), hb = $('[data-c="hide"]');
+    hb.disabled = !hs.length;
+    hb.textContent = T(hs.length && hs.every((x) => x.hidden) ? "表示する" : "非表示");
+    $('[data-c="insp"]').classList.toggle("locked", ls.some((x) => x.locked) && !st.pathDraw);
+  }
   for (const k of ["format", "bg"]) { const el = $(`[data-p="${k}"]`); if (el !== document.activeElement) el.value = P()[k] || (k === "bg" ? "black" : "mp4"); }
   renderExportOpts();
   const [W, H] = P().size;
@@ -3528,14 +4121,24 @@ function fontCss(key) {
       face = { name: `cca-vf-${st.fontFaces.size + 1}`, ok: false };
       st.fontFaces.set(f.key, face);
       const ff = new FontFace(face.name, `url(${api.apiURL(`/cca_generator/videoedit/font_file?key=${encodeURIComponent(f.key)}`)})`);
-      ff.load().then((x) => { document.fonts.add(x); face.ok = true; fontChanged(); }).catch(() => { face.bad = true; fontChanged(); });
+      face.p = ff.load().then((x) => { document.fonts.add(x); face.ok = true; fontChanged(); }).catch(() => { face.bad = true; fontChanged(); });
     }
     if (face.ok) return { fontFamily: `"${face.name}", sans-serif`, fontWeight: "normal", fontStyle: "normal" };
   }
   return { fontFamily: `"${f.family}", sans-serif`, fontWeight: String(f.weight || 400), fontStyle: f.italic ? "italic" : "normal" };
 }
+// フォントを選ぶ欄の見本: el にそのフォントを付ける(ファイルのフォントは読み込みが終わったら付け直す)。値が空なら標準のフォント
+function fontPreview(key, el) {
+  const k = key || st.fontDefault?.key || "";
+  const put = () => { const c = fontCss(k); Object.assign(el.style, { fontFamily: c.fontFamily || "", fontWeight: c.fontWeight || "", fontStyle: c.fontStyle || "" }); };
+  put();
+  const face = st.fontFaces.get(k);
+  if (face && !face.ok && face.p) face.p.then(put);
+}
+setFontPreview(fontPreview);
 // Google Fonts から入れる(一覧はサーバーが fonts.google.com から読む。見本はブラウザが必要な文字だけ読む)
 async function openGoogleFonts() {
+  css(); // 画像編集から開いたとき(動画編集をまだ開いていないとき)も、この画面の見た目を読み込む
   let m = document.getElementById("cca-gfont");
   if (!m) { m = document.createElement("div"); m.id = "cca-gfont"; document.body.appendChild(m); }
   m.innerHTML = `<div class="pb"><div class="ph2"><b>Google Fonts から追加</b><input data-f placeholder="絞り込み(名前)">
@@ -3676,6 +4279,8 @@ function pick(kind) {
       <div class="ls" data-ls></div></div>`;
     const ls = m.querySelector("[data-ls]");
     let loading = false;
+    // カーソルを乗せた項目の絵を、カーソルの横に重ねて出す(画像・動画。音声は出さない)
+    hoverPreview(ls, ".it", (it) => (kind === "audio" ? "" : it.dataset.v));
     const fill = (q) => {
       if (loading) { ls.innerHTML = `<div class="note" style="padding:8px">${esc(T("読み込み中です"))}</div>`; return; }
       const items = list.filter((v) => !q || v.toLowerCase().includes(q.toLowerCase()));
@@ -3688,7 +4293,7 @@ function pick(kind) {
       list = listOf(); fill(m.querySelector("[data-f]").value);
     };
     if (mediaBusy > 0 || !mediaLoaded) reload(); else fill("");
-    const done = (v) => { m.classList.remove("open"); resolve(v); };
+    const done = (v) => { hidePreview(); m.classList.remove("open"); resolve(v); };
     m.querySelector("[data-f]").oninput = (e) => fill(e.target.value);
     m.querySelector("[data-x]").onclick = () => done(null);
     m.querySelector("[data-rf]").onclick = async (e) => { // 最新の一覧に
@@ -3700,11 +4305,14 @@ function pick(kind) {
     m.querySelector("[data-up]").onclick = () => {
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = kind === "image" ? "image/*" : kind === "audio" ? "audio/*,video/*" : "video/*";
+      input.accept = kind === "image" ? `image/*,${PDF_ACCEPT}` : kind === "audio" ? "audio/*,video/*" : "video/*";
       input.onchange = async () => {
-        const f = input.files?.[0];
+        let f = input.files?.[0];
         if (!f) return;
-        try { const v = await ctx.upload(f); await loadMedia(); done(v); }
+        try {
+          if (kind === "image" && isPdf(f)) { f = (await pdfToImages(f, { single: true }))[0]; if (!f) return; } // PDF は 1 ページ選んで画像に
+          const v = await ctx.upload(f); await loadMedia(); done(v);
+        }
         catch (err) { ctx.notify(`挿入できませんでした: ${err.message}`, "error"); }
       };
       input.click();
@@ -3717,7 +4325,7 @@ function pick(kind) {
 
 // ---------------------------------------------------------------- 書き出し
 function projectJson() {
-  const p = P();
+  const p = P(), gm = groupMap();
   const ex = p.export || {};
   const pre = ctx?.outPrefix?.();
   return JSON.stringify({
@@ -3726,8 +4334,8 @@ function projectJson() {
     export: { fps: Number(ex.fps) || 0, loop: Number(ex.loop) || 0, quality: Number(ex.quality) || 85, lossless: !!ex.lossless },
     clips: p.clips.map((c) => ({ src: c.src, in: c.in, out: c.out, crop: c.crop, speed: spd(c), x: c.x, y: c.y, s: c.s, rot: c.rot, opacity: c.opacity,
       kf: c.kf?.length ? c.kf : undefined, kfEase: c.kfEase, tin: c.tin || undefined, tout: c.tout || undefined, key: c.key || undefined, loop: c.loop?.type ? c.loop : undefined,
-      edge: c.edge?.mode ? c.edge : undefined })),
-    overlays: orderedOverlays().map(({ id, name, aspect, dur, fps, vw, vh, hasAudio, keepAspect, wm, ...o }) => {
+      edge: c.edge?.mode ? c.edge : undefined, adj: c.adj || undefined, adjOff: c.adjOff || undefined, asel: c.asel || undefined })),
+    overlays: orderedOverlays().map((x) => effOv(x, gm)).map(({ id, name, aspect, dur, fps, vw, vh, hasAudio, keepAspect, wm, gid, gi, ...o }) => {
       const out = { ...o, kf: o.kf?.length ? o.kf : undefined, loop: o.loop?.type ? o.loop : undefined };
       // 折り返しは、画面で折り返したとおりの行を渡す(見たとおりに書き出す)
       const fil = o.kind === "text" && Number(o.wrap) > 0 ? st.ovEls.get(id)?.querySelector(".tfil") : null;
@@ -3867,6 +4475,62 @@ function bind() {
   $('[data-c="wm"]').onclick = (e) => openWatermarkVideo(e.currentTarget);
   $('[data-c="split"]').onclick = () => splitSel();
   $('[data-c="del"]').onclick = () => deleteSel();
+  $('[data-c="lock"]').onclick = () => toggleLockSel();
+  // 透明の表示(画像編集と同じ設定)
+  {
+    const sel = $('[data-c="vbg"]'), col = $('[data-c="vbgc"]');
+    const sync = () => { const v = viewBg(); sel.value = v.mode; col.value = v.color; col.hidden = v.mode !== "color"; };
+    sync();
+    const put = () => { setViewBg({ mode: sel.value, color: col.value }); sync(); placeMain(); };
+    sel.onchange = put; col.oninput = put;
+  }
+  // スポイト: 色の欄の横に。EyeDropper が使えないブラウザでは、プレビューを押してその所の色を取る
+  attachDroppers(ui, (put) => {
+    if (st.playing) pause();
+    // 今の画面(動画・レイヤー)を 1 枚描いておき、そこから色を取る
+    const r = frameRect(), frame = $('[data-c="frame"]');
+    const snap = document.createElement("canvas");
+    snap.width = Math.max(1, Math.round(r.fw)); snap.height = Math.max(1, Math.round(r.fh));
+    const sg = snap.getContext("2d", { willReadFrequently: true });
+    const bg = P().bg || "black";
+    sg.fillStyle = bg === "white" ? "#fff" : "#000"; sg.fillRect(0, 0, snap.width, snap.height);
+    try { drawScene(sg, $('[data-c="ovl"]').children.length); } catch { /* 描けない物は飛ばす */ }
+    ctx.notify(T("プレビューの色を取りたい所を押してください(Esc でやめる)"), "info");
+    pickColor(frame, (cx, cy, n) => {
+      const fr = frame.getBoundingClientRect();
+      const x = Math.floor(((cx - fr.left) / Math.max(1, fr.width)) * snap.width), y = Math.floor(((cy - fr.top) / Math.max(1, fr.height)) * snap.height);
+      try { return sg.getImageData(x - (n >> 1), y - (n >> 1), n, n).data; } catch { return null; }
+    }, put);
+  });
+  // プレビューとタイムラインの境目(上下にドラッグ。高さはこのブラウザに覚える)
+  {
+    const sp = $('[data-c="tlsplit"]'), tl = $('[data-c="tl"]'), KEY = "cca_generator.vedit.tlh";
+    const apply = (h) => {
+      const left = sp.parentElement, tr = left.querySelector(".transport");
+      const max = Math.max(80, left.clientHeight - (tr?.offsetHeight || 0) - sp.offsetHeight - 160);
+      tl.style.height = h == null ? "" : `${Math.round(clamp(h, 80, max))}px`;
+      placeMain(); renderOverlays(); renderTimeline();
+    };
+    try { const h = Number(localStorage.getItem(KEY)); if (h > 0) tl.style.height = `${h}px`; } catch { /* 覚えていなくても使える */ }
+    sp.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const y0 = e.clientY, h0 = tl.offsetHeight;
+      sp.classList.add("on");
+      sp.setPointerCapture?.(e.pointerId);
+      const move = (ev) => apply(h0 - (ev.clientY - y0));
+      const up = () => {
+        sp.removeEventListener("pointermove", move); sp.removeEventListener("pointerup", up); sp.removeEventListener("pointercancel", up);
+        sp.classList.remove("on");
+        try { localStorage.setItem(KEY, String(tl.offsetHeight)); } catch { /* 覚えられなくても使える */ }
+      };
+      sp.addEventListener("pointermove", move); sp.addEventListener("pointerup", up); sp.addEventListener("pointercancel", up);
+    });
+    sp.addEventListener("dblclick", () => { try { localStorage.removeItem(KEY); } catch { /* なくてもよい */ } apply(null); });
+  }
+  $('[data-c="hide"]').onclick = () => toggleHideSel();
+  $('[data-c="group"]').onclick = () => groupSelV(true);
+  $('[data-c="ungroup"]').onclick = () => groupSelV(false);
   $('[data-c="zoom"]').oninput = (e) => { st.pxs = Number(e.target.value); renderTimeline(); };
   $('[data-c="snap"]').onclick = (e) => {
     st.snap = !st.snap;
@@ -3918,6 +4582,38 @@ function bind() {
   expo.addEventListener("input", onExp);
   expo.addEventListener("change", (e) => { if (e.target.type === "checkbox") onExp(e); });
   const insp = $('[data-c="insp"]');
+  // 色・明るさの補正の欄(元に戻すは、ボタン 1 回・つまみを動かし終えるまでで 1 回)
+  bindAdjPanel(insp, {
+    get: () => { const s = adjSel(); return s ? adjView(s) : null; },
+    apply: (fn, ph) => {
+      const s = adjSel();
+      if (!s) return;
+      if (s.locked) { lockedNotifyV(); return; }
+      if (ph.start && !st.adjBefore) st.adjBefore = snapshot();
+      if (s.kf?.length && !ph.item) {
+        // キーフレームがあるとき: 再生位置のキーフレーム(無ければ作る)の補正を変える(補正を使う / 使わないは、全体の設定)
+        const type = st.sel.type, s0 = selStart(s, type), len = selLen(s, type), tl = r3(clamp(st.t - s0, 0, len));
+        const v = adjView(s, type);
+        fn(v);
+        let k = s.kf.find((x) => Math.abs(x.t - tl) < 0.03);
+        if (!k) { k = { t: tl, ...animState(s, AKEYS[kindKey(type, s)], tl) }; s.kf.push(k); s.kf.sort((a, b) => a.t - b.t); }
+        if (adjOn(v.adj)) k.adj = { ...v.adj }; else k.adj = {};
+        for (const x of ["adjBase", "adjName", "adjK", "adjOff"]) { if (v[x] == null) delete s[x]; else s[x] = v[x]; }
+      } else fn(s);
+      st.dirty = true;
+      if (ph.end && st.adjBefore) { const b = st.adjBefore; st.adjBefore = null; commit(b); }
+      if (st.sel?.type === "clip") placeMain(); else renderOverlays();
+      if (ph.end) refresh(true);
+    },
+    stats: () => {
+      const s = adjSel();
+      if (!s) return null;
+      const src = st.sel.type === "clip" ? vmain() : st.ovEls.get(s.id)?.querySelector(s.kind === "image" ? "img" : "video");
+      return src ? adjStats(src) : null;
+    },
+    after: () => { st.adjOpen = !!insp.querySelector('[data-sec="adj"] details.adjd')?.open; delete insp.dataset.for; renderInspector(); },
+  });
+  insp.addEventListener("toggle", (e) => { if (e.target.matches?.("details.adjd")) st.adjOpen = e.target.open; }, true);
   insp.addEventListener("input", onInspectorInput);
   insp.addEventListener("change", (e) => { if (e.target.type === "checkbox") onInspectorInput(e); });
   insp.addEventListener("click", onInspectorAction);
@@ -3962,9 +4658,9 @@ function bind() {
     setZoom(st.vz.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
   }, { passive: false });
   stage.addEventListener("pointerdown", (e) => {
-    // 中ボタンのドラッグ、または拡大しているときに画面の外側(灰色の所)をドラッグで動かす。Alt は「吸い付かない」に使うので使わない
+    // 右ボタン・中ボタンのドラッグ(画像編集と同じ)、または拡大しているときに画面の外側(灰色の所)をドラッグで動かす。Alt は「吸い付かない」に使うので使わない
     const onBg = e.button === 0 && st.vz.z > 1.001 && !e.target.closest('[data-c="frame"], .ov, .crop, .wbox, button, input, select');
-    if (!(e.button === 1 || onBg)) return;
+    if (!(e.button === 1 || e.button === 2 || onBg)) return;
     e.preventDefault();
     e.stopPropagation();
     const x0 = e.clientX, y0 = e.clientY, p0 = { ...st.vz };
@@ -3974,6 +4670,7 @@ function bind() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }, true);
+  stage.addEventListener("contextmenu", (e) => e.preventDefault()); // 右ボタンのドラッグで動かすので、メニューは出さない
   $('[data-c="zin"]').onclick = () => setZoom(st.vz.z * 1.25);
   $('[data-c="zout"]').onclick = () => setZoom(st.vz.z / 1.25);
   $('[data-c="zfit"]').onclick = () => setZoom(1);
@@ -3995,11 +4692,18 @@ function bind() {
     e.preventDefault();
     e.stopPropagation();
     const txt = (e.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n");
+    // クリップボードの画像は、重ねる画像として置く(この画面でコピーしたものが優先。画像編集と同じ)
+    const f = /^cca-(vedit|imgedit):/.test(txt) ? null : [...(e.clipboardData?.files || [])].find((x) => /^image\//.test(x.type));
+    if (f) {
+      (async () => { await addOverlay("image", await ctx.upload(f)); })().catch((err) => ctx.notify(`入れられませんでした: ${err.message}`, "error")).finally(refresh);
+      return;
+    }
     if (txt.trim() && !clipMarkV.startsWith("!") && !/^cca-(vedit|imgedit):/.test(txt)) { addOverlay("text", null, { text: txt.slice(0, 2000) }).catch((err) => ctx.notify(err.message, "error")); return; }
     pasteClip();
   }, true);
   window.addEventListener("keydown", (e) => {
-    if (!ui?.classList.contains("open") || document.getElementById("cca-vpick")?.classList.contains("open") || watermarkKey(e) || historyKey(e)) return;
+    if (!ui?.classList.contains("open") || pdfKey(e) || document.getElementById("cca-vpick")?.classList.contains("open") || watermarkKey(e) || historyKey(e)) return;
+    if (selectKey(e)) return; // プルダウンを選んでいるときの上下キーなどは、プルダウンに渡す
     e.stopPropagation();
     const t = e.target;
     const inField = t && ui.contains(t) && isField(t);
@@ -4039,6 +4743,7 @@ function bind() {
     if (st.cropMode && e.key === "Enter") { e.preventDefault(); applyCrop(); return; }
     if (mod && k === "c") { if (copySel()) { markClip(); e.preventDefault(); } }
     else if (mod && k === "x") { if (copySel(true)) { markClip(); e.preventDefault(); } }
+    else if (mod && k === "g") { e.preventDefault(); groupSelV(!e.shiftKey); }
     else if (mod && k === "v") { pasteTimer = setTimeout(pasteClip, 250); } // 貼り付けは paste イベントで(コピーした文字があれば文字を置く)。来なければこれで貼る
     else if (e.key === " ") { e.preventDefault(); st.playing ? pause() : play(); }
     else if (st.pathDraw?.sel?.some((j) => st.pathDraw.pts[j]) && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key) && !mod) {

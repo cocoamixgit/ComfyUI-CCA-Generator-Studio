@@ -40,24 +40,40 @@ export function addRule(rules) {
   return R;
 }
 // rules = [[w, x, y, z, 大きさ], …]: 上から w 番目の段から x 段おき、その段の左から y 番目から z つおきの物の大きさ(倍)。後の条件が優先
-export const PAT_DEF = { pitch: 0.25, gap: 0.15, odd: 1, even: 1, rodd: 1, reven: 1, stagger: false, round: 0, alt: "col", rules: [] };
+export const PAT_DEF = { pitch: 0.25, pitchY: 0, offX: 0, offY: 0, gap: 0.15, odd: 1, even: 1, rodd: 1, reven: 1, stagger: false, round: 0, alt: "col", rules: [] };
 export const PAT_KEYS = Object.keys(PAT_DEF);
 const numv = (v, d) => (v !== null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
-const patPitch = (c) => Math.max(2, clamp(numv(c.pitch, PAT_DEF.pitch), 0.02, 1) * Math.min(c.w, c.h));
+const patPitch = (c) => Math.max(2, clamp(numv(c.pitch, PAT_DEF.pitch), 0.005, 1) * Math.min(c.w, c.h));
+// 縦の並べる間かく(pitchY。0 なら横と同じ)
+const patPitchY = (c) => (numv(c.pitchY, 0) > 0 ? Math.max(2, clamp(numv(c.pitchY, 0), 0.0025, 1) * Math.min(c.w, c.h)) : patPitch(c));
 const patBase = (c) => patPitch(c) * (1 - clamp(numv(c.gap, PAT_DEF.gap), -1, 0.95)); // すき間がマイナスなら、間隔より大きく(重なる)
+// 欄に出す 1 つの大きさ・間隔(どちらも箱の短い辺に対しての割合。間隔はとなりとの間で、マイナスなら重なる)⇔ 保存する pitch・gap
+// 返り値 [大きさ, 横の間隔, 縦の間隔]
+export function patSizeSpace(c) {
+  const p = clamp(numv(c.pitch, PAT_DEF.pitch), 0.005, 1), s = p * (1 - clamp(numv(c.gap, PAT_DEF.gap), -1, 0.95));
+  const py = numv(c.pitchY, 0) > 0 ? clamp(numv(c.pitchY, 0), 0.0025, 1) : p;
+  return [s, p - s, py - s];
+}
+export function patFromSizeSpace(s, e, ey = e) {
+  s = clamp(s, 0.001, 1);
+  const r5 = (v) => Math.round(v * 1e5) / 1e5;
+  const p = clamp(s + Math.max(e, -s / 2), 0.005, 1), py = clamp(s + Math.max(ey, -s / 2), 0.0025, 1); // 重なるのは、1 つの大きさの半分まで
+  return { pitch: r5(p), gap: r5(clamp(1 - s / p, -1, 0.95)), pitchY: Math.abs(py - p) < 1e-6 ? 0 : r5(py) };
+}
 // 並べる 1 つずつの [真ん中 x, 真ん中 y, 大きさ]。並びは箱の真ん中にそろえ、はしで欠ける分も入れる(箱の外は描く先で切れる)。
 // 列 q・行 r は、箱の左上のあたりを 0 番(1 番目 = 奇数番目)として数える
 export function patternItems(c) {
-  const p = patPitch(c), base = patBase(c);
+  const p = patPitch(c), py = patPitchY(c), base = patBase(c);
   let so = clamp(numv(c.odd, 1), 0, 2), se = clamp(numv(c.even, 1), 0, 2), ro = clamp(numv(c.rodd, 1), 0, 2), re = clamp(numv(c.reven, 1), 0, 2);
   const rules = (Array.isArray(c.rules) ? c.rules : []).filter(Array.isArray).map((R) => [Math.round(numv(R[0], 1)) - 1, Math.max(0, Math.round(numv(R[1], 0))) + 1,
     Math.round(numv(R[2], 1)) - 1, Math.max(0, Math.round(numv(R[3], 0))) + 1, clamp(numv(R[4], 1), 0, 3)]);
   const md = (a, n) => ((a % n) + n) % n;
   if (c.alt === "row" && c.rodd == null && c.reven == null) { ro = so; re = se; so = se = 1; }
-  const nq = Math.max(1, Math.round(c.w / p)), nr = Math.max(1, Math.round(c.h / p));
-  const mx = c.x + c.w / 2, my = c.y + c.h / 2, out = [];
+  const nq = Math.max(1, Math.round(c.w / p)), nr = Math.max(1, Math.round(c.h / py));
+  // 開始位置をずらす(1 つ分の間かくに対しての割合)
+  const mx = c.x + c.w / 2 + clamp(numv(c.offX, 0), -1, 1) * p, my = c.y + c.h / 2 + clamp(numv(c.offY, 0), -1, 1) * py, out = [];
   for (let r = -2; r <= nr + 1; r++) { // 大きいとはしの外の物も入るので、1 つ外まで
-    const y = my + (r - (nr - 1) / 2) * p, sx = c.stagger && r & 1 ? p / 2 : 0;
+    const y = my + (r - (nr - 1) / 2) * py, sx = c.stagger && r & 1 ? p / 2 : 0;
     for (let q = -3; q <= nq + 1; q++) {
       const x = mx + (q - (nq - 1) / 2) * p + sx;
       let s = c.alt === "check" ? base * ((q + r) & 1 ? se : so) : base * (q & 1 ? se : so) * (r & 1 ? re : ro);
@@ -390,6 +406,38 @@ export function outlineCanvas(src, t, blur, color, alpha = 1, edgeF = 0) {
   return { cv, pad };
 }
 
+// ふち取り(内側): src の不透明な所の、ふち(透明な所・絵の端)から t px までを縁にする(物の上に重ねる。物の外には出ない)。
+// 書き出し(videoedit.py の inner_alpha)と同じ作り方。戻り値: src と同じ大きさの canvas(縁が無ければ null)
+export function innerOutlineCanvas(src, t, blur, color, alpha = 1) {
+  const w = src.width, h = src.height;
+  t = Math.max(0, Number(t) || 0); blur = Math.max(0, Number(blur) || 0);
+  if (w < 1 || h < 1 || t < 0.05 || !(alpha > 0)) return null;
+  const W = w + 2, H = h + 2; // まわり 1px は「外」(絵の端もふちにする)
+  let sd;
+  try { sd = src.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, w, h).data; } catch { return null; }
+  const f = new Float64Array(W * H).fill(0), A = new Float32Array(w * h);
+  let any = false;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const a = sd[(y * w + x) * 4 + 3] / 255;
+    A[y * w + x] = a;
+    if (a >= 0.5) { f[(y + 1) * W + x + 1] = FAR; any = true; }
+  }
+  if (!any) return null;
+  edt2(f, W, H);
+  let B = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const d = Math.sqrt(f[(y + 1) * W + x + 1]);
+    B[y * w + x] = clamp(t + 1 - d, 0, 1) * A[y * w + x];
+  }
+  if (blur > 0.3) { const r = Math.max(1, Math.round((Math.sqrt(1 + 4 * blur * blur) - 1) / 2)); for (let i = 0; i < 3; i++) B = boxBlur(B, w, h, r); for (let i = 0; i < B.length; i++) B[i] *= A[i]; }
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const g = cv.getContext("2d"), img = g.createImageData(w, h), d = img.data, [cr, cg, cb] = hexRgb(color), al = clamp(Number(alpha), 0, 1);
+  for (let i = 0; i < B.length; i++) { d[i * 4] = cr; d[i * 4 + 1] = cg; d[i * 4 + 2] = cb; d[i * 4 + 3] = Math.round(B[i] * al * 255); }
+  g.putImageData(img, 0, 0);
+  return cv;
+}
+
 // パスの線(点と点の間。曲線はハンドルに沿う)に近いか。x, y, tol は点と同じ単位
 export function nearPathLine(pts, closed, x, y, tol) {
   const n = pts?.length || 0;
@@ -433,7 +481,8 @@ export function askClose(message, T = (x) => x) {
 
 // 右の欄の幅を、境目のドラッグで変える(ダブルクリックで元の幅)。幅はブラウザに残す。
 // main: 欄を並べている grid(列は ... var(--sidew, 既定の幅))、side: 右の欄、gap: 列の間(境目はその真ん中)
-export function sideSplitter(main, key, side, { gap = 0, minSide = 240, minMain = 320 } = {}) {
+// host: 幅の変数(--sidew)を置く要素(既定は main)。同じ host・key の境目どうしは、同じ幅で一緒に動く
+export function sideSplitter(main, key, side, { gap = 0, minSide = 240, minMain = 320, host = null } = {}) {
   if (!main || !side || main.querySelector(":scope > .cca-split")) return;
   if (!document.getElementById("cca-split-css")) {
     const st = document.createElement("style");
@@ -449,13 +498,29 @@ export function sideSplitter(main, key, side, { gap = 0, minSide = 240, minMain 
   if (getComputedStyle(main).position === "static") main.style.position = "relative";
   main.appendChild(bar);
   const place = () => { bar.style.left = `${side.offsetLeft - gap / 2}px`; };
-  const fit = (w) => Math.max(minSide, Math.min(w, (main.clientWidth || 4000) - minMain));
-  const set = (w) => { main.style.setProperty("--sidew", `${Math.round(w)}px`); requestAnimationFrame(place); };
-  let w0 = 0;
-  try { w0 = Number(localStorage.getItem(LS)) || 0; } catch { /* 読めなければ既定の幅 */ }
+  const mS = () => (typeof minSide === "function" ? minSide() : minSide), mM = () => (typeof minMain === "function" ? minMain() : minMain);
+  const fit = (w) => Math.max(mS(), Math.min(w, (main.clientWidth || 4000) - mM()));
+  const H = host || main;
+  const set = (w) => { H.style.setProperty("--sidew", `${Math.round(w)}px`); requestAnimationFrame(place); };
+  // 覚えた幅: 割合(.r)があれば、今の欄の幅 × 割合(画面の幅が変わっても同じ比率)。無ければ px
+  const savedW = () => {
+    let px = 0, r = 0;
+    try { px = Number(localStorage.getItem(LS)) || 0; r = Number(localStorage.getItem(`${LS}.r`)) || 0; } catch { /* 読めなければ既定の幅 */ }
+    return r > 0 && main.clientWidth > 0 ? r * main.clientWidth : px;
+  };
+  const w0 = savedW();
   if (w0) set(fit(w0));
-  new ResizeObserver(place).observe(main);
+  // 窓・欄の大きさ・項目の横幅が変わって、今の幅では入らなくなったら直す(横幅を決めた項目・一番狭い幅より狭くしない)。
+  // 開いたとき(隠れていた欄が見えたとき)も直す。覚えた幅は変えない(広い画面に戻せば、その幅になる)
+  const refit = () => {
+    if (!side.offsetParent || !main.offsetParent || getComputedStyle(bar).display === "none") return;
+    const want = parseFloat(H.style.getPropertyValue("--sidew")) || side.getBoundingClientRect().width;
+    const f = fit(savedW() || want);
+    if (Math.abs(f - side.getBoundingClientRect().width) > 1) set(f);
+  };
+  new ResizeObserver(() => { place(); requestAnimationFrame(refit); }).observe(main);
   new ResizeObserver(place).observe(side);
+  window.addEventListener("resize", () => requestAnimationFrame(refit));
   bar.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     bar.setPointerCapture(e.pointerId);
@@ -467,16 +532,22 @@ export function sideSplitter(main, key, side, { gap = 0, minSide = 240, minMain 
     const up = () => {
       bar.classList.remove("on");
       bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up);
-      try { localStorage.setItem(LS, String(parseFloat(main.style.getPropertyValue("--sidew")))); } catch { /* 残せなくても今は使える */ }
+      try {
+        const w = parseFloat(H.style.getPropertyValue("--sidew"));
+        localStorage.setItem(LS, String(w));
+        if (main.clientWidth > 0) localStorage.setItem(`${LS}.r`, String(Math.round((w / main.clientWidth) * 10000) / 10000));
+      } catch { /* 残せなくても今は使える */ }
       window.dispatchEvent(new Event("resize")); // プレビューの大きさを合わせ直す
+      window.dispatchEvent(new CustomEvent("cca-layout-change", { detail: { key: key } }));
     };
     bar.addEventListener("pointermove", move);
     bar.addEventListener("pointerup", up);
   });
   bar.addEventListener("dblclick", () => {
-    main.style.removeProperty("--sidew");
-    try { localStorage.removeItem(LS); } catch { /* 無視 */ }
+    H.style.removeProperty("--sidew");
+    try { localStorage.removeItem(LS); localStorage.removeItem(`${LS}.r`); } catch { /* 無視 */ }
     requestAnimationFrame(place);
     window.dispatchEvent(new Event("resize"));
+    window.dispatchEvent(new CustomEvent("cca-layout-change", { detail: { key: key } }));
   });
 }

@@ -1,0 +1,63 @@
+// CCA Generator の配色(テーマ)。項目の説明は web/cca_theme.js の先頭にあります。
+// このフォルダに 1 ファイル 1 テーマで置くと、設定の「テーマカラー」に出ます(名前が _ で始まるファイルは読み込みません)。
+export default {
+  id: "flame", order: 110,
+  name: "炎",
+  light: false,
+  bg: "#17100c",
+  fg: "#ffffff",
+  accent: "#f97316",
+  accent2: "#facc15",
+  grad: ["#361d12", "#140e0b"],
+  hueMap: [[10, "#ef4444"], [45, "#facc15"]],
+  vars: {
+    "--bg": "#17100c",
+    "--panel": "#261811",
+    "--card": "#332017",
+    "--card2": "#42291d",
+    "--text": "#ffffff",
+    "--muted": "#ebd0b7",
+    "--border": "rgba(255, 255, 255, 0.20)",
+    "--accent": "#f97316",
+    "--accent2": "#facc15",
+    "--accent-fg": "#1c0d05",
+    "--danger": "#ef4444",
+    "--warn": "#facc15",
+    "--ok": "#fb923c"
+  },
+  deco: {
+    cardShadow: "0 2px 12px rgba(10, 5, 2, 0.35), inset 0 1px 0 rgba(255, 235, 195, 0.20)",
+    secCardShadow: "0 2px 12px rgba(10, 5, 2, 0.35), inset 0 1px 0 rgba(255, 235, 195, 0.22)",
+    btnGrad: "linear-gradient(180deg, rgba(255, 235, 195, 0.24), rgba(249, 115, 22, 0.08) 48%, rgba(20, 14, 11, 0.24))",
+    btnShadow: "inset 0 1px 0 rgba(255, 246, 229, 0.42), inset 0 -2px 3px rgba(20, 14, 11, 0.28), 0 1px 3px rgba(0, 0, 0, 0.28)",
+    btnActiveShadow: "inset 0 2px 4px rgba(20, 14, 11, 0.40)",
+    goBorder: "#fff6e5",
+    goColor: "#ffffff",
+    goTextShadow: "0 1px 2px rgba(28, 13, 5, 0.70)",
+    goShadow: "inset 0 2px 0 rgba(255, 246, 229, 0.48), inset 0 -6px 12px rgba(150, 35, 10, 0.32), 0 6px 16px rgba(249, 115, 22, 0.42)"
+  },
+  sections: {
+    model:    { accent: "#f97316", tint: "rgba(249, 115, 22, 0.15)",  border: "rgba(249, 115, 22, 0.36)" },
+    images:   { accent: "#facc15", tint: "rgba(250, 204, 21, 0.14)",  border: "rgba(250, 204, 21, 0.35)" },
+    prompt:   { accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.36)" },
+    models:   { accent: "#fb923c", tint: "rgba(251, 146, 60, 0.14)",  border: "rgba(251, 146, 60, 0.34)" },
+    hires:    { accent: "#fde047", tint: "rgba(253, 224, 71, 0.13)",  border: "rgba(253, 224, 71, 0.33)" },
+    tile:     { accent: "#dc2626", tint: "rgba(220, 38, 38, 0.15)",   border: "rgba(220, 38, 38, 0.35)" },
+    size:     { accent: "#f59e0b", tint: "rgba(245, 158, 11, 0.14)",  border: "rgba(245, 158, 11, 0.34)" },
+    audiogen: { accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.35)" },
+    sampling: { accent: "#fef08a", tint: "rgba(254, 240, 138, 0.13)", border: "rgba(254, 240, 138, 0.32)" },
+    models2:  { accent: "#c2410c", tint: "rgba(194, 65, 12, 0.15)",   border: "rgba(194, 65, 12, 0.35)" },
+    out:      { accent: "#fbbf24", tint: "rgba(251, 191, 36, 0.14)",  border: "rgba(251, 191, 36, 0.34)" },
+    shapes:   { accent: "#f97316", tint: "rgba(249, 115, 22, 0.16)",  border: "rgba(249, 115, 22, 0.38)" },
+    text:     { accent: "#facc15", tint: "rgba(250, 204, 21, 0.15)",  border: "rgba(250, 204, 21, 0.36)" },
+    watermark:{ accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.36)" },
+    bgremove: { accent: "#fb923c", tint: "rgba(251, 146, 60, 0.15)",  border: "rgba(251, 146, 60, 0.36)" },
+    inpaint:  { accent: "#f59e0b", tint: "rgba(245, 158, 11, 0.15)",  border: "rgba(245, 158, 11, 0.36)" },
+    bg:       { accent: "#f97316", tint: "rgba(249, 115, 22, 0.16)",  border: "rgba(249, 115, 22, 0.38)" },
+    effects:  { accent: "#facc15", tint: "rgba(250, 204, 21, 0.15)",  border: "rgba(250, 204, 21, 0.36)" },
+    filter:   { accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.36)" },
+    layers:   { accent: "#fb923c", tint: "rgba(251, 146, 60, 0.14)",  border: "rgba(251, 146, 60, 0.34)" },
+    audio:    { accent: "#f59e0b", tint: "rgba(245, 158, 11, 0.15)",  border: "rgba(245, 158, 11, 0.36)" },
+    timeline: { accent: "#f97316", tint: "rgba(249, 115, 22, 0.16)",  border: "rgba(249, 115, 22, 0.38)" }
+  }
+};

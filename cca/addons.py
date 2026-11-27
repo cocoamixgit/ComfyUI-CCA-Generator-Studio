@@ -22,6 +22,13 @@ ADDONS = {
         "zip_folder": "kandinsky-6-main/comfyui", "folder": "kandinsky6",
         "readme": "https://github.com/kandinskylab/kandinsky-6/tree/main/comfyui",
     },
+    "SenseNovaU1ModelLoader": {
+        "name": "ComfyUI-SenseNova-U1", "author": "OpenSenseNova", "title": "SenseNova-U1.6",
+        "repo": "https://github.com/OpenSenseNova/ComfyUI-SenseNova-U1",
+        "zip": "https://github.com/OpenSenseNova/ComfyUI-SenseNova-U1/archive/refs/heads/main.zip",
+        "zip_folder": "ComfyUI-SenseNova-U1-main", "folder": "ComfyUI-SenseNova-U1",
+        "readme": "https://github.com/OpenSenseNova/ComfyUI-SenseNova-U1",
+    },
     # 第42版: 声・音楽
     "AILab_Qwen3TTSCustomVoice": {
         "name": "ComfyUI-QwenTTS", "author": "1038lab", "title": "Qwen3-TTS", "extra_pkgs": "qwen-tts",

@@ -56,9 +56,14 @@ DEFAULTS = {
     # BPM・キー・拍子・言語はノードの既定値(120・C major・4・en)
     "ACE-Step 1.5": dict(COMMON, duration=120, bpm=120, keyscale="C major", timesig="4", language="en", instrumental=False,
                          think=True, lm_cfg=2.0, lm_temp=0.85, lm_top_p=0.9, lm_top_k=0, lm_min_p=0.0, shift=3.0),
+    # TRELLIS.2: ComfyUI 同梱テンプレート「画像 → 3D」の値(骨組み 12 ステップ・形 20 ステップ・色 12 ステップ・CFG 7.5 / 色は 1.0・面 70 万・テクスチャ 4096)
+    "TRELLIS.2": dict(faces=700000, texture=4096, ss_steps=12, ss_cfg=7.5, shape_steps=20, shape_cfg=7.5, tex_steps=12, tex_cfg=1.0,
+                      metal_mode="fixed", metallic=0.0, rough_mode="model", roughness=0.5, up_steps=12, ss_shift=5.0, ss_rescale=0.7, shape_rescale=0.5,
+                      crop_pad=1.1, crop_bg="black", remesh_res=768, remesh_smooth=20, remesh_small=0.01, crease=180.0, uv_pad=1, uv_weld=0.0002,
+                      normal_res=2048, cage=0.05, ao_res=1024, ao_samples=64, ao_dist=0.71, ao_strength=1.0, ao_bias=0.01),
 }
 # 種別 → どの手順で作るか
-GEN = {"Qwen3-TTS": "qwen_tts", "RVC": "rvc", "LatentSync 1.6": "latentsync", "HeartMuLa": "heartmula", "ACE-Step 1.5": "ace"}
+GEN = {"Qwen3-TTS": "qwen_tts", "RVC": "rvc", "LatentSync 1.6": "latentsync", "HeartMuLa": "heartmula", "ACE-Step 1.5": "ace", "TRELLIS.2": "trellis2"}
 LIP_FPS = 25.0  # LatentSync のコマの速さ
 # 歌なし(インストゥルメンタル)のときの歌詞(ACE-Step の書き方)
 INSTRUMENTAL = "[Instrumental]"
@@ -71,7 +76,8 @@ def spec():
         "stt_lang": WHISPER_LANGS, "ace_language": ACE_LANGS, "keyscale": ACE_KEYS, "format": FORMATS, "mp3q": MP3_QUALITY,
         "timesig": ["2", "3", "4", "6"], "length_mode": ["normal", "pingpong", "loop_to_audio"],
         "memory_mode": ["auto", "normal", "low", "ultra"], "hm_precision": ["auto", "fp32", "fp16", "bf16"],
-        "precision": ["bf16", "fp16", "fp32"], "model_size": ["0.6B", "1.7B"]}}
+        "precision": ["bf16", "fp16", "fp32"], "model_size": ["0.6B", "1.7B"], "texture": [1024, 2048, 4096],
+        "normal_res": [512, 1024, 2048, 4096], "crop_bg": ["black", "white", "gray"], "metal_mode": ["fixed", "model"], "rough_mode": ["model", "fixed"]}}
 
 
 def _opts(model_type, raw):
@@ -247,6 +253,9 @@ def build_prompt(v):
     from .wildcards import resolve as resolve_wildcards
     mt, task = v.get("model_type"), v.get("task")
     info = TYPE_INFO.get(mt)
+    if info and info["kind"] == "3d":  # 3D(TRELLIS.2)も同じ流れで作る
+        from .gen3d import build_prompt as build_3d
+        return build_3d(v)
     if not info or info["kind"] != "audio":
         raise ValueError(f"音声・音楽の種別ではありません: {mt}")
     if task not in info["tasks"]:

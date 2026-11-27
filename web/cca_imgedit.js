@@ -14,11 +14,15 @@
 import { api } from "../../scripts/api.js";
 import { T, confirm, prompt } from "./cca_i18n.js";
 import { openWatermark, watermarkKey } from "./cca_watermark.js";
+import { curBrush, newStroke, strokeDab, strokeTo, texMul, setupBrushPanel, BRUSH_CSS, finishStroke, bumpBrushSize } from "./cca_brush.js";
 import { frameHlHtml, frameHlCss, bindFrameHl, frameHlPad } from "./cca_framehl.js";
-import { rulesHtml, setRule, addRule, SHAPES, shapePath as cutShapePath, PATTERNS, PAT_DEF, PAT_KEYS, featherBase, outlineCanvas, outlineSides, nearPathLine, askClose, sideSplitter } from "./cca_shapes.js"; // 図形ツールの shapePath と分ける
+import { rulesHtml, setRule, addRule, SHAPES, shapePath as cutShapePath, PATTERNS, PAT_DEF, PAT_KEYS, patSizeSpace, patFromSizeSpace, featherBase, outlineCanvas, outlineSides, innerOutlineCanvas, nearPathLine, askClose, sideSplitter } from "./cca_shapes.js"; // 図形ツールの shapePath と分ける
 import { setupSections, sectionEditBar, SECTIONS_CSS, cardCss } from "./cca_sections.js";
 import { saveEntry, openHistory, historyKey, makeThumb, newSid, fmtTime, fileUrl, HIST_EVERY } from "./cca_history.js";
 import { fontApi } from "./cca_videoedit.js";
+import { isPdf, pdfToImages, pdfKey, PDF_ACCEPT, canvasToPdf } from "./cca_pdf.js";
+import { adjOn, adjSig, adjustCanvas, adjStats, adjPanelHtml, adjPanelCss, bindAdjPanel, syncAdjAll, adjActive, selSig, flattenPath } from "./cca_adjust.js";
+import { BLENDS, blendOf, blendOptions, viewBg, setViewBg, attachDroppers, pickColor, selectKey } from "./cca_text.js";
 import { textLayout, drawTextAt, textSectionsHtml, applyTextField, setTextField, sectionCss, bboxHtml, bboxCss, bboxDrag, num as tnum, sec as tsec, STYLE_RESET, STYLE_KEYS,
   clipboard, pickText, isField, isTextField, snapLines, snapMove, snapResize, showSnapGuides, rotatedBounds, lineX, enhanceNotes } from "./cca_text.js";
 
@@ -36,12 +40,14 @@ const RM = {
 const RM_LABEL = { unet: "拡散モデル", lora: "オブジェクト除去 LoRA", clip: "テキストエンコーダー", vae: "VAE" };
 
 let ui = null;
+// 画像の上に重ねて描く色: テーマの look.overlay(CSS の変数 --ov-<名前>)。書いていなければ d(今の色)
+const ovc = (k, d) => { try { return (ui && getComputedStyle(ui).getPropertyValue(`--ov-${k}`).trim()) || d; } catch { return d; } };
 let ctx = null;
 const st = {
   W: 0, H: 0, layers: [], aimg: null, isel: null, // キャンバスの大きさ・レイヤー(下から上へ)・作業する画像・選んだ画像(の id)
   source: "", name: "",
   undo: [], redo: [], dirty: false, saved: null,
-  tool: "select", snap: true, msel: [], brush: 40, balpha: 100, tol: 32, contig: true, rmMethod: "lama", mzsize: 16, mzmode: "pixel",
+  tool: "select", snap: true, msel: [], brush: 40, balpha: 100, bhard: 100, bsmooth: 0, bcolor: "#222222", btype: "round", pen: false, penWhat: "both", tol: 32, contig: true, rmMethod: "lama", mzsize: 16, mzmode: "pixel",
   tsel: null, secOpen: {}, styles: null, tplSel: "",
   bg: null, bgp: { thr: 0, grow: 0, feather: 0 },
   view: { z: 1, px: 0, py: 0, k: 1, ox: 0, oy: 0 },
@@ -50,7 +56,7 @@ const st = {
   path: null, popt: { color: "#ff3b30", alpha: 1, width: 4, feather: 0 }, // パスツール: 置いた点・色などの設定
   crop: null, // トリミング中の枠(キャンバスの px)
   lcrop: null, // 画像のレイヤーの切り取りの範囲を画面で決めている間: { id, before(元に戻す用), L0(やめたときに戻す値) }
-  shapeType: "rect", shapeStyle: null, lineStyle: null,
+  shapeType: "rect", shapeStyle: loadShapeStyle("shape"), lineStyle: loadShapeStyle("line"),
   tedit: null, blink: true, // 画像の上で編集している文字の id・入力位置の点滅 // 図形: 次に置く形・最後に使った見た目(塗る図形 / 線)
   job: null, tmpFiles: [], // 時間のかかる処理の進み具合 / 終わったら消す temp の画像
   ver: 0, // 変えるたびに増える(自動保存は、前に保存したときから増えていたら保存する)
@@ -81,7 +87,7 @@ function css() {
   if (document.getElementById("cca-imged-style")) return;
   const s = document.createElement("style");
   s.id = "cca-imged-style";
-  s.textContent = `
+  s.textContent = `${BRUSH_CSS}
 #cca-imged{position:fixed;inset:0;z-index:1001;background:#000c;display:none;align-items:center;justify-content:center;
   font:14px/1.5 system-ui,"Segoe UI","Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:#e4e7eb}
 #cca-imged.open{display:flex}
@@ -157,6 +163,8 @@ function css() {
 #cca-imged .ly .th{width:34px;height:24px;flex:none;border-radius:3px;background:repeating-conic-gradient(#3a3f48 0% 25%,#2a2e35 0% 50%) 0 0/8px 8px;position:static}
 #cca-imged .ly .tt{display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#cfd5dc}
 #cca-imged .ly .act{font-size:11px;color:#ffd24d;white-space:nowrap}
+#cca-imged .obox.locked [data-h]{display:none}
+#cca-imged [data-c="lyinsp"].locked,#cca-imged [data-c="txinsp"].locked{opacity:.55;pointer-events:none}
 #cca-imged .ly button{padding:0 5px;font-size:12px}
 #cca-imged .ly.hid .ln{opacity:.45;text-decoration:line-through}
 #cca-imged .lyops{margin-top:4px}
@@ -169,12 +177,14 @@ function css() {
 #cca-imged .shapes button{padding:4px 7px;font-size:12.5px}
 #cca-imged textarea.tedit{position:absolute;left:0;top:0;width:4px;height:20px;min-height:0;padding:0;margin:0;border:0;opacity:0;resize:none;overflow:hidden;
   white-space:pre;font-size:16px;line-height:20px;z-index:6;pointer-events:none;background:transparent;color:transparent;caret-color:transparent}
-#cca-imged .g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 8px}
-#cca-imged .g2 label.fl{grid-template-columns:5.5em minmax(0,1fr)}
+#cca-imged .g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5em,1fr));gap:2px 14px} /* 2 列が入らない幅では 1 列に */
+#cca-imged .g2 label.fl{grid-template-columns:minmax(0,1fr) minmax(4.9em,7em)}
+#cca-imged .g2 > label.fl:has(.cca-cpk),#cca-imged .g2 > label.fl:has(input[type=color]){grid-column:1 / -1;grid-template-columns:5.5em minmax(0,1fr)}
 #cca-imged input[type=text]{background:#0e1115;color:#e4e7eb;border:1px solid #3a4250;border-radius:6px;padding:3px 6px;font:inherit;font-size:13px;width:100%;box-sizing:border-box}
 #cca-imged .tlist{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 #cca-imged .tlist button{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 ${sectionCss("#cca-imged")}
+${adjPanelCss("#cca-imged")}
 ${frameHlCss("#cca-imged")}
 ${bboxCss("#cca-imged")}
 ${SECTIONS_CSS("#cca-imged")}
@@ -220,17 +230,32 @@ function build() {
             <button data-tool="erase" title="なぞった所を透明にする">消しゴム</button>
             <button data-tool="restore" title="なぞった所を開いたときの画像に戻す">戻すブラシ</button>
             <button data-tool="mosaic" title="なぞった所をモザイク(またはぼかし)にする">▦ モザイク</button>
+            <button data-tool="paint" title="なぞった所に色を塗ります(ペンタブの筆圧も使えます)">お絵描き</button>
             <button data-tool="text" title="クリックした所に文字を入れる。文字を押すと選べます">T 文字</button>
             <button data-tool="path" title="クリックで点を置いてパスを作ります(Alt + クリックで曲線)。内側・外側の削除、塗りつぶし、線の描画ができます">✒ パスツール</button>
+            <button data-tool="msrect" title="ドラッグで四角く範囲を選びます(Shift で正方形)。切り抜いて移動・コピー・削除・塗りつぶしができます">四角で選択</button>
+            <button data-tool="msell" title="ドラッグで丸く範囲を選びます(Shift で正円)。切り抜いて移動・コピー・削除・塗りつぶしができます">丸で選択</button>
           </div>
           ${range("brush", "ブラシの太さ", 2, 400, 1, 40)}
           ${range("balpha", "アルファ値(%)", 1, 100, 1, 100)}
+          ${range("bhard", "ブラシの硬さ(%)", 0, 100, 1, 100)}
+          <div data-c="paintopts" hidden>
+            <div class="row"><button data-pm="paint" class="on" title="描きます(B)">ブラシ</button><button data-pm="erase" title="選んでいるブラシの形で消します(E)。ペンタブのペンの消しゴム側でも消せます">消しゴム</button></div>
+            <label class="fl">ブラシの色<input type="color" data-c="bcolor" value="#222222"></label>
+            <div data-c="bpanel"></div>
+          </div>
+          <div data-c="penopts" hidden>
+            <label class="row" style="font-size:13px"><input type="checkbox" data-c="pen"> ペンタブモード(筆圧を使う)</label>
+            <label class="fl">筆圧で変えるもの<select data-c="penwhat"><option value="both">太さと濃さ</option><option value="size">太さ</option><option value="alpha">濃さ</option></select></label>
+          </div>
           <div data-c="mzopts" hidden>
             <label class="fl">モザイクの種類<select data-c="mzmode"><option value="pixel">モザイク(ブロック)</option><option value="blur">ぼかし</option></select></label>
             ${range("mzsize", "モザイクの大きさ(px)", 2, 200, 1, 16)}
           </div>
           <div data-c="pathopts" hidden>
+            <div class="row"><button data-c="pathcut" title="作業中の画像の、選んだ範囲(パスの内側)を切り抜いて新しいレイヤーにします。そのままドラッグで動かせます(Ctrl+X で切り取り)">切り抜いて移動</button><button data-c="pathcopy" title="作業中の画像の、選んだ範囲(パスの内側)をコピーして新しいレイヤーにします(Ctrl+C でコピー、Ctrl+V で同じ位置に貼り付け)">コピーして新しいレイヤー</button></div>
             <div class="row"><button data-c="pathin" title="作業中の画像の、パスの内側を透明にします">✂ 内側を削除</button><button data-c="pathout" title="作業中の画像の、パスの外側を透明にします">✂ 外側を削除</button></div>
+            <div class="row"><button data-c="pathselin" title="作業中の画像の、パスの内側を「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)">内側を選ぶ</button><button data-c="pathselout" title="作業中の画像の、パスの外側を「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)">外側を選ぶ</button></div>
             <div class="row"><button data-c="pathfill" title="パスの内側を選んだ色で塗りつぶし、新しいレイヤーとして追加します">■ 塗りつぶし</button><button data-c="pathline" title="パスに沿った線を、新しいレイヤーとして追加します(閉じたパスは 1 周)">〰 線を描画</button></div>
             <label class="fl">色<input type="color" data-c="pcolor" value="#ff3b30"></label>
             ${range("palpha", "不透明度(%)", 1, 100, 1, 100)}
@@ -240,10 +265,10 @@ function build() {
           </div>
           <div class="note" data-c="toolnote"></div></section>
         <section data-sec="layers" data-c="lysec"><h4>レイヤー</h4>
-          <div class="row"><select data-c="placepick" title="画像を選んで、新しいレイヤーとして挿入します(何も開いていなければ、その画像で開きます)"></select><button data-c="placerf" title="保存先(output)と input のファイルの一覧を読み直して、最新にします">更新</button><button data-c="placeup" title="パソコンの画像を選んで、新しいレイヤーとして挿入します(何も開いていなければ、その画像で開きます)">＋ 画像を挿入</button></div>
+          <div class="row"><select data-c="placepick" title="画像を選んで、新しいレイヤーとして挿入します(何も開いていなければ、その画像で開きます)"></select><button data-c="placerf" title="保存先(output)と input のファイルの一覧を読み直して、最新にします">更新</button><button data-c="placeup" title="パソコンの画像を選んで、新しいレイヤーとして挿入します(何も開いていなければ、その画像で開きます)">＋ 画像を挿入</button><button data-c="newlayer" title="何も描かれていない透明なレイヤーを追加します(お絵描きなどに使います)">＋ 新規レイヤー</button></div>
           <div class="lylist" data-c="lylist"></div>
           <div class="row lyops"><button data-lo="top" title="いちばん前へ">⏫ 一番前</button><button data-lo="up" title="1 つ前へ">前へ</button><button data-lo="down" title="1 つ後ろへ">後ろへ</button><button data-lo="bottom" title="いちばん後ろへ">⏬ 一番後ろ</button>
-            <button data-lo="dup" title="複製(Ctrl+C → Ctrl+V でも)">⧉ 複製</button><button data-lo="del" title="消す(Delete)">🗑 消す</button>
+            <button data-lo="dup" title="複製(Ctrl+C → Ctrl+V でも)">⧉ 複製</button><button data-lo="lock" title="ロックすると、画面の上で選ぶ・動かす・変える・消すができなくなります(一覧からは選べます)">ロック</button><button data-lo="del" title="消す(Delete)">🗑 消す</button>
             <button data-lo="group" title="選んだレイヤーをグループにする(Ctrl+G)。Shift / Ctrl を押しながら押すと、いくつも選べます">⛓ グループ</button><button data-lo="ungroup" title="グループを解く(Ctrl+Shift+G)">解く</button></div>
           <div class="note" data-c="msel"></div>
           <div data-c="lyinsp"></div>
@@ -310,6 +335,7 @@ function build() {
               作業の大きさ(MP = 百万画素)を上げると細かくなりますが、遅くなり、メモリも使います。</div>
             <div class="note">ライセンス: FLUX.2 Klein 4B・オブジェクト除去 LoRA(fal)とも Apache-2.0(商用可)。</div>
           </details></section>
+        <section data-sec="adjust"><h4>色・明るさの補正</h4><div data-c="adjbox"></div></section>
         <section class="sec-folded" data-sec="canvas" data-c="cvsec"><h4>キャンバス(大きさ・トリミング)</h4>
           <div class="note" data-c="cvinfo"></div>
           <div class="g2"><label class="fl">幅(px)<input type="number" data-cv="w" min="1" max="16384" step="1"></label>
@@ -319,6 +345,9 @@ function build() {
             <button class="pri" data-ca="resize" title="キャンバスを、置いたレイヤーごと拡大・縮小します(元に戻せます)">リサイズ</button></div>
           <div class="row" style="margin-top:6px"><button data-ca="crop" title="枠で範囲を決めて切り抜きます。外まで広げると余白になります">✂ トリミング…</button>
             <button data-ca="fitall" title="置いたレイヤーがすべて入る大きさに、キャンバスを広げる / 狭める">全部が入る大きさに</button></div>
+          <label class="fl" title="透明な所の見え方です(書き出す画像には関係しません。書き出しの背景は「書き出し」で選びます)">背景の表示<span class="row" style="flex-wrap:nowrap;gap:6px;min-width:0">
+            <select data-c="vbg" style="flex:1;min-width:0"><option value="checker">透明柄</option><option value="white">白</option><option value="black">黒</option><option value="color">色を選ぶ</option></select>
+            <input type="color" data-c="vbgc" style="width:3em"></span></label>
           ${frameHlHtml()}
           <div data-c="cropbar" hidden>
             <label class="fl">比率<select data-cv="ratio"><option value="free">自由</option><option value="orig">今のキャンバスと同じ</option>
@@ -333,7 +362,7 @@ function build() {
           <div class="row"><button data-c="wm" title="登録した透かし画像(ロゴなど)を、右下・左下・右上・左上・真ん中に入れます">💧 透かしを入れる…</button></div>
           <div class="note">透かしの画像を登録しておき、置く所・大きさ(画像に対しての %)・余白・不透明度を決めて「透かし追加」で入れます。</div></section>
         <section class="sec-folded" data-sec="output" data-c="outsec"><h4>書き出し(保存・ダウンロード)</h4>
-          <label class="fl">形式<select data-o="fmt"><option value="png">PNG(劣化なし・透明も)</option><option value="jpeg">JPEG(小さい・透明なし)</option><option value="webp">WebP(小さい・透明も)</option></select></label>
+          <label class="fl">形式<select data-o="fmt"><option value="png">PNG(劣化なし・透明も)</option><option value="jpeg">JPEG(小さい・透明なし)</option><option value="webp">WebP(小さい・透明も)</option><option value="pdf">PDF(1 ページ・印刷や配布に)</option></select></label>
           <label class="fl" data-orow="q">画質(%)<input type="number" data-o="q" min="1" max="100" step="1"></label>
           <label class="fl">背景<select data-o="bg"><option value="transparent">透明</option><option value="white">白</option><option value="black">黒</option><option value="color">色を選ぶ</option></select></label>
           <label class="fl" data-orow="color">背景の色<input type="color" data-o="color"></label>
@@ -451,7 +480,15 @@ async function placeValue(value) {
   const im = await loadImg(ctx.imageUrl(value));
   placeCanvas(toCanvas(im), displayName(value), value);
 }
+// PDF はページを画像にしてから(ページを選ぶ)。返り値 画像の File の並び
+async function pdfFiles(file) {
+  busy("PDF を読み込み中…");
+  try { return await pdfToImages(file, { busy: (t) => busy(t) }); }
+  catch (e) { ctx.notify(`${T("PDF を読み込めませんでした")}: ${e.message}`, "error"); return []; }
+  finally { busy(""); }
+}
 async function placeFile(file) {
+  if (isPdf(file)) { for (const f of await pdfFiles(file)) await placeFile(f); return; }
   if (!file || !/^image\//.test(file.type || "image/")) return;
   if (!st.layers.length) { await openFile(file); return; }
   busy("画像を挿入中…");
@@ -460,6 +497,14 @@ async function placeFile(file) {
   finally { busy(""); }
 }
 async function openFile(file) {
+  if (isPdf(file)) {
+    // 1 ページ目を開いて、ほかのページはレイヤーとして重ねる
+    const fs = await pdfFiles(file);
+    if (!fs.length) return;
+    await openFile(fs[0]);
+    if (st.layers.length) for (const f of fs.slice(1)) await placeFile(f);
+    return;
+  }
   if (!file || !/^image\//.test(file.type || "image/")) return;
   if (!(await askDiscard("open"))) return;
   busy("画像を挿入中…");
@@ -549,9 +594,45 @@ function refresh() {
   refreshOut();
   renderTextList();
   renderTextInsp();
+  renderAdj();
   refreshBg();
   refreshTool();
   draw();
+}
+// ---------------------------------------------------------------- 色・明るさの補正(画像のレイヤー。元の画素は変えず、描くときに掛ける)
+// 対象: 選んでいる画像のレイヤー(無ければ作業中の画像)
+const adjTarget = () => { const L = selObj(); return L?.kind === "image" ? L : activeImg(); };
+const adjCache = new WeakMap();
+const adjKey = (l) => (l?.adjOff ? "" : adjSig(l?.adj) + selSig(l?.asel)); // 補正を使わない(adjOff)ときは、補正なしと同じ。範囲を選ぶも
+// 描く画素(補正があれば補正した写し)。st.adjFast の間(つまみを動かしている間)は、縮めた写しで素早く
+function srcOf(l, full = false) {
+  if (l.adjOff || !adjActive(l.adj, l.asel)) return l.cv;
+  const key = `${adjKey(l)}|${st.pxv || 0}`, hit = adjCache.get(l);
+  if (hit && hit.cv === l.cv && hit.key === key && (hit.full || !full)) return hit.out;
+  const fast = st.adjFast && !full;
+  const k = fast ? Math.min(1, 1200 / Math.max(l.cv.width, l.cv.height)) : 1;
+  const out = canvasOf(Math.max(1, Math.round(l.cv.width * k)), Math.max(1, Math.round(l.cv.height * k)));
+  out.getContext("2d").drawImage(l.cv, 0, 0, out.width, out.height);
+  adjustCanvas(out, l.adj, l.asel);
+  adjCache.set(l, { cv: l.cv, key, out, full: k === 1 });
+  return out;
+}
+// 画素の範囲(元の画素の単位)を描く。補正の写しが縮めたものでも同じ所を描く
+function drawSrc(g, l, sx, sy, sw, sh, dx, dy, dw, dh) {
+  const src = srcOf(l), f = src.width / l.cv.width;
+  g.drawImage(src, sx * f, sy * f, sw * f, sh * f, dx, dy, dw, dh);
+}
+function renderAdj() {
+  const box = $('[data-c="adjbox"]');
+  if (!box) return;
+  const L = adjTarget();
+  const sig = L ? `${L.id}|${adjSig(L.adj)}|${JSON.stringify(L.asel || {})}|${!!L.adjOff}|${L.adjName || ""}|${L.adjK ?? ""}|${!!L.adjBase}` : "";
+  if (box.dataset.sig === sig) return;
+  // 欄に入力中(つまみ・数の欄にフォーカスがある)なら作り直さず、値・ボタン・強さを今の状態に合わせる(元に戻したときも表示がずれないように)
+  if (L && box.dataset.lid === String(L.id) && box.contains(document.activeElement) && document.activeElement.matches("input")) { syncAdjAll(box, L, !st.adjFast); box.dataset.sig = sig; return; }
+  box.dataset.sig = sig; box.dataset.lid = L ? String(L.id) : "";
+  const open = !!box.querySelector("details.adjd")?.open;
+  box.innerHTML = adjPanelHtml(L, { target: L ? L.name || displayName(L.value || "") || T("画像") : null, open, empty: "画像のレイヤーを選んでください(選んだ画像のレイヤーに掛かります。元の画素はそのままです)" });
 }
 function refreshBg() {
   for (const k of ["thr", "grow", "feather"]) {
@@ -559,6 +640,12 @@ function refreshBg() {
     $(`[data-c="${k}"]`).disabled = !st.bg;
     $(`[data-n="${k}"]`).disabled = !st.bg;
   }
+}
+let brushPanel = null;
+// お絵描き: ブラシ / 消しゴム
+function setPaintMode(m) {
+  st.pErase = m === "erase";
+  for (const b of $$("[data-pm]")) b.classList.toggle("on", b.dataset.pm === m);
 }
 function refreshTool() {
   for (const b of $$("[data-tool]")) b.classList.toggle("on", b.dataset.tool === st.tool);
@@ -576,14 +663,25 @@ function refreshTool() {
     rmerase: "除去範囲の塗りを、なぞった所だけ消します(塗りすぎた所を戻すとき)。全部消すときは「塗りを全部消す」。Ctrl+Z で戻せます。",
     text: "クリックした所に文字を入れます。入れた文字を押すと選べ、枠の角で大きさ・左右の □ で折り返す幅・下の丸で回転を変えられます。",
     path: "画像の上をクリックして点を置きます(点はドラッグで移動)。最初の点のクリック・ダブルクリック・Enter でパスを閉じます。Alt + クリックで点を曲線にし(もう一度で角に戻す)、出てきたハンドルをドラッグで曲がり方を変えます(Alt を押しながらで片側だけ)。Backspace で最後の点を削除、Esc でクリア。点をクリックで選び(Shift + クリックで複数)、ドラッグか矢印キー(Shift で 10 ずつ)で動かします。線をつかむとパス全体を動かします。「内側を削除」「外側を削除」は作業中の画像に、「塗りつぶし」「線を描画」は新しいレイヤーとして追加します。",
+    paint: "ブラシの一覧から選んで、なぞった所に「ブラシの色」で描きます。選んだブラシの太さ・不透明度・流量・硬さ・間隔などは下の欄で変えられ、ブラシごとに覚えます。元の画像に描きたくないときは「レイヤー」の「＋ 新規レイヤー」で新しいレイヤーに描きます。ペンタブモードにすると、筆圧で太さ・濃さが変わります(変えるものはブラシごとに選べます)。",
+    msrect: "ドラッグで四角く範囲を選びます(Shift で正方形)。下のボタンで、切り抜いて移動・コピー・削除・塗りつぶしができます。Ctrl+C でコピー、Ctrl+X で切り取り(Ctrl+V で同じ位置に貼り付け)、Delete で内側を削除、Esc で選ぶのをやめます。",
+    msell: "ドラッグで丸く範囲を選びます(Shift で正円)。下のボタンで、切り抜いて移動・コピー・削除・塗りつぶしができます。Ctrl+C でコピー、Ctrl+X で切り取り(Ctrl+V で同じ位置に貼り付け)、Delete で内側を削除、Esc で選ぶのをやめます。",
   }[st.tool];
   const cv = $(".stage > canvas");
-  cv.style.cursor = st.tool === "pan" ? "grab" : st.tool === "select" ? "default" : st.tool === "shape" || st.tool === "path" ? "crosshair" : st.tool === "wand" ? "crosshair" : st.tool === "text" ? "text" : "none";
+  cv.style.cursor = st.tool === "pan" ? "grab" : st.tool === "select" ? "default" : st.tool === "shape" || SEL_TOOLS.includes(st.tool) ? "crosshair" : st.tool === "wand" ? "crosshair" : st.tool === "text" ? "text" : "none";
   // アルファ値は消しゴム・戻すブラシ・モザイクだけ
-  const ba = st.tool === "erase" || st.tool === "restore" || st.tool === "mosaic";
+  const ba = st.tool === "erase" || st.tool === "restore" || st.tool === "mosaic" || st.tool === "paint";
   $('[data-rg="balpha"]').classList.toggle("off", !ba);
+  $('[data-rg="bhard"]').classList.toggle("off", !ba);
+  $('[data-c="paintopts"]').hidden = st.tool !== "paint";
+  $('[data-c="penopts"]').hidden = !BRUSH_TOOLS.includes(st.tool);
+  const pt = st.tool === "paint";
+  if (pt && st._bpTool !== "paint") brushPanel?.refresh(); // 見本の線を、今の配色の文字色で描き直す(隠れている間は色が取れない)
+  st._bpTool = st.tool;
+  for (const k of ["brush", "balpha", "bhard"]) $(`[data-rg="${k}"]`).style.display = pt ? "none" : "";
+  $('[data-c="penwhat"]').closest("label").style.display = pt ? "none" : "";
   $('[data-c="mzopts"]').hidden = st.tool !== "mosaic";
-  $('[data-c="pathopts"]').hidden = st.tool !== "path";
+  $('[data-c="pathopts"]').hidden = !SEL_TOOLS.includes(st.tool);
   const lab = $('[data-rg="mzsize"]').firstChild;
   if (lab) lab.textContent = T(st.mzmode === "blur" ? "ぼかしの強さ(px)" : "モザイクの大きさ(px)");
 }
@@ -613,10 +711,12 @@ function draw() {
   updZoomv();
   if (!st.layers.length) { placeTextBox(); placeImageBox(); placeCropBox(); placeLayerCropBox(); return; }
   const { k, ox, oy } = st.view;
-  // キャンバス(書き出す範囲)の背景。透明なら市松模様のまま
-  const bgc = outBg();
+  // キャンバス(書き出す範囲)の背景。透明なら「背景の表示」の色(透明柄なら市松模様のまま)。
+  // 表示だけの色は、レイヤーの合成(乗算など)に混ざらないように、後ろに敷く(書き出しと同じ見た目)
+  const bgc = outBg(), vbg = bgc ? null : viewBgColor();
   if (bgc) { g.fillStyle = bgc; g.fillRect(ox, oy, st.W * k, st.H * k); }
   drawLayers(g, k, ox, oy, true);
+  if (vbg) { g.save(); g.globalCompositeOperation = "destination-over"; g.fillStyle = vbg; g.fillRect(ox, oy, st.W * k, st.H * k); g.restore(); }
   // キャンバスの外にはみ出した所は暗く(書き出しには入らない)
   g.save();
   g.fillStyle = "rgba(10,12,16,0.55)";
@@ -631,7 +731,7 @@ function draw() {
     g.lineWidth = lw;
     g.strokeRect(ox - lw / 2, oy - lw / 2, st.W * k + lw, st.H * k + lw);
   } else {
-    g.strokeStyle = "#56606e";
+    g.strokeStyle = ovc("artboard", "#56606e");
     g.lineWidth = 1;
     g.strokeRect(ox - 0.5, oy - 0.5, st.W * k + 1, st.H * k + 1);
   }
@@ -649,7 +749,7 @@ function draw() {
     cropShapePath(g, c);
     g.lineWidth = 1.5 / sc;
     g.setLineDash([5 / sc, 4 / sc]);
-    g.strokeStyle = "#ffd24d";
+    g.strokeStyle = ovc("crop", "#ffd24d");
     g.stroke();
     g.restore();
   }
@@ -664,7 +764,7 @@ function draw() {
     const b = st.drag ? null : paintBox(); // 塗っている間は計算しない(重いので)
     if (b) {
       g.globalAlpha = 1;
-      g.strokeStyle = "#ff5d5d";
+      g.strokeStyle = ovc("remove", "#ff5d5d");
       g.lineWidth = 1 / sc;
       g.setLineDash([6 / sc, 4 / sc]);
       g.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
@@ -675,14 +775,14 @@ function draw() {
   drawPathGuide(g);
   // ブラシの大きさ(作業する画像の画素で)
   if (st.mouse && BRUSH_TOOLS.includes(st.tool) && !panning()) {
-    const rad = Math.max(1, (st.brush / 2) * k * (A ? A.w / cropOf(A).w : 1));
+    const rad = Math.max(1, ((st.tool === "paint" ? curBrush().size : st.brush) / 2) * k * (A ? A.w / cropOf(A).w : 1));
     g.save();
-    g.strokeStyle = "#fff";
+    g.strokeStyle = ovc("brush", "#fff");
     g.lineWidth = 1;
     g.beginPath();
     g.arc(st.mouse.x, st.mouse.y, rad, 0, Math.PI * 2);
     g.stroke();
-    g.strokeStyle = "#000";
+    g.strokeStyle = ovc("brush2", "#000");
     g.beginPath();
     g.arc(st.mouse.x, st.mouse.y, rad + 1, 0, Math.PI * 2);
     g.stroke();
@@ -708,7 +808,7 @@ function caretGeom(t) {
   const L = layoutOf(t), text = String(t.text ?? "");
   const ranges = lineRanges(text, L.lines);
   measureG.font = L.font;
-  const top = -L.th / 2 + L.sw;
+  const top = -L.th / 2 + L.ow;
   const xAt = (r, i) => lineX(L, t, r) + measureG.measureText(L.lines[r].slice(0, Math.max(0, Math.min(i, ranges[r][1]) - ranges[r][0]))).width;
   const rowOf = (i) => { let r = 0; for (let j = 0; j < ranges.length; j++) if (ranges[j][0] <= i) r = j; return r; };
   return { L, ranges, top, xAt, rowOf, lh: L.lineH, ch: L.lineH - Math.round(((t.size || 0.08) * st.H) * 0.2) };
@@ -745,7 +845,7 @@ function drawEditCaret(g) {
   g.scale(k, k);
   g.rotate(((t.rot || 0) * Math.PI) / 180);
   // 編集中の枠
-  g.strokeStyle = "#ffb020";
+  g.strokeStyle = ovc("textedit", "#ffb020");
   g.lineWidth = 1.5 / k;
   g.setLineDash([5 / k, 3 / k]);
   g.strokeRect(-L.w / 2, -L.h / 2, L.w, L.h);
@@ -760,7 +860,7 @@ function drawEditCaret(g) {
     });
   } else if (st.blink) {
     const r = G.rowOf(a), x = G.xAt(r, a), y = G.top + r * G.lh;
-    g.fillStyle = "#ffb020";
+    g.fillStyle = ovc("caret", "#ffb020");
     g.fillRect(x - 1 / k, y, 2 / k, G.ch);
     // 日本語入力の候補の窓が入力位置の近くに出るように、見えない入力欄をそこへ
     if (el.dataset.c === "tedit") {
@@ -841,6 +941,8 @@ function editPointer(e, sx, sy) {
   window.addEventListener("pointerup", up);
   return true;
 }
+// 背景の表示(透明な所の見え方。cca_text.js の viewBg)
+function viewBgColor() { const v = viewBg(); return v.mode === "white" ? "#ffffff" : v.mode === "black" ? "#000000" : v.mode === "color" ? v.color : null; }
 // 書き出すときの背景の色(透明なら null)
 function outBg() {
   const o = st.out || {};
@@ -940,6 +1042,18 @@ function clipCtx(n, g) {
   x.setTransform(g.getTransform());
   return x;
 }
+// 合成(乗算など)のレイヤーは、別の板に描いてから、その合成で重ねる
+const blendTmp = document.createElement("canvas");
+function drawBlend(g, l, k, ox, oy, view) {
+  const mode = blendOf(l);
+  if (!mode) { drawOne(g, l, k, ox, oy, view); return; }
+  if (blendTmp.width !== g.canvas.width || blendTmp.height !== g.canvas.height) { blendTmp.width = g.canvas.width; blendTmp.height = g.canvas.height; }
+  const x = blendTmp.getContext("2d");
+  x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = "source-over"; x.clearRect(0, 0, blendTmp.width, blendTmp.height);
+  x.setTransform(g.getTransform());
+  drawOne(x, l, k, ox, oy, view);
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = mode; g.drawImage(blendTmp, 0, 0); g.restore();
+}
 // レイヤーをすべて描く(下から順に)。k・ox・oy: キャンバスの 1px を何 px で、どこに描くか
 function drawLayers(g, k, ox, oy, view = false) {
   const Ls = st.layers;
@@ -947,8 +1061,8 @@ function drawLayers(g, k, ox, oy, view = false) {
     const l = Ls[i];
     if (clipOf(l) && clipBaseIndex(i) >= 0) continue; // 下のレイヤーと一緒に描く
     const grp = clipGroup(i);
-    if (!grp.length) { if (!l.hidden) drawOne(g, l, k, ox, oy, view); continue; }
-    if (!l.hidden && !clipHidesBase(i)) drawOne(g, l, k, ox, oy, view);
+    if (!grp.length) { if (!l.hidden) drawBlend(g, l, k, ox, oy, view); continue; }
+    if (!l.hidden && !clipHidesBase(i)) drawBlend(g, l, k, ox, oy, view);
     const bg = clipCtx(0, g);
     if (!l.hidden) drawOne(bg, l, k, ox, oy, view);
     for (const c of grp) {
@@ -961,7 +1075,7 @@ function drawLayers(g, k, ox, oy, view = false) {
       g.save();
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.globalAlpha = 1;
-      g.globalCompositeOperation = "source-over";
+      g.globalCompositeOperation = blendOf(c) || "source-over";
       g.drawImage(clipTmp[1], 0, 0);
       g.restore();
     }
@@ -990,6 +1104,8 @@ function drawOne(g, l, k, ox, oy, view) {
       const olr = layerOutline(l); // ふち取り(レイヤーの後ろ)
       if (olr) g.drawImage(olr.cv, olr.x, olr.y, olr.w, olr.h);
       drawImageLocal(g, l);
+      const oli = layerInner(l); // ふち取り(内側。絵の上)
+      if (oli) g.drawImage(oli.cv, oli.x, oli.y, oli.w, oli.h);
       g.restore();
     } else if (l.kind === "shape") drawShape(g, l, k, ox, oy);
     else drawTextItem(g, l, k, ox, oy);
@@ -1064,7 +1180,7 @@ function cropMask(l, c) {
   return m;
 }
 function drawImageLocal(g, l) {
-  if (!l.crop) { g.drawImage(l.cv, 0, 0); return; }
+  if (!l.crop) { drawSrc(g, l, 0, 0, l.cv.width, l.cv.height, 0, 0, l.cv.width, l.cv.height); return; }
   const c = cropOf(l), mask = cropMask(l, c);
   if (mask) {
     // 範囲を写してから、ぼかした形で透明にする
@@ -1072,7 +1188,7 @@ function drawImageLocal(g, l) {
     const tg = featherTmp.getContext("2d");
     tg.globalCompositeOperation = "source-over";
     tg.clearRect(0, 0, c.w, c.h);
-    tg.drawImage(l.cv, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h);
+    drawSrc(tg, l, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h);
     tg.globalCompositeOperation = "destination-in";
     tg.drawImage(mask, 0, 0, c.w, c.h);
     tg.globalCompositeOperation = "source-over";
@@ -1081,12 +1197,12 @@ function drawImageLocal(g, l) {
   }
   g.save();
   if (c.shape !== "rect") { cropShapePath(g, c); g.clip(); }
-  g.drawImage(l.cv, c.x, c.y, c.w, c.h, c.x, c.y, c.w, c.h);
+  drawSrc(g, l, c.x, c.y, c.w, c.h, c.x, c.y, c.w, c.h);
   g.restore();
 }
 // 切り取った見た目の画素(コピーなど)
 function layerPixels(l) {
-  if (!l.crop) return l.cv;
+  if (!l.crop) return srcOf(l, true);
   const c = cropOf(l), out = canvasOf(c.w, c.h), g = out.getContext("2d");
   g.translate(-c.x, -c.y);
   drawImageLocal(g, l);
@@ -1247,19 +1363,45 @@ function cropInspHtml(L) {
 
 // タイル・水玉の並べ方の欄
 function patInspHtml(c) {
-  const v = (k) => c[k] ?? PAT_DEF[k];
-  return `<div class="g2">${lyNum("cpitch", "並べる間隔(%)", r1(v("pitch") * 100), 2, 100, 1)}${lyNum("cgap", "すき間(%)", r1(v("gap") * 100), -100, 95, 1)}
+  const v = (k) => c[k] ?? PAT_DEF[k], [sz, sp, spy] = patSizeSpace(c), r2 = (x) => Math.round(x * 100) / 100;
+  // 値のバー付きの欄(バーは使う所だけの範囲。数の欄はもっと広く打てる)
+  const prow = (k, label, val, min, max, step, smin = min, smax = max) => `<label class="adjrow"><span>${esc(T(label))}</span><input type="range" data-lk="${k}" min="${smin}" max="${smax}" step="${step}" value="${val}"><input type="number" data-lk="${k}" value="${val}" min="${min}" max="${max}" step="${step}"></label>`;
+  return `${prow("csize", "大きさ(%)", r2(sz * 100), 0.1, 100, 0.01, 0.1, 30)}${prow("cspace", "横の間隔(%)", r2(sp * 100), -50, 500, 0.01, -50, 100)}${prow("cspacey", "縦の間隔(%)", r2(spy * 100), -50, 500, 0.01, -50, 100)}
+    ${prow("coffx", "横にずらす(%)", r1(v("offX") * 100), -100, 100, 1)}${prow("coffy", "縦にずらす(%)", r1(v("offY") * 100), -100, 100, 1)}<div class="g2">
     ${c.shape === "tile" ? lyNum("cround", "角の丸み(%)", r1(v("round") * 100), 0, 100, 1) : ""}</div>
     ${rulesHtml(c.rules, (i, f, val, w) => `<input type="number" data-lk="crule" data-i="${i}" data-f="${f}" value="${val}" style="width:${w}px">`,
     (i) => `<button data-la="ruledel" data-i="${i}" title="${esc(T("この条件を消す"))}">✕</button>`, `<button data-la="ruleadd">＋ ${esc(T("大きさを変える条件を追加"))}</button>`, (x) => esc(T(x)))}
     <label class="row" style="font-size:13px;margin-top:4px"><input type="checkbox" data-lk="cstagger" ${v("stagger") ? "checked" : ""}> <span>${esc(T("一行おきに半分ずらす"))}</span></label>
-    <div class="note">${esc(T("並べる間隔は形の短い辺に対しての %、すき間は間隔に対しての %。「大きさを変える条件」は、上から w 番目の段から x 段おき、その段の左から y 番目から z つおきの物の大きさを変えます(0 おきは毎回。0% で無し)。条件はいくつでも足せて、後の条件が優先です。"))}</div>`;
+    <div class="note">${esc(T("大きさ・間隔は形の短い辺に対しての %。間隔をマイナスにすると、となりと重なります(斜めのすき間も埋まります)。「大きさを変える条件」は、上から w 番目の段から x 段おき、その段の左から y 番目から z つおきの物の大きさを変えます(0 おきは毎回。0% で無し)。条件はいくつでも足せて、後の条件が優先です。"))}</div>`;
 }
 
 // ---------------------------------------------------------------- ふち取り(画像のレイヤーの不透明な所のまわりに縁を付ける)
 // L.ol = { t / b / l / r(上・下・左・右の太さ: キャンバスの px。第40版の w は 4 つまとめて), blur(ぼかし: px), color, alpha(不透明度) }。太さが全部 0 で無し。
 // 縁はレイヤーの向きの画素で作って覚えておき(動かす・回すだけなら作り直さない)、レイヤーと同じ向きでレイヤーの後ろに描く
 const olOf = (l) => { if (l?.kind !== "image" || !l.ol) return null; const sd = outlineSides(l.ol); return Math.max(sd.t, sd.b, sd.l, sd.r) > 0 ? l.ol : null; };
+// ふち取り(内側)。l.ol.iw(太さ px)・ic(色)・ia(不透明度)・ib(ぼかし px)
+const olInOf = (l) => (l?.kind === "image" && Number(l.ol?.iw) > 0 ? l.ol : null);
+const olInCache = new WeakMap();
+function layerInner(l) {
+  const ol = olInOf(l);
+  if (!ol) return null;
+  const c = cropOf(l), s = Math.sqrt(Math.max(1e-6, (l.w / c.w) * (l.h / c.h))); // キャンバスの px / 元の画素
+  const sc = Math.min(1, 1536 / Math.max(c.w, c.h));
+  const t = (clamp(Number(ol.iw) || 0, 0, 500) / s) * sc, b = (clamp(Number(ol.ib) || 0, 0, 200) / s) * sc;
+  const key = JSON.stringify([l.crop || null, ol.iw, ol.ib, ol.ic, ol.ia, Math.round(s * 1000), sc, st.pxv || 0, adjKey(l)]);
+  const hit = olInCache.get(l);
+  if (hit && hit.key === key && hit.cv === l.cv) return hit.res;
+  let src = layerPixels(l);
+  if (sc < 1 || src === l.cv) {
+    const sm = canvasOf(Math.max(1, Math.round(c.w * sc)), Math.max(1, Math.round(c.h * sc)));
+    sm.getContext("2d").drawImage(src, 0, 0, sm.width, sm.height);
+    src = sm;
+  }
+  const cv = innerOutlineCanvas(src, t, b, ol.ic || "#ffffff", clamp(Number(ol.ia ?? 1), 0, 1));
+  const res = cv ? { cv, x: c.x, y: c.y, w: c.w, h: c.h } : null;
+  olInCache.set(l, { key, cv: l.cv, res });
+  return res;
+}
 const olCache = new WeakMap();
 function layerOutline(l) {
   const ol = olOf(l);
@@ -1286,11 +1428,15 @@ function layerOutline(l) {
 function olInspHtml(L) {
   const ol = L.ol || {}, sd = outlineSides(ol);
   return `<div class="lcrop lol"><div class="lch">${esc(T("ふち取り"))}</div>
-    <div class="g2">${lyNum("olw", "太さ・上下左右まとめて(px)", r1(Math.max(sd.t, sd.b, sd.l, sd.r)), 0, 500, 1)}${lyNum("olblur", "ぼかし(px)", r1(ol.blur || 0), 0, 200, 1)}
+    <div class="g2">${lyNum("olw", "まとめて調節(px)", r1(Math.max(sd.t, sd.b, sd.l, sd.r)), 0, 500, 1)}${lyNum("olblur", "ぼかし(px)", r1(ol.blur || 0), 0, 200, 1)}
     ${lyNum("olt", "上(px)", r1(sd.t), 0, 500, 1)}${lyNum("olb", "下(px)", r1(sd.b), 0, 500, 1)}${lyNum("oll", "左(px)", r1(sd.l), 0, 500, 1)}${lyNum("olr", "右(px)", r1(sd.r), 0, 500, 1)}
     <label class="fl">${esc(T("色"))}<input type="color" data-lk="olcolor" value="${esc(ol.color || "#ffffff")}"></label>${lyNum("olalpha", "不透明度(%)", r1((ol.alpha ?? 1) * 100), 0, 100, 1)}</div>
     <div class="note">${esc(T("画像の不透明な部分(切り抜いた形・透明にした所を除いた部分)のまわりに縁を付けます。上下左右で太さを変えられます(全部 0 で無し)。太さ・ぼかしはキャンバスの px です。"))}</div>
-    <div class="row" style="margin-top:6px"><button data-la="bake" ${L.crop || olOf(L) ? "" : "disabled"} title="${esc(T("切り抜き(範囲・形・ぼかし)とふち取りを、画像の画素に適用します(元に戻せます)"))}">✔ ${esc(T("処理を適用"))}</button></div></div>`;
+    <div class="lch" style="margin-top:8px">${esc(T("内側"))}</div>
+    <div class="g2">${lyNum("oliw", "内側の太さ(px)", r1(ol.iw || 0), 0, 500, 1)}${lyNum("olib", "内側のぼかし(px)", r1(ol.ib || 0), 0, 200, 1)}
+    <label class="fl">${esc(T("内側の色"))}<input type="color" data-lk="olic" value="${esc(ol.ic || "#ffffff")}"></label>${lyNum("olia", "内側の不透明度(%)", r1((ol.ia ?? 1) * 100), 0, 100, 1)}</div>
+    <div class="note">${esc(T("内側: 不透明な部分のふちから内側へ縁を付けます(絵の上に重なります。0 で無し)。"))}</div>
+    <div class="row" style="margin-top:6px"><button data-la="bake" ${L.crop || olOf(L) || olInOf(L) || (adjActive(L.adj, L.asel) && !L.adjOff) ? "" : "disabled"} title="${esc(T("切り抜き(範囲・形・ぼかし)とふち取りを、画像の画素に適用します(元に戻せます)"))}">✔ ${esc(T("処理を適用"))}</button></div></div>`;
 }
 
 // ---------------------------------------------------------------- パスツール
@@ -1407,15 +1553,17 @@ function pathBack() {
 // 画面にパス・点・ハンドルを描く(パスツールのときだけ)
 function drawPathGuide(g) {
   const P = st.path?.pts;
-  if (st.tool !== "path" || !P?.length) return;
+  if (!SEL_TOOLS.includes(st.tool) || !P?.length) return;
+  const marq = st.tool !== "path"; // 四角・丸で選択: 線だけ(点・ハンドルは、パスツールにすると動かせる)
   const { k, ox, oy } = st.view, S = mapPath(P, (x, y) => [ox + x * k, oy + y * k]);
   g.save();
   g.lineJoin = "round";
   if (S.length > 1) {
     tracePts(g, S, st.path.closed);
     g.strokeStyle = "rgba(0,0,0,0.75)"; g.lineWidth = 3; g.stroke();
-    g.strokeStyle = "#ffd24d"; g.lineWidth = 1.5; g.setLineDash([6, 4]); g.stroke(); g.setLineDash([]);
+    g.strokeStyle = ovc("path", "#ffd24d"); g.lineWidth = 1.5; g.setLineDash([6, 4]); g.stroke(); g.setLineDash([]);
   }
+  if (marq) { g.restore(); return; }
   if (!st.path.closed && st.mouse && !panning()) {
     const L = S.at(-1);
     g.beginPath(); g.moveTo(L.x, L.y); g.lineTo(st.mouse.x, st.mouse.y);
@@ -1427,9 +1575,9 @@ function drawPathGuide(g) {
       if (!q[sd]) continue;
       const hx = q.x + q[sd][0], hy = q.y + q[sd][1];
       g.beginPath(); g.moveTo(q.x, q.y); g.lineTo(hx, hy);
-      g.strokeStyle = "#7bd3ff"; g.lineWidth = 1; g.stroke();
+      g.strokeStyle = ovc("pathhandle", "#7bd3ff"); g.lineWidth = 1; g.stroke();
       g.beginPath(); g.arc(hx, hy, 4, 0, Math.PI * 2);
-      g.fillStyle = "#7bd3ff"; g.fill(); g.strokeStyle = "#000"; g.stroke();
+      g.fillStyle = ovc("pathhandle", "#7bd3ff"); g.fill(); g.strokeStyle = "#000"; g.stroke();
     }
   }
   S.forEach((q, i) => {
@@ -1442,9 +1590,122 @@ function drawPathGuide(g) {
   });
   g.restore();
 }
+// パスの内側 / 外側を、作業中の画像の「範囲を選ぶ」に入れる(画像の中の割合。色・明るさの補正をその範囲だけに掛ける)
+function pathSelect(mode) {
+  const A = activeImg();
+  if (A?.locked) { lockedNotify(); return; }
+  if (!A) { ctx.notify(T("作業する画像を選んでください(「↖ 選択」で画像をクリックするか、「レイヤー」の一覧で選びます)"), "info"); return; }
+  const P = st.path?.pts || [];
+  if (P.length < 3) { ctx.notify(T("点を 3 つ以上置いてください"), "info"); return; }
+  endBg();
+  pushUndo(true);
+  const w = A.cv.width, h = A.cv.height;
+  const path = flattenPath(mapPath(P, (x, y) => { const q = docToLayer(A, x, y); return [q.x / w, q.y / h]; }));
+  A.asel = { ...(A.asel || {}), on: true, path, pmode: mode };
+  st.isel = A.id;
+  st.dirty = true;
+  refresh();
+  ctx.notify(T(mode === "in" ? "パスの内側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)" : "パスの外側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)"), "info");
+}
+// ---------------------------------------------------------------- 四角・丸で選択(閉じたパスを作る。パスと同じ操作が使える)
+const SEL_TOOLS = ["path", "msrect", "msell"];
+function marqDown(p) {
+  const d = toDoc(p.x, p.y);
+  pathSnap();
+  st.path = null;
+  st.pathSel = [];
+  st.drag = { mode: "marq", x0: d.x, y0: d.y };
+}
+function marqMove(p, e) {
+  const d = toDoc(p.x, p.y), { x0, y0 } = st.drag;
+  let dx = d.x - x0, dy = d.y - y0;
+  if (e?.shiftKey) { const m = Math.max(Math.abs(dx), Math.abs(dy)); dx = Math.sign(dx || 1) * m; dy = Math.sign(dy || 1) * m; }
+  const l = Math.min(x0, x0 + dx), t = Math.min(y0, y0 + dy), w = Math.abs(dx), h = Math.abs(dy);
+  if (st.tool === "msrect") {
+    st.path = { closed: true, pts: [[l, t], [l + w, t], [l + w, t + h], [l, t + h]].map(([x, y]) => ({ x: r1(x), y: r1(y) })) };
+    return;
+  }
+  // 丸: 上・右・下・左の 4 点と、円に近い曲線のハンドル
+  const rx = w / 2, ry = h / 2, cx = l + rx, cy = t + ry, K = 0.5523;
+  st.path = { closed: true, pts: [
+    { x: r1(cx), y: r1(t), hi: [r1(-K * rx), 0], ho: [r1(K * rx), 0] },
+    { x: r1(l + w), y: r1(cy), hi: [0, r1(-K * ry)], ho: [0, r1(K * ry)] },
+    { x: r1(cx), y: r1(t + h), hi: [r1(K * rx), 0], ho: [r1(-K * rx), 0] },
+    { x: r1(l), y: r1(cy), hi: [0, r1(K * ry)], ho: [0, r1(-K * ry)] },
+  ] };
+}
+// 作業中の画像の、パスの内側の画素 → 新しい画像のレイヤー(元と同じ見え方で、同じ位置に)。cut: 元の画像からは消す
+// undo: 元に戻せるようにする(クリップボードにコピーするだけのときは要らない)
+function pathPiece(cut, undo = true) {
+  const A = activeImg();
+  if (A?.locked) { lockedNotify(); return null; }
+  if (!A || A.hidden) { ctx.notify(T(A ? "作業中の画像が非表示です(一覧の 👁 で表示してください)" : "作業する画像を選んでください(「↖ 選択」で画像をクリックするか、「レイヤー」の一覧で選びます)"), "info"); return null; }
+  const P = st.path?.pts || [];
+  if (P.length < 3) { ctx.notify(T("点を 3 つ以上置いてください"), "info"); return null; }
+  const w = A.cv.width, h = A.cv.height, c = cropOf(A);
+  const m = canvasOf(w, h), mg = m.getContext("2d", { willReadFrequently: true });
+  mg.save();
+  mg.beginPath(); mg.rect(c.x, c.y, c.w, c.h); mg.clip(); // 見えている範囲(切り取った範囲)の中だけ
+  tracePts(mg, mapPath(P, (x, y) => { const q = docToLayer(A, x, y); return [q.x, q.y]; }), true);
+  mg.fillStyle = "#fff";
+  mg.fill();
+  mg.restore();
+  const md = mg.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0, i = y * w * 4 + 3; x < w; x++, i += 4) if (md[i]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) { ctx.notify(T("選んだ範囲に、作業中の画像がありません"), "info"); return null; }
+  if (undo) { endBg(); pushUndo(!cut); pathAct(); }
+  const src = st.img;
+  // 切り取りの形・ゆがみの無い画像は、範囲の大きさの画像にする。ある画像は、元と同じ大きさ・同じ形のまま
+  const plain = !A.warp && (!A.crop || Object.entries(A.crop).every(([k, v]) => ["x", "y", "w", "h"].includes(k) || (k === "shape" && v === "rect") || !v));
+  const bx = plain ? x0 : 0, by = plain ? y0 : 0, bw = plain ? x1 - x0 + 1 : w, bh = plain ? y1 - y0 + 1 : h;
+  const pc = canvasOf(bw, bh), pg = pc.getContext("2d");
+  pg.drawImage(src, -bx, -by);
+  pg.globalCompositeOperation = "destination-in";
+  pg.drawImage(m, -bx, -by);
+  if (cut) {
+    const g = src.getContext("2d");
+    g.save();
+    g.globalCompositeOperation = "destination-out";
+    g.drawImage(m, 0, 0);
+    g.restore();
+    st.pxv = (st.pxv || 0) + 1;
+  }
+  const L = { ...A, id: tuid++, name: T("{0} の切り抜き", A.name), cv: pc, orig: copyCanvas(pc), paint: canvasOf(bw, bh), locked: false, hidden: false, gid: undefined, asel: undefined, blank: undefined };
+  if (plain) {
+    const sx = A.w / c.w, sy = A.h / c.h, lx = (bx + bw / 2 - (c.x + c.w / 2)) * sx, ly = (by + bh / 2 - (c.y + c.h / 2)) * sy;
+    const a = ((A.rot || 0) * Math.PI) / 180;
+    Object.assign(L, { cx: A.cx + lx * Math.cos(a) - ly * Math.sin(a), cy: A.cy + lx * Math.sin(a) + ly * Math.cos(a), w: bw * sx, h: bh * sy, crop: null });
+  }
+  return L;
+}
+// 切り抜いて移動(cut)/ コピーして新しいレイヤー: 作業中の画像のすぐ上に置いて選ぶ(そのままドラッグで動かせる)
+function pathCut(cut) {
+  const A = activeImg(), L = pathPiece(cut);
+  if (!L) return;
+  st.layers.splice(st.layers.indexOf(A) + 1, 0, L);
+  st.aimg = L.id;
+  selectLayer(L);
+  st.tool = "select";
+  st.dirty = true;
+  refresh();
+  ctx.notify(T(cut ? "切り抜いて新しいレイヤーにしました(ドラッグで動かせます)" : "コピーして新しいレイヤーにしました(ドラッグで動かせます)"), "info");
+}
+// Ctrl+C / Ctrl+X: 選んだ範囲(閉じたパス)があれば、その中の画素をコピー / 切り取り(Ctrl+V で同じ位置に貼り付け)
+function selCopy(cut) {
+  if (!SEL_TOOLS.includes(st.tool) || !st.path?.closed || (st.path.pts?.length || 0) < 3 || !activeImg()) return false;
+  const L = pathPiece(cut, cut);
+  if (!L) return true;
+  objClip = [L];
+  clipboard.set({ type: "imgobjs", from: "img", n: 1 });
+  if (cut) { st.dirty = true; refresh(); }
+  ctx.notify(cut ? "切り取りました(Ctrl+V で貼り付け)" : "コピーしました(Ctrl+V で貼り付け)", "info");
+  return true;
+}
 // パスの内側(inside)/ 外側を、作業中の画像から削除する(境目のぼかし: キャンバスの px)
 function pathErase(inside) {
   const A = activeImg();
+  if (A?.locked) { ctx.notify(T("この画像はロック中です(ロック解除すると使えます)"), "error"); return; }
   if (!A || A.hidden) { ctx.notify(T(A ? "作業中の画像が非表示です(一覧の 👁 で表示してください)" : "作業する画像を選んでください(「↖ 選択」で画像をクリックするか、「レイヤー」の一覧で選びます)"), "info"); return; }
   const P = st.path?.pts || [];
   if (P.length < 3) { ctx.notify(T("点を 3 つ以上置いてください"), "info"); return; }
@@ -1514,6 +1775,24 @@ const SHAPE_NAME = { rect: "四角", rrect: "角丸の四角", ellipse: "丸", t
 const SHAPE_ICON = { rect: "▭", rrect: "▢", ellipse: "◯", tri: "△", line: "╱", arrow: "→", pen: "✎", path: "✒" };
 const isLineShape = (t) => t === "line" || t === "arrow" || t === "pen";
 const hexA = (hex, a) => { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex || "") || [0, "ff", "ff", "ff"]; return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${clamp(a, 0, 1)})`; };
+// 図形の色(塗りの濃さ・不透明度を含む)と太さだけをブラウザに覚え、次に開いたときも前回の値で置く(位置・回転などは覚えない)
+// st を作るとき(このファイルの先頭)に呼ぶので、キーは関数の中で決める(const だと宣言前で読めない)
+function shapeStyleKey(kind) { return "cca_generator.imgedit.shapestyle." + kind; }
+function loadShapeStyle(kind) {
+  try {
+    const o = JSON.parse(localStorage.getItem(shapeStyleKey(kind)) || "null");
+    if (!o || typeof o !== "object") return null;
+    const r = {};
+    for (const k of ["fill", "stroke"]) if (/^#[0-9a-f]{6}$/i.test(o[k] || "")) r[k] = o[k];
+    const w = Number(o.strokeW);
+    if (Number.isFinite(w) && w >= 0 && w <= 1000) r.strokeW = w;
+    for (const k of ["fillA", "opacity"]) { const a = Number(o[k]); if (o[k] != null && Number.isFinite(a) && a >= 0 && a <= 1) r[k] = a; } // 塗りの濃さ・不透明度(0〜1)
+    return Object.keys(r).length ? r : null;
+  } catch { return null; }
+}
+function saveShapeStyle(kind, o) {
+  try { localStorage.setItem(shapeStyleKey(kind), JSON.stringify(Object.fromEntries(["fill", "fillA", "stroke", "strokeW", "opacity"].filter((k) => o[k] != null).map((k) => [k, o[k]])))); } catch { /* 覚えられなくても使える */ }
+}
 // 次に置く図形の見た目(最後に使ったもの。塗る図形と線で別)
 function shapeStyleFor(type) {
   const base = Math.max(2, Math.round(Math.min(st.W, st.H) * 0.008));
@@ -1522,9 +1801,11 @@ function shapeStyleFor(type) {
 }
 function rememberShapeStyle(l) {
   if (l.shape === "path") return; // パスの図形は、パスツールの色を使う
-  const keys = ["fill", "fillA", "stroke", "strokeW", "radius", "arrow"];
+  const keys = ["fill", "fillA", "stroke", "strokeW", "radius", "arrow", "opacity"];
   const o = Object.fromEntries(keys.filter((k) => l[k] != null).map((k) => [k, l[k]]));
-  if (isLineShape(l.shape)) st.lineStyle = o; else st.shapeStyle = o;
+  const kind = isLineShape(l.shape) ? "line" : "shape";
+  if (kind === "line") st.lineStyle = o; else st.shapeStyle = o;
+  saveShapeStyle(kind, o);
 }
 // 中心 (0, 0)・回す前の大きさ w × h で、形の線を作る
 function shapePath(g, l) {
@@ -1567,7 +1848,8 @@ function drawShape(g, l, k, ox, oy) {
     // パスの図形(点はレイヤーの枠の中の割合)。閉じたものは塗り、線の太さがあれば線
     tracePts(g, shapePathPts(l), !!l.closed, !!l.smooth);
     if (l.closed && (l.fillA ?? 1) > 0) { g.fillStyle = hexA(l.fill || "#4f8bff", l.fillA ?? 1); g.fill(); }
-    if (sw > 0) { g.strokeStyle = l.stroke || "#ffffff"; g.lineWidth = sw; g.stroke(); }
+    if (sw > 0 && l.closed && Number(l.strokeGap) > 0) shapeGapRing(g, l, (c) => tracePts(c, shapePathPts(l), true, !!l.smooth), sw);
+    else if (sw > 0) { g.strokeStyle = l.stroke || "#ffffff"; g.lineWidth = sw; g.stroke(); }
     g.restore();
     return;
   }
@@ -1590,8 +1872,38 @@ function drawShape(g, l, k, ox, oy) {
   }
   shapePath(g, l);
   if ((l.fillA ?? 1) > 0) { g.fillStyle = hexA(l.fill || "#4f8bff", l.fillA ?? 1); g.fill(); }
-  if (sw > 0) { g.strokeStyle = l.stroke || "#ffffff"; g.lineWidth = sw; g.stroke(); }
+  if (sw > 0 && Number(l.strokeGap) > 0) shapeGapRing(g, l, (c) => shapePath(c, l), sw);
+  else if (sw > 0) { g.strokeStyle = l.stroke || "#ffffff"; g.lineWidth = sw; g.stroke(); }
   g.restore();
+}
+// 縁を離す: 形のまわり gap(px)の所に、太さ sw の縁を描く(枠のようになる)。縁の真ん中が、形のふちから gap 外側に来る。
+// 形を太らせた形(塗り + 線)どうしを抜いて輪を作る。trace(c) は c に形の線を作る(中心 0, 0・回す前の大きさ)
+function shapeGapRing(g, l, trace, sw) {
+  const gap = Math.max(0, Number(l.strokeGap) || 0), out = gap + sw / 2, inn = gap - sw / 2;
+  const m = g.getTransform(), k0 = Math.hypot(m.a, m.b) || 1;
+  const bw = Math.abs(l.w) + 2 * out + 4, bh = Math.abs(l.h) + 2 * out + 4;
+  const k = clamp(Math.min(k0, 8192 / bw, 8192 / bh), 0.05, 8);
+  const cv = document.createElement("canvas");
+  cv.width = Math.max(1, Math.ceil(bw * k)); cv.height = Math.max(1, Math.ceil(bh * k));
+  const c = cv.getContext("2d");
+  const fat = (x, r) => { x.setTransform(k, 0, 0, k, cv.width / 2, cv.height / 2); x.lineJoin = "round"; x.lineCap = "round"; x.beginPath(); trace(x); x.fill(); if (r > 0) { x.lineWidth = 2 * r; x.stroke(); } };
+  c.fillStyle = c.strokeStyle = l.stroke || "#ffffff";
+  fat(c, out);
+  c.globalCompositeOperation = "destination-out";
+  if (inn >= 0) fat(c, inn);
+  else {
+    // 縁が形の内側にも入るとき: 形を |inn| だけ細らせた形を抜く
+    const t = document.createElement("canvas");
+    t.width = cv.width; t.height = cv.height;
+    const x = t.getContext("2d");
+    x.fillStyle = x.strokeStyle = "#000";
+    fat(x, 0);
+    x.globalCompositeOperation = "destination-out";
+    x.lineWidth = -2 * inn; x.stroke();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.drawImage(t, 0, 0);
+  }
+  g.drawImage(cv, -cv.width / 2 / k, -cv.height / 2 / k, cv.width / k, cv.height / k);
 }
 // 図形を描き始める(ドラッグ・ペン)
 function startShapeDraw(p) {
@@ -1693,7 +2005,7 @@ function unionBox(list) {
 function startMultiDrag(e) {
   const list = selList();
   const u = unionBox(list);
-  if (!u || st.busy) return;
+  if (!u || st.busy || list.some((l) => l.locked)) return;
   const k = st.view.k, W = st.W, H = st.H;
   const L0 = list.map((l) => ({ l, cx: l.cx, cy: l.cy, w: l.w, h: l.h, x: l.x, y: l.y, size: l.size, strokeW: l.strokeW }));
   const ucx = (u.x0 + u.x1) / 2, ucy = (u.y0 + u.y1) / 2;
@@ -1739,11 +2051,13 @@ function startMultiDrag(e) {
 function nudge(dx, dy) {
   const list = selList();
   if (!list.length || st.busy) return false;
+  if (list.some((l) => l.locked)) return true;
   const now = Date.now();
   if (!st.nudgeAt || now - st.nudgeAt > 800) pushUndo(true);
   st.nudgeAt = now;
   for (const l of list) {
-    if (l.kind === "text") { l.x = r3(l.x + dx / st.W); l.y = r3(l.y + dy / st.H); } else { l.cx = r1(l.cx + dx); l.cy = r1(l.cy + dy); }
+    // 文字の位置は幅・高さに対する割合。1px は 0.001 より小さいことがある(幅 2000px より大きいとき)ので、細かい桁で丸める
+    if (l.kind === "text") { l.x = r6(l.x + dx / st.W); l.y = r6(l.y + dy / st.H); } else { l.cx = r1(l.cx + dx); l.cy = r1(l.cy + dy); }
   }
   st.dirty = true;
   draw();
@@ -1805,14 +2119,11 @@ function pasteObjects() {
   const gmap = new Map();
   const made = objClip.map((o) => {
     const n = o.kind === "image"
-      ? { ...o, id: tuid++, cv: copyCanvas(o.cv), orig: copyCanvas(o.orig), paint: canvasOf(o.cv.width, o.cv.height), cx: o.cx + 16, cy: o.cy + 16, name: T("{0} のコピー", o.name) }
-      : o.kind === "text" ? { ...JSON.parse(JSON.stringify(o)), id: tuid++, x: r3(o.x + 0.03), y: r3(o.y + 0.03) }
-        : { ...JSON.parse(JSON.stringify(o)), id: tuid++, cx: o.cx + 16, cy: o.cy + 16 };
+      ? { ...o, id: tuid++, cv: copyCanvas(o.cv), orig: copyCanvas(o.orig), paint: canvasOf(o.cv.width, o.cv.height), name: T("{0} のコピー", o.name) }
+      : { ...JSON.parse(JSON.stringify(o)), id: tuid++ }; // 元と全く同じ位置に貼る
     if (o.gid) { if (!gmap.has(o.gid)) gmap.set(o.gid, `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`); n.gid = gmap.get(o.gid); }
     return n;
   });
-  // 次に貼るときは、さらにずらす
-  objClip = objClip.map((o) => (o.kind === "text" ? { ...o, x: r3(o.x + 0.03), y: r3(o.y + 0.03) } : { ...o, cx: o.cx + 16, cy: o.cy + 16 }));
   st.layers.push(...made);
   selectLayer(made[0]);
   st.msel = made.length > 1 ? made.map((l) => l.id) : [];
@@ -1825,9 +2136,22 @@ function pasteObjects() {
 // コピーの印(クリップボードに入れる文字)。copy イベントで入れる
 function clipMark() { st.clipMark = `cca-imgedit:${Date.now().toString(36)}`; }
 // 選んでいるレイヤーを消す(複数・グループも)
+// ロック: 画面の上で選ぶ・動かす・変える・消すをできなくする(一覧からは選べる。並べ替え・複製・表示の切り替えはできる)
+function toggleLock() {
+  const list = selList();
+  if (!list.length || st.busy) return;
+  if (st.tedit != null) endTextEdit();
+  pushUndo(true);
+  const on = !list.every((l) => l.locked);
+  for (const l of list) l.locked = on || undefined;
+  st.dirty = true;
+  refresh();
+}
+function lockedNotify() { ctx.notify(T("ロック中です(ロック解除すると、動かす・変える・消すができます)"), "error"); }
 function deleteSel() {
   const list = selList();
   if (!list.length || st.busy) return false;
+  if (list.some((l) => l.locked)) { lockedNotify(); return true; }
   endBg();
   pushUndo(true);
   const ids = new Set(list.map((l) => l.id));
@@ -1848,7 +2172,7 @@ function renderLayers() {
   box.innerHTML = [...st.layers].reverse().map((l) => `<div class="ly${sids.has(l.id) ? " sel" : ""}${l.hidden ? " hid" : ""}${l.gid ? " grp" : ""}" data-lid="${l.id}" draggable="true"${l.gid ? ` style="--g:${(gno.get(l.gid) * 67) % 360}"` : ""}>
       <button data-lv="${l.id}" title="${esc(T(l.hidden ? "見せる" : "隠す"))}">${l.hidden ? "◌" : "👁"}</button>
       ${l.kind !== "text" ? `<canvas class="th" width="34" height="24"></canvas>` : `<span class="th tt">T</span>`}
-      <span class="ln" title="${esc(lname(l))}">${clipped.has(l.id) ? `<b class="ctag" title="${esc(T("下のレイヤーで切り抜く"))}">↳</b> ` : ""}${l.gid ? `<b class="gtag">⛓${gno.get(l.gid)}</b> ` : ""}${esc(lname(l))}</span>${l.kind === "image" && l.id === st.aimg ? `<span class="act" title="${esc(T("消しゴム・背景を消す・オブジェクト除去などは、この画像に掛かります"))}">${esc(T("✎ 作業中"))}</span>` : ""}</div>`).join("")
+      <span class="ln" title="${esc(lname(l))}">${clipped.has(l.id) ? `<b class="ctag" title="${esc(T("下のレイヤーで切り抜く"))}">↳</b> ` : ""}${l.gid ? `<b class="gtag">⛓${gno.get(l.gid)}</b> ` : ""}${esc(lname(l))}</span>${l.locked ? `<span class="act" title="${esc(T("ロック解除すると、動かす・変える・消すができます"))}">${esc(T("ロック中"))}</span>` : ""}${!l.locked && l.kind === "image" && l.id === st.aimg ? `<span class="act" title="${esc(T("消しゴム・背景を消す・オブジェクト除去などは、この画像に掛かります"))}">${esc(T("✎ 作業中"))}</span>` : ""}</div>`).join("")
     || `<div class="note">${esc(T("まだ何もありません"))}</div>`;
   for (const c of box.querySelectorAll("canvas.th")) {
     const l = st.layers.find((x) => x.id === Number(c.closest("[data-lid]").dataset.lid));
@@ -1865,6 +2189,12 @@ function renderLayers() {
     drawImageLocal(g, l);
   }
   for (const b of $$("[data-lo]")) b.disabled = sel == null || st.busy;
+  { // ロック: 選んでいるものが全部ロック中なら「ロック解除」
+    const ls = selList(), on = ls.length > 0 && ls.every((l) => l.locked), lk = $('[data-lo="lock"]');
+    if (lk) lk.textContent = T(on ? "ロック解除" : "ロック");
+    const any = ls.some((l) => l.locked);
+    for (const c of ["ibox", "tbox", "lyinsp", "txinsp"]) $(`[data-c="${c}"]`)?.classList.toggle("locked", any);
+  }
   const gb = $('[data-lo="group"]'), ub = $('[data-lo="ungroup"]');
   if (gb) gb.disabled = sids.size < 2 || st.busy;
   if (ub) ub.disabled = ![...st.layers].some((l) => sids.has(l.id) && l.gid) || st.busy;
@@ -1909,6 +2239,7 @@ function renderLayerInsp() {
     <div class="g2">${lyNum("x", "左(px)", r1(L.cx - L.w / 2), -100000, 100000, 1)}${lyNum("y", "上(px)", r1(L.cy - L.h / 2), -100000, 100000, 1)}
     ${lyNum("w", "幅(px)", r1(L.w), 1, 100000, 1)}${lyNum("h", "高さ(px)", r1(L.h), 1, 100000, 1)}
     ${lyNum("rot", "回転(度)", r1(L.rot || 0), -3600, 3600, 1)}${lyNum("opacity", "不透明度(%)", r1((L.opacity ?? 1) * 100), 0, 100, 1)}</div>
+    <label class="fl" title="${esc(T("下のレイヤーとの重ね方(乗算・スクリーンなど)"))}">${esc(T("合成"))}<select data-lk="blend">${blendOptions(blendOf(L))}</select></label>
     <label class="row" style="font-size:13px;margin-top:4px"><input type="checkbox" data-lk="keep" ${st.keepRatio !== false ? "checked" : ""}> <span>${esc(T("幅・高さを変えるとき、縦横比を保つ"))}</span></label>
     ${L.kind === "shape" ? shapeInspHtml(L) : `<div class="row" style="margin-top:4px"><button data-la="fit" title="${esc(T("縦横比を保って、キャンバスに収まる大きさで真ん中に"))}">${esc(T("キャンバスに収める"))}</button>
       <button data-la="cover" title="${esc(T("縦横比を保って、キャンバスをすき間なく覆う大きさで真ん中に"))}">${esc(T("キャンバスいっぱい"))}</button>
@@ -1923,6 +2254,7 @@ function shapeInspHtml(L) {
       ${lyNum("fillA", "塗りの濃さ(%)", r1((L.fillA ?? 1) * 100), 0, 100, 1)}`}
     <label class="fl">${esc(T(line ? "線の色" : "縁の色"))}<input type="color" data-lk="stroke" value="${esc(L.stroke || "#ffffff")}"></label>
     ${lyNum("strokeW", line ? "線の太さ(px)" : "縁の太さ(px)", r1(L.strokeW || 0), 0, 1000, 0.5)}
+    ${line ? "" : lyNum("strokeGap", "縁を離す(px)", r1(L.strokeGap || 0), 0, 1000, 0.5)}
     ${L.shape === "rrect" ? lyNum("radius", "角の丸み(%)", r1((L.radius ?? 0.25) * 100), 0, 100, 1) : ""}
     ${L.shape === "arrow" ? `<label class="fl">${esc(T("矢印"))}<select data-lk="arrow"><option value="end" ${L.arrow !== "both" ? "selected" : ""}>${esc(T("片方"))}</option><option value="both" ${L.arrow === "both" ? "selected" : ""}>${esc(T("両方"))}</option></select></label>` : ""}</div>
     <div class="note">${esc(T(line ? "線の太さを 0 にはできません(細くしたいときは 1 など)。" : "塗りの濃さ 0% で枠だけ、縁の太さ 0 で縁なし。"))}</div>`;
@@ -1943,9 +2275,12 @@ function syncLayerInsp() {
 function onLayerInput(e) {
   const el = e.target, L = selObj(), k = el.dataset.lk;
   if (!L || !k) return;
+  // 値のバーと数の欄を合わせる
+  if (el.type === "range" || el.type === "number") for (const o of $('[data-c="lyinsp"]').querySelectorAll(`[data-lk="${k}"]`)) if (o !== el && (o.type === "range" || o.type === "number")) o.value = el.value;
+  if (L.locked && k !== "keep") { lockedNotify(); $('[data-c="lyinsp"]').dataset.for = ""; renderLayerInsp(); return; }
   if (k === "keep") { st.keepRatio = el.checked; return; }
   if (k === "cratio") { if (st.lcrop) st.lcrop.ratio = el.value; fitLayerCropRatio(L); draw(); syncLayerInsp(); return; }
-  const cropKey = /^(cshape|cradius|cpoints|cfeather|crx|cry|crw|crh|cpitch|cgap|codd|ceven|crodd|creven|cround|calt|cstagger|crule|cinvert)$/.test(k);
+  const cropKey = /^(cshape|cradius|cpoints|cfeather|crx|cry|crw|crh|csize|cspace|cspacey|coffx|coffy|codd|ceven|crodd|creven|cround|calt|cstagger|crule|cinvert)$/.test(k);
   // 1 つの欄を打っている間は 1 回で元に戻せるように、最初の変更のときだけ覚える(範囲を画面で決めている間は、決めたときに 1 回)
   if (st.lyEditEl !== el && !(cropKey && st.lcrop)) { pushUndo(true); st.lyEditEl = el; }
   // 切り取る(範囲・形)
@@ -1965,8 +2300,8 @@ function onLayerInput(e) {
       if (k === "cradius") setLayerCrop(L, { radius: clamp(n, 0, 100) / 100 });
       else if (k === "cpoints") setLayerCrop(L, { points: clamp(Math.round(n), 3, 12) });
       else if (k === "cfeather") setLayerCrop(L, { feather: clamp(n, 0, 50) / 100 });
-      else if (k === "cpitch") setLayerCrop(L, { pitch: clamp(n, 2, 100) / 100 });
-      else if (k === "cgap") setLayerCrop(L, { gap: clamp(n, -100, 95) / 100 });
+      else if (k === "coffx" || k === "coffy") setLayerCrop(L, { [k === "coffx" ? "offX" : "offY"]: clamp(n, -100, 100) / 100 });
+      else if (k === "csize" || k === "cspace" || k === "cspacey") { const [sz, sp, spy] = patSizeSpace({ ...PAT_DEF, ...(L.crop || {}) }); setLayerCrop(L, k === "csize" ? patFromSizeSpace(clamp(n, 0.1, 100) / 100, sp, spy) : k === "cspace" ? patFromSizeSpace(sz, clamp(n, -50, 500) / 100, spy) : patFromSizeSpace(sz, sp, clamp(n, -50, 500) / 100)); }
       else if (k === "codd") setLayerCrop(L, { odd: clamp(n, 0, 200) / 100 });
       else if (k === "ceven") setLayerCrop(L, { even: clamp(n, 0, 200) / 100 });
       else if (k === "crodd") setLayerCrop(L, { rodd: clamp(n, 0, 200) / 100, alt: undefined });
@@ -1981,11 +2316,17 @@ function onLayerInput(e) {
     return;
   }
   // ふち取り
-  if (/^ol(w|t|b|l|r|blur|color|alpha)$/.test(k)) {
+  if (/^ol(w|t|b|l|r|blur|color|alpha|iw|ib|ic|ia)$/.test(k)) {
     if (L.kind !== "image") return;
     const ol = { blur: 0, color: "#ffffff", alpha: 1, ...(L.ol || {}), ...outlineSides(L.ol || {}) };
     delete ol.w;
     if (k === "olcolor") ol.color = el.value;
+    else if (k === "olic") ol.ic = el.value;
+    else if (k === "oliw" || k === "olib" || k === "olia") { // 内側
+      const n = Number(el.value);
+      if (el.value === "" || Number.isNaN(n)) return;
+      if (k === "oliw") ol.iw = clamp(n, 0, 500); else if (k === "olib") ol.ib = clamp(n, 0, 200); else ol.ia = clamp(n, 0, 100) / 100;
+    }
     else {
       const n = Number(el.value);
       if (el.value === "" || Number.isNaN(n)) return;
@@ -2002,8 +2343,15 @@ function onLayerInput(e) {
     return;
   }
   if (k === "name") { L.name = el.value.slice(0, 80); renderLayers(); st.dirty = true; return; }
+  if (k === "blend") { L.blend = el.value || undefined; st.dirty = true; draw(); renderLayers(); return; } // 合成
   // 図形の見た目
   if (k === "fill" || k === "stroke" || k === "arrow") { L[k] = el.value; rememberShapeStyle(L); st.dirty = true; draw(); renderLayers(); return; }
+  if (k === "strokeGap") { // 縁を離す(px。形のふちから縁の真ん中まで)
+    const n2 = Number(el.value);
+    if (el.value === "" || Number.isNaN(n2)) return;
+    L.strokeGap = Math.max(0, n2) || undefined;
+    st.dirty = true; draw(); renderLayers(); return;
+  }
   if (k === "fillA" || k === "strokeW" || k === "radius") {
     const n2 = Number(el.value);
     if (el.value === "" || Number.isNaN(n2)) return;
@@ -2019,7 +2367,7 @@ function onLayerInput(e) {
   else if (k === "w") { const w = Math.max(1, n); if (keep) L.h = (L.h * w) / L.w; L.w = w; L.cx = left + L.w / 2; L.cy = top + L.h / 2; }
   else if (k === "h") { const h = Math.max(1, n); if (keep) L.w = (L.w * h) / L.h; L.h = h; L.cx = left + L.w / 2; L.cy = top + L.h / 2; }
   else if (k === "rot") L.rot = clamp(n, -3600, 3600);
-  else if (k === "opacity") L.opacity = clamp(n, 0, 100) / 100;
+  else if (k === "opacity") { L.opacity = clamp(n, 0, 100) / 100; if (L.kind === "shape") rememberShapeStyle(L); }
   st.dirty = true;
   draw();
   syncLayerInsp();
@@ -2062,7 +2410,7 @@ function layerAction(a) {
 }
 // 処理を適用: 切り抜き(範囲・形・ぼかし)とふち取りを、画像の画素にする(レイヤーの見た目はそのまま。元に戻せる)
 function bakeLayer(L) {
-  if (!L || L.kind !== "image" || (!L.crop && !olOf(L))) { ctx.notify(T("適用する処理がありません"), "info"); return; }
+  if (!L || L.kind !== "image" || (!L.crop && !olOf(L) && !olInOf(L) && !(adjActive(L.adj, L.asel) && !L.adjOff))) { ctx.notify(T("適用する処理がありません"), "info"); return; }
   endBg();
   const c = cropOf(L), olr = layerOutline(L);
   const x0 = Math.floor(olr ? Math.min(c.x, olr.x) : c.x), y0 = Math.floor(olr ? Math.min(c.y, olr.y) : c.y);
@@ -2073,6 +2421,8 @@ function bakeLayer(L) {
   g.translate(-x0, -y0);
   if (olr) g.drawImage(olr.cv, olr.x, olr.y, olr.w, olr.h);
   drawImageLocal(g, L);
+  const oli = layerInner(L);
+  if (oli) g.drawImage(oli.cv, oli.x, oli.y, oli.w, oli.h);
   pushUndo(true); // 元に戻すと、前の画素・切り抜き・ふち取りに戻る
   const sx = L.w / c.w, sy = L.h / c.h, a = ((L.rot || 0) * Math.PI) / 180;
   const dx = (x0 + W2 / 2 - (c.x + c.w / 2)) * sx, dy = (y0 + H2 / 2 - (c.y + c.h / 2)) * sy;
@@ -2081,6 +2431,7 @@ function bakeLayer(L) {
   L.w = W2 * sx; L.h = H2 * sy;
   L.cv = out; L.orig = copyCanvas(out); L.paint = canvasOf(W2, H2);
   delete L.crop; delete L.ol;
+  if (!L.adjOff) { delete L.adj; delete L.adjBase; delete L.adjName; delete L.adjK; delete L.asel; } // 補正・範囲を選ぶも画素に入った(使わない設定の補正は、値をそのまま残す)
   st.pxv = (st.pxv || 0) + 1;
   st.dirty = true;
   delete $('[data-c="lyinsp"]').dataset.for;
@@ -2118,11 +2469,13 @@ function bakeWarp(L) {
 }
 // 並べ替え・複製・消す(選んだレイヤー)
 function layerOp(op) {
+  if (op === "lock") { toggleLock(); return; }
   if (op === "group" || op === "ungroup") { groupSel(op === "group"); return; }
   if (isMulti()) { multiOp(op); return; }
   const id = st.isel ?? st.tsel;
   const i = st.layers.findIndex((l) => l.id === id);
   if (i < 0 || st.busy) return;
+  if (op === "del" && st.layers[i].locked) { lockedNotify(); return; }
   endBg();
   pushUndo(true);
   const arr = st.layers, [l] = arr.splice(i, 1);
@@ -2133,9 +2486,9 @@ function layerOp(op) {
   else if (op === "dup") {
     arr.splice(i, 0, l);
     const c = l.kind === "image"
-      ? { ...l, id: tuid++, cv: copyCanvas(l.cv), orig: copyCanvas(l.orig), paint: canvasOf(l.cv.width, l.cv.height), cx: l.cx + 16, cy: l.cy + 16, name: T("{0} のコピー", l.name) }
-      : l.kind === "shape" ? { ...JSON.parse(JSON.stringify(l)), id: tuid++, cx: l.cx + 16, cy: l.cy + 16 }
-        : { ...JSON.parse(JSON.stringify(l)), id: tuid++, x: r3(l.x + 0.03), y: r3(l.y + 0.03) };
+      ? { ...l, id: tuid++, cv: copyCanvas(l.cv), orig: copyCanvas(l.orig), paint: canvasOf(l.cv.width, l.cv.height), name: T("{0} のコピー", l.name) }
+      : { ...JSON.parse(JSON.stringify(l)), id: tuid++ }; // 複製は同じ所に(ずらさない)
+    c.locked = undefined;
     arr.splice(i + 1, 0, c);
     selectLayer(c);
   } else if (op === "del") {
@@ -2183,7 +2536,7 @@ function layerAt(sx, sy) {
   const d = toDoc(sx, sy);
   for (let i = st.layers.length - 1; i >= 0; i--) {
     const l = st.layers[i];
-    if (l.hidden || !hitOne(l, d)) continue;
+    if (l.hidden || l.locked || !hitOne(l, d)) continue;
     const bi = clipOf(l) ? clipBaseIndex(i) : -1;
     if (bi >= 0) { const b = st.layers[bi]; if ((clipOf(l) === "in") !== (!b.hidden && hitOne(b, d))) continue; }
     else if (clipHidesBase(i)) continue;
@@ -2349,7 +2702,7 @@ const WARP_SNAP = 8;
 function startImageDrag(e) {
   if (isMulti()) { startMultiDrag(e); return; }
   const L = selObj();
-  if (!L || st.busy) return;
+  if (!L || st.busy || L.locked) return;
   if ((e.ctrlKey || e.metaKey || L.warp) && L.kind === "image" && ["e", "w", "n", "s", "nw", "ne", "se", "sw"].includes(e.target.dataset?.h)) { startWarpDrag(e, L, e.target.dataset.h); return; }
   const box = $('[data-c="ibox"]'), br = box.getBoundingClientRect();
   const k = st.view.k, L0 = { ...L };
@@ -2386,7 +2739,7 @@ const r1 = (v) => Math.round(v * 10) / 10;
 const OUT_LS = "cca_generator.imgedit.out";
 function loadOut() {
   try { const o = JSON.parse(localStorage.getItem(OUT_LS) || "{}"); if (o && typeof o === "object") Object.assign(st.out, { fmt: o.fmt, q: o.q, bg: o.bg, color: o.color }); } catch { /* 既定のまま */ }
-  if (!["png", "jpeg", "webp"].includes(st.out.fmt)) st.out.fmt = "png";
+  if (!["png", "jpeg", "webp", "pdf"].includes(st.out.fmt)) st.out.fmt = "png";
   if (!["transparent", "white", "black", "color"].includes(st.out.bg)) st.out.bg = "transparent";
   st.out.q = clamp(Number(st.out.q) || 92, 1, 100);
   if (!/^#[0-9a-f]{6}$/i.test(st.out.color || "")) st.out.color = "#ffffff";
@@ -2397,7 +2750,7 @@ function saveOut() {
 const defaultOutName = () => `${stem(st.source || st.name || "image")}_edit`;
 // ファイル名(拡張子なし)。空なら「元の名前_edit」
 function outName() {
-  const n = String(st.out.name || "").trim().replace(/\.(png|jpe?g|webp)$/i, "").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim();
+  const n = String(st.out.name || "").trim().replace(/\.(png|jpe?g|webp|pdf)$/i, "").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim();
   return n || defaultOutName();
 }
 const outExt = () => (st.out.fmt === "jpeg" ? "jpg" : st.out.fmt);
@@ -2410,6 +2763,7 @@ function refreshOut() {
   $('[data-orow="color"]').hidden = st.out.bg !== "color";
   const notes = [];
   if (st.out.fmt === "jpeg" && st.out.bg === "transparent") notes.push(T("JPEG は透明にできないので、透明な所は白になります。"));
+  if (st.out.fmt === "pdf") notes.push(T("PDF: 画像を 1 ページに入れます(96 dpi の大きさ)。画質 100 で劣化なし、それより下は JPEG で小さく。「入力画像1に使う」は PNG で保存します。"));
   notes.push(T("保存先: 生成パネルの「画像の保存先」のフォルダ。ファイル名: {0}.{1}(同じ名前があれば _1、_2 …)", outName(), outExt()));
   $('[data-c="outnote"]').textContent = notes.join(" ");
 }
@@ -2423,12 +2777,13 @@ function onOutInput(e) {
   refreshOut();
   draw();
 }
-// 書き出す画像(Blob)と拡張子
-async function exportBlob() {
+// 書き出す画像(Blob)と拡張子。fmt を渡すとその形式で(入力画像1に使うときは PNG)
+async function exportBlob(fmt = st.out.fmt) {
   const c = renderComposite();
-  const type = st.out.fmt === "jpeg" ? "image/jpeg" : st.out.fmt === "webp" ? "image/webp" : "image/png";
+  if (fmt === "pdf") return { blob: await canvasToPdf(c, clamp(st.out.q, 1, 100)), ext: "pdf", name: outName() };
+  const type = fmt === "jpeg" ? "image/jpeg" : fmt === "webp" ? "image/webp" : "image/png";
   const blob = await new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error(T("画像を作れませんでした")))), type, type === "image/png" ? undefined : clamp(st.out.q, 1, 100) / 100));
-  return { blob, ext: outExt(), name: outName() };
+  return { blob, ext: fmt === "jpeg" ? "jpg" : fmt, name: outName() };
 }
 
 // ---------------------------------------------------------------- キャンバスの大きさ(リサイズ・トリミング)
@@ -2717,7 +3072,7 @@ function flattenTexts(quiet = false) {
 function copyText(cut = false) {
   const t = selText();
   if (!t) return false;
-  clipboard.set({ type: "text", from: "img", text: pickText(t) });
+  clipboard.set({ type: "text", from: "img", text: pickText(t), full: JSON.parse(JSON.stringify(t)) }); // full: この画面に貼るときは、合成・ふち取りなども同じに
   if (cut) textAction("del");
   ctx.notify(cut ? "切り取りました(Ctrl+V で貼り付け)" : "コピーしました(Ctrl+V で貼り付け)", "info");
   return true;
@@ -2728,9 +3083,9 @@ function pasteText() {
   if (!src || !st.layers.length || st.busy) return false;
   endBg();
   pushUndo(true);
-  const t = { ...newText(), ...src, id: tuid++, kind: "text" };
-  // 同じ画面からなら少しずらして重ならないように
-  if (c.from === "img") { t.x = r3((src.x ?? 0.5) + 0.03); t.y = r3((src.y ?? 0.5) + 0.03); }
+  // 同じ画面からなら、元と全く同じ位置・設定で
+  const t = c.from === "img" && c.full ? { ...JSON.parse(JSON.stringify(c.full)), id: tuid++, kind: "text" } : { ...newText(), ...src, id: tuid++, kind: "text" };
+  delete t.gid; // 1 つだけ貼るときは、元のグループには入れない
   st.layers.push(t);
   st.tsel = t.id; st.isel = null; st.msel = [];
   st.tool = "select"; // 貼り付けたあとは「選択」(文字を置く状態にしない)
@@ -2746,7 +3101,7 @@ function textAt(sx, sy) {
   const ts = st.texts;
   for (let i = ts.length - 1; i >= 0; i--) {
     const t = ts[i], L = layoutOf(t);
-    if (t.hidden) continue;
+    if (t.hidden || t.locked) continue;
     const dx = (sx - ox) / k - t.x * st.W, dy = (sy - oy) / k - t.y * st.H;
     const a = (-(t.rot || 0) * Math.PI) / 180;
     const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
@@ -2769,7 +3124,7 @@ function placeTextBox() {
 }
 function startTextDrag(e) {
   const t = selText();
-  if (!t || st.busy) return;
+  if (!t || st.busy || t.locked) return;
   const box = $('[data-c="tbox"]'), br = box.getBoundingClientRect();
   const k = st.view.k, W = st.W, H = st.H;
   const t0 = { ...t };
@@ -2791,6 +3146,7 @@ function startTextDrag(e) {
   });
 }
 const r3 = (v) => Math.round(v * 1000) / 1000;
+const r6 = (v) => Math.round(v * 1e6) / 1e6; // 方向キーで 1px ずつ動かすとき(割合の位置)
 function renderTextList() {
   const el = $('[data-c="tlist"]');
   el.innerHTML = st.texts.map((t) => `<button data-tid="${t.id}" class="${t.id === st.tsel ? "on" : ""}" title="${esc(t.text)}">T ${esc(String(t.text).split("\n")[0].slice(0, 14) || "…")}</button>`).join("");
@@ -2808,6 +3164,7 @@ function renderTextInsp() {
     fontButtons: `<div class="row" style="margin-top:4px"><button data-ta="gfont">${esc(T("＋ Google Fonts から追加"))}</button><button data-ta="fontre" title="${esc(T("フォントの一覧を読み直す"))}">🔄</button></div>`,
   }) + tsec("pos", T("位置・回転・不透明度"), `${tnum("x", "位置 横(%)", r3(t.x * 100), -100, 200, 0.5)}${tnum("y", "位置 縦(%)", r3(t.y * 100), -100, 200, 0.5)}
       ${tnum("rot", "回転(度)", r3(t.rot || 0), -3600, 3600, 1)}${tnum("opacity", "不透明度(%)", r3((t.opacity ?? 1) * 100), 0, 100, 1)}
+      <label class="fl">${esc(T("合成"))}<select data-k="blend">${blendOptions(blendOf(t))}</select></label>
       <div class="row" style="margin-top:6px"><button data-ta="dup">${esc(T("⧉ 複製"))}</button><button data-ta="del">${esc(T("🗑 消す"))}</button></div>
       <div class="note">${esc(T("文字の大きさは画像の高さに対しての %、折り返す幅は画像の幅に対しての %。"))}</div>`, open("pos"));
   for (const d of box.querySelectorAll("details.sec")) d.addEventListener("toggle", () => { st.secOpen[d.dataset.sec] = d.open; });
@@ -2853,8 +3210,8 @@ async function textAction(a, btn) {
     if (a === "gfont") { fontApi.google(); return; }
     if (a === "fontre") { btn.disabled = true; await fontApi.load(true); btn.disabled = false; delete $('[data-c="txinsp"]').dataset.for; renderTextInsp(); return; }
     if (!t) return;
-    if (a === "dup") { pushUndo(true); const c = { ...JSON.parse(JSON.stringify(t)), id: tuid++, x: r3(t.x + 0.03), y: r3(t.y + 0.03) }; st.layers.splice(st.layers.indexOf(t) + 1, 0, c); st.tsel = c.id; }
-    else if (a === "del") { pushUndo(true); st.layers = st.layers.filter((x) => x !== t); st.tsel = null; }
+    if (a === "dup") { pushUndo(true); const c = { ...JSON.parse(JSON.stringify(t)), id: tuid++ }; st.layers.splice(st.layers.indexOf(t) + 1, 0, c); st.tsel = c.id; } // 複製は同じ所に
+    else if (a === "del") { if (t.locked) { lockedNotify(); return; } pushUndo(true); st.layers = st.layers.filter((x) => x !== t); st.tsel = null; }
     else if (a === "tplsave") {
       const name = (prompt("テンプレートの名前", "") || "").trim();
       if (!name) return;
@@ -2879,6 +3236,7 @@ async function textAction(a, btn) {
 function onTextInput(e) {
   const el = e.target, t = selText();
   if (!t) return;
+  if (t.locked && el.dataset.tc !== "tpl") { lockedNotify(); $('[data-c="txinsp"]').dataset.for = ""; renderTextInsp(); return; }
   if (el.dataset.tc === "tpl") {
     st.tplSel = el.value || "";
     const it = findTpl(el.value);
@@ -2901,12 +3259,14 @@ function onTextInput(e) {
 
 // ---------------------------------------------------------------- ツール
 // 点と点の間も途切れないように、半径の半分ごとに丸を置く
-function strokePoints(a, b, r, fn) {
+function strokePoints(a, b, r, fn, pa = 1, pb = 1) {
   const d = Math.hypot(b.x - a.x, b.y - a.y);
-  const n = Math.max(1, Math.ceil(d / Math.max(1, r / 2)));
-  for (let i = 1; i <= n; i++) fn(a.x + ((b.x - a.x) * i) / n, a.y + ((b.y - a.y) * i) / n);
+  const n = Math.max(1, Math.ceil(d / Math.max(1, (r * Math.min(pa, pb)) / 4)));
+  for (let i = 1; i <= n; i++) fn(a.x + ((b.x - a.x) * i) / n, a.y + ((b.y - a.y) * i) / n, pa + ((pb - pa) * i) / n);
 }
-const BRUSH_TOOLS = ["erase", "restore", "remove", "rmerase", "mosaic"];
+const BRUSH_TOOLS = ["erase", "restore", "remove", "rmerase", "mosaic", "paint"];
+// ペンタブモード: ペンの筆圧(0〜1)。マウス・ペンタブモードでないときは 1
+const penP = (e) => (st.pen && e?.pointerType === "pen" ? clamp(Number(e.pressure) || 0, 0.05, 1) : 1);
 // モザイクの元: 画像全体をモザイク(またはぼかし)にした写し。マス目は画像の左上から並べる(何回なぞってもマスがずれない)
 function mosaicData(img, mode, size) {
   const w = img.width, h = img.height;
@@ -2961,7 +3321,11 @@ function mosaicData(img, mode, size) {
 // 1 回なぞる間は重ねても濃くならない。もう一度なぞると、そこからさらに掛かる
 function strokeBegin() {
   const w = st.img.width, h = st.img.height;
-  st.stroke = { base: st.img.getContext("2d").getImageData(0, 0, w, h), mask: canvasOf(w, h), box: null };
+  // ブラシ: お絵描きは選んだブラシ。消しゴム・戻すブラシ・モザイクは丸いブラシ(太さ・アルファ値・硬さ・筆圧で変えるもの)
+  const B = st.tool === "paint" ? curBrush() : { shape: "round", size: st.brush, opacity: clamp(st.balpha, 1, 100), flow: 100, hardness: clamp(st.bhard, 0, 100), spacing: 10, roundness: 100,
+    angle: 0, follow: false, sizeJit: 0, angleJit: 0, scatter: 0, texture: "none", texAmt: 0, pSize: st.penWhat !== "alpha", pOpacity: st.penWhat !== "size", minSize: 5, smooth: 0 };
+  st.stroke = { base: st.img.getContext("2d").getImageData(0, 0, w, h), eng: newStroke(w, h, B), erase: st.tool === "paint" && (st.pErase || st._penTip) }; // お絵描きの消しゴム(ボタン・ペンの消しゴム側)
+  if (st.tool === "paint") st.stroke.color = (String(st.bcolor).replace("#", "").match(/[0-9a-f]{2}/gi) || ["22", "22", "22"]).slice(0, 3).map((x) => parseInt(x, 16));
   if (st.tool === "restore" && st._origOf !== st.orig) {
     st._origOf = st.orig;
     st._origData = st.orig.getContext("2d").getImageData(0, 0, w, h);
@@ -2969,28 +3333,31 @@ function strokeBegin() {
   if (st.tool === "mosaic") st.stroke.src = mosaicData(st.img, st.mzmode, st.mzsize);
 }
 function strokeApply() {
-  const S = st.stroke;
-  if (!S?.box) return;
+  const S = st.stroke, E = S?.eng;
+  if (!E?.box) return;
   const w = st.img.width, h = st.img.height;
-  const x0 = Math.max(0, Math.floor(S.box.x0)), y0 = Math.max(0, Math.floor(S.box.y0));
-  const x1 = Math.min(w, Math.ceil(S.box.x1)), y1 = Math.min(h, Math.ceil(S.box.y1));
-  S.box = null;
+  const x0 = Math.max(0, Math.floor(E.box.x0)), y0 = Math.max(0, Math.floor(E.box.y0));
+  const x1 = Math.min(w, Math.ceil(E.box.x1)), y1 = Math.min(h, Math.ceil(E.box.y1));
+  E.box = null;
   if (x1 <= x0 || y1 <= y0) return;
   const bw = x1 - x0, bh = y1 - y0;
-  const m = S.mask.getContext("2d").getImageData(x0, y0, bw, bh).data;
   const g = st.img.getContext("2d");
   st.pxv = (st.pxv || 0) + 1; // 画素が変わった(ふち取りを作り直す)
   const out = g.getImageData(x0, y0, bw, bh);
   const d = out.data, B = S.base.data, O = (S.src || st._origData)?.data;
-  const a = clamp(st.balpha, 1, 100) / 100;
-  const erase = st.tool === "erase";
+  const tex = E.B.texture !== "none" && E.B.texAmt > 0;
+  const erase = st.tool === "erase" || S.erase, C = S.erase ? null : S.color;
   for (let yy = 0; yy < bh; yy++) {
     for (let xx = 0; xx < bw; xx++) {
       const i = (yy * bw + xx) * 4;
-      const mv = (m[i + 3] / 255) * a;
+      const mv = E.buf[(y0 + yy) * w + x0 + xx] * (tex ? texMul(E.B, x0 + xx, y0 + yy) : 1); // なぞった濃さ(不透明度まで)× 質感
       if (mv <= 0) continue;
       const j = ((y0 + yy) * w + x0 + xx) * 4;
-      if (erase) {
+      if (C) { // お絵描き: なぞり始めの画像の上に、色を重ねる
+        const ba = B[j + 3] / 255, na = mv + ba * (1 - mv);
+        for (let c = 0; c < 3; c++) d[i + c] = Math.round((C[c] * mv + B[j + c] * ba * (1 - mv)) / na);
+        d[i + 3] = Math.round(na * 255);
+      } else if (erase) {
         d[i] = B[j]; d[i + 1] = B[j + 1]; d[i + 2] = B[j + 2];
         d[i + 3] = Math.round(B[j + 3] * (1 - mv));
       } else {
@@ -3004,16 +3371,10 @@ function strokeApply() {
   }
   g.putImageData(out, x0, y0);
 }
-function dab(x, y) {
-  const r = st.brush / 2;
-  if (st.tool === "erase" || st.tool === "restore" || st.tool === "mosaic") {
-    const g = st.stroke.mask.getContext("2d");
-    g.fillStyle = "#fff";
-    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
-    const b = st.stroke.box;
-    st.stroke.box = { x0: Math.min(b ? b.x0 : Infinity, x - r - 1), y0: Math.min(b ? b.y0 : Infinity, y - r - 1),
-      x1: Math.max(b ? b.x1 : -Infinity, x + r + 1), y1: Math.max(b ? b.y1 : -Infinity, y + r + 1) };
-  } else if (st.tool === "remove" || st.tool === "rmerase") {
+function dab(x, y, pr = 1) {
+  const r = (st.brush / 2) * (st.penWhat !== "alpha" ? pr : 1), v = st.penWhat !== "size" ? pr : 1;
+  if (st.stroke?.eng) strokeDab(st.stroke.eng, x, y, pr);
+  else if (st.tool === "remove" || st.tool === "rmerase") {
     const g = st.paint.getContext("2d");
     g.fillStyle = "#ff3b30"; // 塗りの形だけを使う(見える色は表示のときに付ける)
     if (st.tool === "rmerase") g.globalCompositeOperation = "destination-out"; // 塗りを消す
@@ -3242,6 +3603,7 @@ function jobFail(e, msg, btn) {
 }
 async function autoBg(btn) {
   if (!st.img || st.busy) return;
+  if (activeImg()?.locked) { ctx.notify(T("この画像はロック中です(ロック解除すると使えます)"), "error"); return; }
   const models = ctx.choices().bg_models || [];
   const guide = $('[data-c="bgguide"]');
   if (!models.length) {
@@ -3483,6 +3845,7 @@ async function applyRemoved(url, btn) {
 }
 async function runRemove(btn) {
   if (!st.img || st.busy) return;
+  if (activeImg()?.locked) { ctx.notify(T("この画像はロック中です(ロック解除すると使えます)"), "error"); return; }
   const box = paintBox();
   if (!box) { ctx.notify("先に、消したい部分を「オブジェクト除去(塗る)」で塗ってください。", "error", btn); return; }
   if (st.rmMethod === "lama") return runLama(btn);
@@ -3573,9 +3936,9 @@ function clearPaint() {
 }
 
 // ---------------------------------------------------------------- 保存・ダウンロード・入力画像1に使う
-async function save(btn) {
+async function save(btn, fmt) {
   if (!st.layers.length) return null;
-  const { blob, ext, name } = await exportBlob();
+  const { blob, ext, name } = await exportBlob(fmt);
   const body = new FormData();
   body.append("image", blob, `edit.${ext}`);
   body.append("source", st.source || "image.png");
@@ -3586,10 +3949,10 @@ async function save(btn) {
   const r = await api.fetchApi("/cca_generator/imgedit/save", { method: "POST", body });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error(j.error || `${r.status}`);
-  st.saved = j;
+  st.saved = ext === "pdf" ? null : j; // PDF は画像として使えないので、入力画像1に使うときは PNG で保存し直す
   st.dirty = false;
   refresh();
-  ctx.onSaved?.(j);
+  if (ext !== "pdf") ctx.onSaved?.(j); // 結果の一覧(画像)には PDF は入れない
   ctx.notify(`保存しました: ${j.path}`, "info", btn, { sticky: true, file: { filename: j.filename, subfolder: j.subfolder || "", type: j.type || "output" } });
   return j;
 }
@@ -3635,17 +3998,56 @@ function bind() {
     const b = e.currentTarget;
     try {
       busy("保存しています…");
-      const j = st.saved && !st.dirty ? st.saved : await save(b);
+      const j = st.saved && !st.dirty ? st.saved : await save(b, st.out.fmt === "pdf" ? "png" : undefined);
       await ctx.useAsImage1(j.value);
       ctx.notify("編集した画像を入力画像1にしました", "info");
       busy("");
       close(true);
     } catch (err) { ctx.notify(`入力画像1にできませんでした: ${err.message}`, "error", b); } finally { busy(""); }
   };
+  // スポイト: 色の欄の横に。EyeDropper が使えないブラウザでは、キャンバスを押してその所の色を取る
+  attachDroppers(ui, (put) => {
+    ctx.notify(T("キャンバスの色を取りたい所を押してください(Esc でやめる)"), "info");
+    const cv = $(".stage > canvas"), g = cv.getContext("2d", { willReadFrequently: true });
+    pickColor($(".stage"), (cx, cy, n) => {
+      const r = cv.getBoundingClientRect();
+      const x = Math.floor(((cx - r.left) / Math.max(1, r.width)) * cv.width), y = Math.floor(((cy - r.top) / Math.max(1, r.height)) * cv.height);
+      try { return g.getImageData(x - (n >> 1), y - (n >> 1), n, n).data; } catch { return null; }
+    }, put);
+  });
+  // 色・明るさの補正
+  {
+    const box = $('[data-c="adjbox"]');
+    let raf = 0;
+    bindAdjPanel(box, {
+      get: adjTarget,
+      apply: (fn, ph) => {
+        const L = adjTarget();
+        if (!L) return;
+        if (L.locked) { lockedNotify(); return; }
+        if (ph.start) { endBg(); pushUndo(true); }
+        st.adjFast = !ph.end;
+        fn(L);
+        st.dirty = true;
+        if (ph.end) { cancelAnimationFrame(raf); raf = 0; refresh(); } // 元に戻すのボタンなども
+        else if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); });
+      },
+      stats: () => { const L = adjTarget(); return L ? adjStats(L.cv) : null; },
+      after: () => { delete box.dataset.sig; renderAdj(); },
+    });
+  }
+  // 背景の表示(透明な所の見え方)
+  {
+    const sel = $('[data-c="vbg"]'), col = $('[data-c="vbgc"]');
+    const sync = () => { const v = viewBg(); sel.value = v.mode; col.value = v.color; col.hidden = v.mode !== "color"; };
+    sync();
+    const put = () => { setViewBg({ mode: sel.value, color: col.value }); sync(); draw(); };
+    sel.onchange = put; col.oninput = put;
+  }
   const pickFile = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/*";
+    input.accept = `image/*,${PDF_ACCEPT}`;
     input.onchange = () => openFile(input.files?.[0]);
     input.click();
   };
@@ -3665,7 +4067,7 @@ function bind() {
   $('[data-c="placeup"]').onclick = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/*";
+    input.accept = `image/*,${PDF_ACCEPT}`;
     input.multiple = true;
     input.onchange = async () => { for (const f of [...(input.files || [])]) await placeFile(f); };
     input.click();
@@ -3760,6 +4162,29 @@ function bind() {
     draw();
   };
   pair("balpha", (v) => { st.balpha = clamp(v, 1, 100); });
+  pair("bhard", (v) => { st.bhard = clamp(v, 0, 100); });
+  brushPanel = setupBrushPanel($('[data-c="bpanel"]'), { onChange: () => draw() }); // ブラシの一覧と、選んだブラシの設定
+  for (const b of $$("[data-pm]")) b.onclick = () => setPaintMode(b.dataset.pm);
+  $('[data-c="bcolor"]').oninput = (e) => { st.bcolor = e.target.value; };
+  // ペンタブモード(このブラウザに覚える)
+  try { const o = JSON.parse(localStorage.getItem("cca_generator.imgedit.pen") || "null"); if (o) { st.pen = !!o.pen; st.penWhat = ["both", "size", "alpha"].includes(o.what) ? o.what : "both"; } } catch { /* 既定 */ }
+  const penSave = () => { try { localStorage.setItem("cca_generator.imgedit.pen", JSON.stringify({ pen: st.pen, what: st.penWhat })); } catch { /* 覚えなくても使える */ } };
+  $('[data-c="pen"]').checked = st.pen;
+  $('[data-c="penwhat"]').value = st.penWhat;
+  $('[data-c="pen"]').onchange = (e) => { st.pen = e.target.checked; penSave(); };
+  $('[data-c="penwhat"]').onchange = (e) => { st.penWhat = e.target.value; penSave(); };
+  // 透明なレイヤーを追加して、そこに描く
+  $('[data-c="newlayer"]').onclick = () => {
+    if (!(st.W > 0 && st.H > 0)) { st.W = BLANK_SIZE; st.H = BLANK_SIZE; } // レイヤーが 1 つも無いときも、今のキャンバスの大きさで足す
+    endBg();
+    pushUndo(true);
+    const L = imageLayer(canvasOf(st.W, st.H), T("お絵描き"), st.W / 2, st.H / 2, st.W, st.H);
+    st.layers.push(L);
+    st.aimg = L.id; st.isel = L.id; st.tsel = null;
+    st.dirty = true;
+    refresh();
+    ctx.notify(T("透明なレイヤーを追加しました(ここに描きます)"), "info");
+  };
   pair("mzsize", (v) => { st.mzsize = clamp(v, 2, 200); });
   // パスツール
   pair("palpha", (v) => { st.popt.alpha = clamp(v, 1, 100) / 100; });
@@ -3767,7 +4192,11 @@ function bind() {
   pair("pfeather", (v) => { st.popt.feather = clamp(v, 0, 100); });
   $('[data-c="pcolor"]').oninput = (e) => { st.popt.color = e.target.value; };
   $('[data-c="pathin"]').onclick = () => pathErase(true);
+  $('[data-c="pathcut"]').onclick = () => pathCut(true);
+  $('[data-c="pathcopy"]').onclick = () => pathCut(false);
   $('[data-c="pathout"]').onclick = () => pathErase(false);
+  $('[data-c="pathselin"]').onclick = () => pathSelect("in");
+  $('[data-c="pathselout"]').onclick = () => pathSelect("out");
   $('[data-c="pathfill"]').onclick = () => pathShape(true);
   $('[data-c="pathline"]').onclick = () => pathShape(false);
   $('[data-c="pathback"]').onclick = () => pathBack();
@@ -3808,6 +4237,7 @@ function bind() {
   $('[data-c="tbox"]').addEventListener("dblclick", (e) => {
     const t = selText();
     if (!t) return;
+    if (t.locked) { lockedNotify(); return; }
     const r = $(".stage > canvas").getBoundingClientRect();
     beginTextEdit(t, textIndexAt(t, e.clientX - r.left, e.clientY - r.top));
   });
@@ -3867,9 +4297,13 @@ function bind() {
       cv.style.cursor = "grabbing";
       return;
     }
-    if (e.button !== 0) return;
+    // ペンタブ: ペンの消しゴム側で押したら、お絵描きの消しゴム(横のボタンは右ボタンと同じく画面を動かす)
+    const penTip = e.pointerType === "pen" && (e.button === 5 || (e.buttons & 32) !== 0);
+    st._penTip = penTip && st.tool === "paint";
+    if (e.button !== 0 && !st._penTip) return;
     if (st.lcrop) return;
     if (st.tool === "path") { pathDown(p, e); draw(); return; }
+    if (st.tool === "msrect" || st.tool === "msell") { marqDown(p); draw(); return; }
     if (st.tool === "shape") { startShapeDraw(p); draw(); return; }
     if (st.tool === "select") {
       // 押したレイヤーを選んで、そのまま動かす(何も無い所なら選ぶのをやめる)
@@ -3902,6 +4336,7 @@ function bind() {
     }
     // ここからは作業する画像に掛かるツール
     const A = activeImg();
+    if (A?.locked) { ctx.notify(T("この画像はロック中です(ロック解除すると使えます)"), "error"); return; }
     if (!A || A.hidden) { ctx.notify(T(A ? "作業中の画像が隠れています(一覧の 👁 で見せてください)" : "作業する画像を選んでください(「↖ 選択」で画像を押すか、「レイヤー」の一覧で選びます)"), "info"); return; }
     const q = toImg(p.x, p.y);
     if (st.tool === "wand") {
@@ -3909,10 +4344,10 @@ function bind() {
       if (wandAt(q.x, q.y)) refresh();
       return;
     }
-    if (st.tool === "erase" || st.tool === "restore" || st.tool === "mosaic") { endBg(); pushUndo(); strokeBegin(); }
+    if (st.tool === "erase" || st.tool === "restore" || st.tool === "mosaic" || st.tool === "paint") { endBg(); pushUndo(); strokeBegin(); if (st.tool === "paint" && A.blank) delete A.blank; } // 描いた空のキャンバスは、画像を開いても置き換えない
     if (st.tool === "remove" || st.tool === "rmerase") { pushUndo(false, true); st.paint._dirty = true; } // ひと塗りずつ元に戻せる
-    st.drag = { mode: "brush", last: q };
-    dab(q.x, q.y);
+    st.drag = { mode: "brush", last: q, lp: penP(e) };
+    dab(q.x, q.y, st.drag.lp);
     strokeApply();
     draw();
   });
@@ -3926,6 +4361,8 @@ function bind() {
       st.drag.last = p;
     } else if (st.drag.mode === "shape") {
       moveShapeDraw(p, e);
+    } else if (st.drag.mode === "marq") {
+      marqMove(p, e);
     } else if (st.drag.mode === "pathsel") {
       const d = toDoc(p.x, p.y);
       for (const [j, x, y] of st.drag.org) { const q = st.path?.pts[j]; if (q) { q.x = r1(x + d.x - st.drag.x0); q.y = r1(y + d.y - st.drag.y0); } }
@@ -3941,17 +4378,35 @@ function bind() {
         if (!e.altKey) q[st.drag.sd === "hi" ? "ho" : "hi"] = [-hv[0], -hv[1]];
       }
     } else {
-      const q = toImg(p.x, p.y);
-      strokePoints(st.drag.last, q, st.brush / 2, dab);
+      for (const ce of (e.getCoalescedEvents?.().length ? e.getCoalescedEvents() : [e])) { // 細かい動きも拾う
+        const cp = ce === e ? p : pos(ce), pr = penP(ce);
+        let q = toImg(cp.x, cp.y);
+        const E = st.stroke?.eng;
+        if (!E) { strokePoints(st.drag.last, q, st.brush / 2, dab, st.drag.lp ?? 1, pr); st.drag.last = q; st.drag.lp = pr; continue; } // 除去の範囲を塗る
+        if (st.tool !== "paint") { strokeTo(E, st.drag.last, { x: (st.drag.last.x + q.x) / 2, y: (st.drag.last.y + q.y) / 2 }, q, st.drag.lp ?? 1, pr); st.drag.last = q; st.drag.lp = pr; continue; }
+        st.drag.raw = q; st.drag.rawP = pr;
+        if (E.B.smooth > 0) { // 手振れ補正: 線がカーソルを少し遅れて追う(大きいほどなめらか)
+          const L = st.drag.sm || st.drag.last, k = 1 - (clamp(E.B.smooth, 0, 100) / 100) * 0.92;
+          q = st.drag.sm = { x: L.x + (q.x - L.x) * k, y: L.y + (q.y - L.y) * k };
+        }
+        // なめらかな線: 前の点を通る曲線で、前の中点から今の中点までつなぐ
+        const c = st.drag.ctrl || st.drag.last, m = { x: (c.x + q.x) / 2, y: (c.y + q.y) / 2 };
+        strokeTo(E, st.drag.last, c, m, st.drag.lp ?? 1, pr);
+        st.drag.last = m; st.drag.ctrl = q; st.drag.lp = pr;
+      }
       strokeApply();
-      st.drag.last = q;
       if (st.tool === "remove" || st.tool === "rmerase") st.paint._dirty = true;
     }
     draw();
   });
   const end = () => {
-    if (st.drag?.mode === "brush") { strokeApply(); st.stroke = null; refresh(); }
+    if (st.drag?.mode === "brush") {
+      if (st.drag.raw && st.stroke?.eng) strokeTo(st.stroke.eng, st.drag.last, st.drag.ctrl || st.drag.last, st.drag.raw, st.drag.lp ?? 1, st.drag.rawP ?? 1); // 離した所まで描く
+      if (st.tool === "paint" && st.stroke?.eng && !st.stroke.erase) finishStroke(st.stroke.eng); // 水彩など: 離したあとににじむ
+      strokeApply(); st.stroke = null; refresh();
+    }
     if (st.drag?.mode === "shape") endShapeDraw();
+    if (st.drag?.mode === "marq" && st.path && st.path.pts.every((q) => Math.abs(q.x - st.path.pts[0].x) < 2 && Math.abs(q.y - st.path.pts[0].y) < 2)) st.path = null; // クリックだけ: 選ぶのをやめる
     st.drag = null;
     refreshTool();
     draw();
@@ -3988,7 +4443,7 @@ function bind() {
     e.preventDefault();
     stage.classList.remove("drop");
     // 何も開いていなければ開く。開いていれば重ねて置く
-    const fs = [...(e.dataTransfer?.files || [])].filter((x) => /^image\//.test(x.type));
+    const fs = [...(e.dataTransfer?.files || [])].filter((x) => /^image\//.test(x.type) || isPdf(x));
     (async () => { for (const f of fs) await placeFile(f); })();
   });
   // コピーしたとき: パソコンのクリップボードに印(と、画像 1 つならその画像)を入れる。貼り付けで印があれば、この画面のレイヤーを貼る
@@ -4021,7 +4476,8 @@ function bind() {
   }, true);
   // キー操作: 開いている間はグラフ側のショートカットに渡さない(ボタンが押せなくなってフォーカスが外れても効くよう window で受ける)
   window.addEventListener("keydown", (e) => {
-    if (!ui?.classList.contains("open") || watermarkKey(e) || historyKey(e)) return;
+    if (!ui?.classList.contains("open") || pdfKey(e) || watermarkKey(e) || historyKey(e)) return;
+    if (selectKey(e)) return; // プルダウンを選んでいるときの上下キーなどは、プルダウンに渡す
     e.stopPropagation();
     const t = e.target;
     const inField = t && ui.contains(t) && isField(t);
@@ -4046,8 +4502,22 @@ function bind() {
     if (st.crop && !inField && (e.key === "Enter" || e.key === "Escape")) { e.preventDefault(); endCrop(e.key === "Enter"); return; }
     if (st.lcrop && !inField && (e.key === "Enter" || e.key === "Escape")) { e.preventDefault(); endLayerCrop(e.key === "Enter"); return; }
     if (inField && e.key !== "Escape") return;
-    if (mod && k === "c") { if (copyObjects()) { clipMark(); document.execCommand("copy"); e.preventDefault(); } }
-    else if (mod && k === "x") { if (copyObjects(true)) { clipMark(); document.execCommand("copy"); e.preventDefault(); } }
+    // お絵描き: B ブラシ / E 消しゴム / [ ] 太さ(ペンタブのボタンに、このキーを割り当てて使えます)
+    if (!mod && !e.altKey && st.tedit == null && (k === "b" || k === "e")) {
+      e.preventDefault();
+      st.tool = "paint"; setPaintMode(k === "e" ? "erase" : "paint"); refreshTool(); draw();
+      return;
+    }
+    if (!mod && !e.altKey && st.tedit == null && (e.key === "[" || e.key === "]") && BRUSH_TOOLS.includes(st.tool)) {
+      e.preventDefault();
+      const f = e.key === "]" ? 1.15 : 1 / 1.15;
+      if (st.tool === "paint") bumpBrushSize(f);
+      else { st.brush = clamp(Math.round(f > 1 ? Math.max(st.brush + 1, st.brush * f) : Math.min(st.brush - 1, st.brush * f)), 2, 400); $('[data-c="brush"]').value = st.brush; $('[data-n="brush"]').value = st.brush; }
+      draw();
+      return;
+    }
+    if (mod && k === "c") { if (selCopy(false) || copyObjects()) { clipMark(); document.execCommand("copy"); e.preventDefault(); } }
+    else if (mod && k === "x") { if (selCopy(true) || copyObjects(true)) { clipMark(); document.execCommand("copy"); e.preventDefault(); } }
     else if (mod && k === "g") { e.preventDefault(); groupSel(!e.shiftKey); }
     else if (mod && k === "a" && st.tool === "select" && st.layers.length) { e.preventDefault(); selectLayer(st.layers.at(-1)); st.msel = st.layers.filter((l) => !l.hidden).map((l) => l.id); refresh(); }
     else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key) && st.tool === "path" && st.pathSel?.some((j) => st.path?.pts[j])) {
@@ -4064,7 +4534,8 @@ function bind() {
     }
     else if (st.tool === "path" && st.path && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); pathBack(); }
     else if (st.tool === "path" && st.path?.pts.length >= 3 && !st.path.closed && e.key === "Enter") { e.preventDefault(); pathSnap(); st.path.closed = true; draw(); }
-    else if (st.tool === "path" && st.path && e.key === "Escape") { e.preventDefault(); pathSnap(); st.path = null; draw(); }
+    else if (SEL_TOOLS.includes(st.tool) && st.path && e.key === "Escape") { e.preventDefault(); pathSnap(); st.path = null; draw(); }
+    else if ((st.tool === "msrect" || st.tool === "msell") && st.path && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); pathErase(true); }
     else if ((e.key === "Delete" || e.key === "Backspace") && isMulti() && st.tool === "select") { e.preventDefault(); deleteSel(); }
     else if ((e.key === "Delete" || e.key === "Backspace") && ["text", "select"].includes(st.tool) && selText()) { e.preventDefault(); textAction("del"); }
     else if ((e.key === "Delete" || e.key === "Backspace") && st.tool === "select" && selObj()) { e.preventDefault(); layerOp("del"); }
@@ -4129,7 +4600,8 @@ function histSave(auto = false, btn = null) {
         if (l.orig) files[`L${l.id}_o.png`] = await toBlob(l.orig);
       }
       const layers = st.layers.map((l) => (l.kind === "image"
-        ? { id: l.id, kind: "image", name: l.name, cx: l.cx, cy: l.cy, w: l.w, h: l.h, rot: l.rot || 0, opacity: l.opacity ?? 1, hidden: !!l.hidden, ...(l.gid ? { gid: l.gid } : {}), ...(l.crop ? { crop: l.crop } : {}), ...(l.warp ? { warp: l.warp } : {}), ...(l.clip ? { clip: l.clip, clipHide: !!l.clipHide } : {}), ...(l.ol ? { ol: l.ol } : {}) }
+        ? { id: l.id, kind: "image", name: l.name, cx: l.cx, cy: l.cy, w: l.w, h: l.h, rot: l.rot || 0, opacity: l.opacity ?? 1, hidden: !!l.hidden, ...(l.locked ? { locked: true } : {}), ...(l.gid ? { gid: l.gid } : {}), ...(l.crop ? { crop: l.crop } : {}), ...(l.warp ? { warp: l.warp } : {}), ...(l.clip ? { clip: l.clip, clipHide: !!l.clipHide } : {}), ...(l.ol ? { ol: l.ol } : {}),
+          ...(l.blend ? { blend: l.blend } : {}), ...(l.adj ? { adj: l.adj, adjBase: l.adjBase, adjName: l.adjName, adjK: l.adjK } : {}), ...(l.adjOff ? { adjOff: true } : {}), ...(l.asel ? { asel: l.asel } : {}) }
         : JSON.parse(JSON.stringify(l))));
       const item = await saveEntry("image", {
         data: { v: 2, source: st.source, name: st.name, W: st.W, H: st.H, aimg: st.aimg, out: st.out, layers },

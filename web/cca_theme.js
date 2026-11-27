@@ -1,4 +1,6 @@
 import { T } from "./cca_i18n.js";
+import { api } from "../../scripts/api.js";
+import { hoverPreview, hidePreview, mediaKind } from "./cca_hoverpv.js";
 // 配色(テーマ)の切り替え。生成パネル・画像編集・動画編集の色を、選んだ配色に置き換える。
 // 画面の色はもとの配色(クラシック。暗い色)で書いてあり、ここで 1 色ずつ置き換える:
 //   - 色の少ない色(背景・線・文字): もとの明るさの順に、配色の背景 bg → 文字 fg の間の色にする(明るい配色では明るさが逆になる)
@@ -6,7 +8,7 @@ import { T } from "./cca_i18n.js";
 //   - 半透明の黒・白(影など)はそのまま
 // 置き換えるのは、パネル・編集画面の <style> と、その中の要素の style 属性。プレビュー(画像・動画の中身)は置き換えない。
 const KEY = "cca_generator.theme";
-// ---- 配色の項目(THEMES の 1 つ分)。色は #rgb・#rgba・#rrggbb・#rrggbbaa(最後の 2 桁が不透明度 00〜ff)で書ける
+// ---- 配色の項目(テーマのファイル 1 つ分。web/themes/<id>.js に export default { … } で書く)。色は #rgb・#rgba・#rrggbb・#rrggbbaa(最後の 2 桁が不透明度 00〜ff)で書ける
 //   id      保存に使う名前(変えない)
 //   name    プルダウンに出す名前(英語などの表示は言語パックで訳す)
 //   light   true = 明るい配色(地が明るく文字が暗い)。もとの暗い配色の明るさを逆にして使う
@@ -29,799 +31,56 @@ const KEY = "cca_generator.theme";
 //   snapOn  スナップがオンの時の色: { bg 地 / fg 文字 / border 枠 }。書いた項目だけ置き換わる
 // 色の不透明度: bg・fg に付けると地・欄・線・文字が、accent・accent2・hueMap の色に付けると、その色から作る所が透ける。
 // エラーの赤・成功の緑などは色合いを残し、明るさだけ配色に合わせる。半透明の黒・白(影など)はそのまま。
-export const THEMES = [
-  {
-    id: "cca10",                 // 保存に使う名前(変えない)
-    name: "CCA-標準",            // プルダウンに出す名前
-    light: true,                 // 明るい配色(地が明るく文字が暗い)
-    rainbow: false,              // true で色の付いた所を色鉛筆の 7 色に寄せる(使わない)
-    classic: false,              // true で置き換えない(使わない)
-    bg: "#f5f1e6",               // 地の色(パネル・編集画面の地)
-    fg: "#1c120b",               // 文字の色(ふつうの文字)
-    accent: "#5c361be6",         // 強調色: 生成ボタン・選んでいるボタン・スライダーなど(もとの青緑)
-    accent2: "#6c7c54e6",        // 目印色: スナップのオン・強調表示の枠など(もとの黄)
-    grad: ["#f7f2e7", "#7d6148"], // 地のグラデーション [上, 下]
-    alpha: { panel: 0.96, card: 0.86, go: 0.94 }, // 不透明度: 地 / 欄(カード) / 生成ボタン
-    // 色合い(±28°)の置き換え。[色合い, 置き換える色, 指定]  指定: "dark"=濃く / "pale"=白っぽく(省略で明るさそのまま)
-    hueMap: [
-      [0, "#5c361b", "dark"],      // 赤 → 濃茶
-      [270, "#d9c8b4", "pale"],    // 紫 → 白っぽい茶
-      [320, "#5c361b", "dark"],    // ピンク・マゼンタ → 濃茶
-      [35, "#7a5535e6", "dark"],   // 橙 → 茶
-      [120, "#6c7c54e6"]           // 緑 → 落ち着いた緑
-    ],
-    secTitleUseAccent: true,     // 項目の見出しを、その項目の色(sections の accent)にする
-    vars: {
-      "--bg": "#f5f1e6",  // 地
-      "--panel": "#f2e6d1",  // パネルの地
-      "--card": "#faf6ee",  // 欄(カード)の地
-      "--card2": "#dcd9cc",  // 欄の濃い方・ホバーなど
-      "--text": "#1c120b",  // ふつうの文字
-      "--muted": "#1f150d",  // 説明・薄い文字
-      "--border": "rgba(43, 32, 24, 0.22)",  // 線・枠
-      "--accent": "#5c361b",  // 強調色
-      "--accent2": "#6c7c54",  // 目印色
-      "--accent-fg": "#faf6ee",  // 強調色の上の文字
-      "--danger": "#8c6f55",  // エラー・警告の色
-      "--warn": "#bfa987",  // 注意の色
-      "--ok": "#6c7c54",  // 成功の色
-      "--sec-a": "#faf6ee",  // 設定の欄の色(奇数番目)
-      "--sec-b": "#e9dfcb"   // 設定の欄の色(偶数番目)。欄ごとに交互に色分けする
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(42, 29, 20, 0.14), inset 0 1px 0 rgba(250, 246, 238, 0.78)",  // 欄(カード)の影
-      secCardShadow: "0 2px 10px rgba(42, 29, 20, 0.14), inset 0 1px 0 rgba(250, 246, 238, 0.80)",  // 項目(セクション)の影
-      btnGrad: "linear-gradient(180deg, rgba(250, 246, 238, 0.56), rgba(242, 230, 209, 0.12) 48%, rgba(42, 29, 20, 0.14))",  // ボタンのつや(グラデーション)
-      btnShadow: "inset 0 1px 0 rgba(250, 246, 238, 0.78), inset 0 -2px 3px rgba(42, 29, 20, 0.20), 0 1px 3px rgba(42, 29, 20, 0.24)",  // ボタンの影
-      btnActiveShadow: "inset 0 2px 4px rgba(42, 29, 20, 0.34)",  // ボタンを押した時の影
-      goBorder: "#f2e6d1",  // 生成ボタンの枠
-      goColor: "#faf6ee",  // 生成ボタンの文字
-      goTextShadow: "0 1px 2px rgba(24, 14, 7, 0.80)",  // 生成ボタンの文字の影
-      goShadow: "inset 0 2px 0 rgba(242, 230, 209, 0.42), inset 0 -6px 12px rgba(32, 18, 8, 0.42), 0 6px 16px rgba(42, 29, 20, 0.48)"  // 生成ボタンの影
-    },
-    select: {                    // セレクト(プルダウン)
-      bg: "#faf6ee", fg: "#1c120b", border: "rgba(43, 32, 24, 0.22)", // 閉じている時: 地 / 文字 / 枠
-      menuBg: "#faf6ee", menuFg: "#1c120b", menuBorder: "rgba(43, 32, 24, 0.22)", // 開いた一覧: 地 / 文字 / 枠
-      hoverBg: "#dcd9cc", hoverFg: "#1c120b", // カーソルを乗せた項目: 地 / 文字
-      selectedBg: "#5c361b", selectedFg: "#faf6ee" // 選ばれている項目: 地 / 文字
-    },
-    onFg: "#ffffff",             // 地が濃いボタン(.on・「開く」など)の文字色
-    secDoneFg: "#2a1a0e",        // 並び替えの「完了」ボタンの文字色(黒茶)
-    // 文字・部品の調整(tune)。書いた項目だけ有効。書かない項目は何も出ず、これまで通りの見た目になる
-    tune: {
-      solid: true,               // 見出し・項目名・説明文を透かさない
-      headWeight: 700,           // 見出しの太さ
-      labelColor: "#1a100a",     // 項目名の文字色
-      labelWeight: 600,          // 項目名の太さ
-      descColor: "#2f2218",      // 説明文の文字色
-      descWeight: 500,           // 説明文の太さ
-      infoFg: "#ffffff",         // ⓘボタンの文字
-      infoBg: "#6b4a30",         // ⓘボタンの地
-      infoBorder: "#4a331f",     // ⓘボタンの枠
-      selFg: "#ffffff",          // 選んでいるボタン(.on)の文字色(履歴などのダイアログ内も。スナップ以外)
-      spin: { bg: "#5c361b", fg: "#ffffff" }, // 数字欄の上下ボタン: 地 / 矢印(Chrome 系のみ)
-      check: "#5c361b",          // チェックボックス・ラジオの色
-      scroll: { thumb: "#8a6a4c", track: "#e6dccb", hover: "#5c361b" }, // スクロールバー: つまみ / 溝 / つまみにカーソルを乗せた時(生成パネル・画像編集・動画編集・ダイアログ)
-      layerSel: { bg: "linear-gradient(135deg, #eadcc8, #d3bc9d)", border: "#5c361b" }, // 選んでいるレイヤー行(.ly.sel): 地 / 枠
-      boxGrad: { light: "rgba(255,252,246,0.85)", dark: "rgba(214,196,170,0.55)", border: "rgba(74,51,31,0.28)" }, // 項目内の枠(.lcrop): 左上 / 右下 / 枠
-      groupFix: { 67: { hue: 28, fg: "#5c361b" } } // レイヤーのグループ色(--g の色合い)を茶に: 67(黄)→ 色合い 28 + 数字の色
-    },
-    // その他の CSS(1 行 1 規則)
-    extraCss: [
-      '#cca-vedit button[data-c="stretch"].on.on.on{color:#5c361b !important;background-color:#e3d2bc !important;border-color:#5c361b !important}', // 動画編集: 伸縮(タイムストレッチ)ボタン(茶の文字・薄い茶の地)
-      '#cca-vedit .tl .blk, #cca-vedit .tl .blk *:not(canvas){color:#ffffff !important}', // 動画編集: タイムラインのバーの中の文字を白
-      '.cca-lic.ok{background-color:#4f6b3a !important;color:#ffffff !important}', // ライセンスのタグ「商用可」: 地の色と白い文字
-      '.cca-lic.cond{background-color:#8a6a1c !important;color:#ffffff !important}', // ライセンスのタグ「条件付き」: 地の色と白い文字
-      '.cca-lic.out{background-color:#7a5535 !important;color:#ffffff !important}', // ライセンスのタグ「生成物のみ商用可」: 地の色と白い文字
-      '.cca-lic.no{background-color:#5c361b !important;color:#ffffff !important}', // ライセンスのタグ「非商用のみ」: 地の色と白い文字
-      '.cca-lic.unknown{background-color:#5b5148 !important;color:#ffffff !important}' // ライセンスのタグ「不明」: 地の色と白い文字
-    ].join("\n"),
-    snapOn: { bg: "#aebd94", fg: "#2e3a1e", border: "#3b4a29" }, // スナップがオンの時: 地 / 文字 / 枠
-    // 項目ごとの色(グラデーションもここから作る): accent=見出し・強調 / tint=グラデーションの地 / border=枠
-    sections: {
-      model:    { accent: "#5c361b", tint: "rgba(92, 54, 27, 0.22)",    border: "rgba(92, 54, 27, 0.46)" },  // モデル
-      images:   { accent: "#3b4a29", tint: "rgba(59, 74, 41, 0.22)",   border: "rgba(59, 74, 41, 0.46)" },  // 入力画像
-      prompt:   { accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",   border: "rgba(74, 51, 31, 0.46)" },  // プロンプト
-      models:   { accent: "#3d2b1d", tint: "rgba(61, 43, 29, 0.22)",    border: "rgba(61, 43, 29, 0.46)" },  // モデル(詳細)
-      hires:    { accent: "#3b4a29", tint: "rgba(59, 74, 41, 0.22)",   border: "rgba(59, 74, 41, 0.46)" },  // 高解像度化
-      tile:     { accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",   border: "rgba(74, 51, 31, 0.46)" },  // タイル生成
-      size:     { accent: "#2b2018", tint: "rgba(43, 32, 24, 0.22)",    border: "rgba(43, 32, 24, 0.46)" },  // サイズ
-      audiogen: { accent: "#3d2b1d", tint: "rgba(61, 43, 29, 0.22)",    border: "rgba(61, 43, 29, 0.46)" },  // 音声生成
-      sampling: { accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",   border: "rgba(74, 51, 31, 0.46)" },  // 生成設定
-      models2:  { accent: "#2b2018", tint: "rgba(43, 32, 24, 0.22)",    border: "rgba(43, 32, 24, 0.46)" },  // その他モデル
-      out:      { accent: "#3b4a29", tint: "rgba(59, 74, 41, 0.22)",   border: "rgba(59, 74, 41, 0.46)" },  // 保存先
-      shapes:   { accent: "#5c361b", tint: "rgba(92, 54, 27, 0.22)",    border: "rgba(92, 54, 27, 0.46)" },  // 図形
-      text:     { accent: "#3d2b1d", tint: "rgba(61, 43, 29, 0.22)",    border: "rgba(61, 43, 29, 0.46)" },  // 文字
-      watermark:{ accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",   border: "rgba(74, 51, 31, 0.46)" },
-      bgremove: { accent: "#3b4a29", tint: "rgba(59, 74, 41, 0.22)",   border: "rgba(59, 74, 41, 0.46)" },  // 背景を消す
-      inpaint:  { accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",   border: "rgba(74, 51, 31, 0.46)" },  // 部分修正
-      bg:       { accent: "#5c361b", tint: "rgba(92, 54, 27, 0.22)",    border: "rgba(92, 54, 27, 0.46)" },  // 背景
-      effects:  { accent: "#44552f", tint: "rgba(68, 85, 47, 0.22)",  border: "rgba(68, 85, 47, 0.46)" },  // 効果
-      filter:   { accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",   border: "rgba(74, 51, 31, 0.46)" },  // フィルター
-      layers:   { accent: "#2b2018", tint: "rgba(43, 32, 24, 0.22)",    border: "rgba(43, 32, 24, 0.46)" },  // レイヤー
-      audio:    { accent: "#3d2b1d", tint: "rgba(61, 43, 29, 0.22)",    border: "rgba(61, 43, 29, 0.46)" },  // 音声
-      timeline: { accent: "#5c361b", tint: "rgba(92, 54, 27, 0.22)",    border: "rgba(92, 54, 27, 0.46)" },  // タイムライン
-      canvas:   { accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",    border: "rgba(74, 51, 31, 0.46)" },  // キャンバス
-      export:   { accent: "#3b4a29", tint: "rgba(59, 74, 41, 0.22)",    border: "rgba(59, 74, 41, 0.46)" },  // 書き出す動画
-      output:   { accent: "#3b4a29", tint: "rgba(59, 74, 41, 0.22)",    border: "rgba(59, 74, 41, 0.46)" },  // 書き出し
-      insp:     { accent: "#3d2b1d", tint: "rgba(61, 43, 29, 0.22)",    border: "rgba(61, 43, 29, 0.46)" },  // 選んだレイヤーの設定(動画編集)
-      remove:   { accent: "#4a331f", tint: "rgba(74, 51, 31, 0.22)",    border: "rgba(74, 51, 31, 0.46)" },  // オブジェクト除去
-      guide:    { accent: "#2b2018", tint: "rgba(43, 32, 24, 0.20)",    border: "rgba(43, 32, 24, 0.44)" },  // 使い方
-      tools:    { accent: "#4a2a14", tint: "rgba(74, 42, 20, 0.22)",    border: "rgba(74, 42, 20, 0.48)" }  // ツール
-    }
-  },
-  {
-    id: "cca03",
-    name: "CCA-v0.3",
-    light: true,
-    bg: "#fcf6ef",
-    fg: "#2b1e16",
-    accent: "#9c5c26",
-    accent2: "#735341",
-    grad: ["#fcf6ef", "#5a3b27"],
-    hueMap: [[0, "#856553"]],
-    vars: {
-      "--bg": "#fcf6ef",
-      "--panel": "#f6e6d2",
-      "--card": "#fffcf8",
-      "--card2": "#ead7c0",
-      "--text": "#2b1e16",
-      "--muted": "#5c4233",
-      "--border": "rgba(43, 30, 22, 0.18)",
-      "--accent": "#9c5c26",
-      "--accent2": "#735341",
-      "--accent-fg": "#ffffff",
-      "--danger": "#9c5c26",
-      "--warn": "#b87a2e",
-      "--ok": "#735341"
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(43, 30, 22, 0.12), inset 0 1px 0 rgba(255, 252, 248, 0.75)",
-      secCardShadow: "0 2px 10px rgba(43, 30, 22, 0.11), inset 0 1px 0 rgba(255, 252, 248, 0.75)",
-      btnGrad: "linear-gradient(180deg, rgba(255, 252, 248, 0.45), rgba(246, 230, 210, 0.08) 48%, rgba(43, 30, 22, 0.10))",
-      btnShadow: "inset 0 1px 0 rgba(255, 252, 248, 0.65), inset 0 -2px 3px rgba(43, 30, 22, 0.16), 0 1px 3px rgba(43, 30, 22, 0.22)",
-      btnActiveShadow: "inset 0 2px 4px rgba(43, 30, 22, 0.3)",
-      goBorder: "#fffcf8",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(43, 30, 22, 0.65)",
-      goShadow: "inset 0 2px 0 rgba(255, 252, 248, 0.45), inset 0 -6px 12px rgba(43, 30, 22, 0.25), 0 6px 16px rgba(43, 30, 22, 0.42)"
-    },
-    sections: {
-      model:    { accent: "#9c5c26", tint: "rgba(156, 92, 38, 0.12)",   border: "rgba(156, 92, 38, 0.32)" },
-      images:   { accent: "#735341", tint: "rgba(115, 83, 65, 0.12)",   border: "rgba(115, 83, 65, 0.32)" },
-      prompt:   { accent: "#694530", tint: "rgba(105, 69, 48, 0.12)",   border: "rgba(105, 69, 48, 0.32)" },
-      models:   { accent: "#a8642b", tint: "rgba(168, 100, 43, 0.12)",  border: "rgba(168, 100, 43, 0.32)" },
-      hires:    { accent: "#735341", tint: "rgba(115, 83, 65, 0.11)",   border: "rgba(115, 83, 65, 0.30)" },
-      tile:     { accent: "#9c5c26", tint: "rgba(156, 92, 38, 0.11)",   border: "rgba(156, 92, 38, 0.30)" },
-      size:     { accent: "#614736", tint: "rgba(97, 71, 54, 0.11)",    border: "rgba(97, 71, 54, 0.30)" },
-      audiogen: { accent: "#a8642b", tint: "rgba(168, 100, 43, 0.12)",  border: "rgba(168, 100, 43, 0.32)" },
-      sampling: { accent: "#b87a2e", tint: "rgba(184, 122, 46, 0.12)",  border: "rgba(184, 122, 46, 0.32)" },
-      models2:  { accent: "#694530", tint: "rgba(105, 69, 48, 0.11)",   border: "rgba(105, 69, 48, 0.30)" },
-      out:      { accent: "#735341", tint: "rgba(115, 83, 65, 0.11)",   border: "rgba(115, 83, 65, 0.30)" },
-      shapes:   { accent: "#9c5c26", tint: "rgba(156, 92, 38, 0.12)",   border: "rgba(156, 92, 38, 0.34)" },
-      text:     { accent: "#694530", tint: "rgba(105, 69, 48, 0.12)",   border: "rgba(105, 69, 48, 0.32)" },
-      watermark:{ accent: "#b87a2e", tint: "rgba(184, 122, 46, 0.12)",  border: "rgba(184, 122, 46, 0.32)" },
-      bgremove: { accent: "#735341", tint: "rgba(115, 83, 65, 0.12)",   border: "rgba(115, 83, 65, 0.32)" },
-      inpaint:  { accent: "#9c5c26", tint: "rgba(156, 92, 38, 0.12)",   border: "rgba(156, 92, 38, 0.32)" },
-      bg:       { accent: "#9c5c26", tint: "rgba(156, 92, 38, 0.12)",   border: "rgba(156, 92, 38, 0.34)" },
-      effects:  { accent: "#735341", tint: "rgba(115, 83, 65, 0.12)",   border: "rgba(115, 83, 65, 0.32)" },
-      filter:   { accent: "#b87a2e", tint: "rgba(184, 122, 46, 0.12)",  border: "rgba(184, 122, 46, 0.32)" },
-      layers:   { accent: "#614736", tint: "rgba(97, 71, 54, 0.11)",    border: "rgba(97, 71, 54, 0.30)" },
-      audio:    { accent: "#a8642b", tint: "rgba(168, 100, 43, 0.12)",  border: "rgba(168, 100, 43, 0.32)" },
-      timeline: { accent: "#9c5c26", tint: "rgba(156, 92, 38, 0.12)",   border: "rgba(156, 92, 38, 0.34)" }
-    }
-  },
-  {
-    id: "aqua",
-    name: "みずいろパステル",
-    light: true,
-    bg: "#f7fcfd",
-    fg: "#162636",
-    accent: "#28a9cf",
-    accent2: "#e88da5",
-    grad: ["#ffffff", "#d8f0f8"],
-    hueMap: [[0, "#e88da5"], [285, "#5abbe0"], [315, "#e88da5"]],
-    vars: {
-      "--bg": "#f7fcfd",
-      "--panel": "#ffffff",
-      "--card": "#ffffff",
-      "--card2": "#e2f4fa",
-      "--text": "#162636",
-      "--muted": "#435970",
-      "--border": "rgba(22, 38, 54, 0.16)",
-      "--accent": "#28a9cf",
-      "--accent2": "#e88da5",
-      "--accent-fg": "#ffffff",
-      "--danger": "#e88da5",
-      "--warn": "#5abbe0",
-      "--ok": "#28a9cf"
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(22, 38, 54, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
-      secCardShadow: "0 2px 10px rgba(22, 38, 54, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
-      btnGrad: "linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(224, 245, 252, 0.18) 48%, rgba(40, 169, 207, 0.08))",
-      btnShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 -2px 3px rgba(22, 38, 54, 0.10), 0 1px 3px rgba(22, 38, 54, 0.14)",
-      btnActiveShadow: "inset 0 2px 4px rgba(22, 38, 54, 0.22)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(22, 38, 54, 0.50)",
-      goShadow: "inset 0 2px 0 rgba(255, 255, 255, 0.65), inset 0 -6px 12px rgba(25, 130, 170, 0.24), 0 6px 16px rgba(40, 169, 207, 0.36)"
-    },
-    sections: {
-      model:    { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.13)",  border: "rgba(40, 169, 207, 0.34)" },
-      images:   { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.15)", border: "rgba(232, 141, 165, 0.36)" },
-      prompt:   { accent: "#5abbe0", tint: "rgba(90, 187, 224, 0.14)",  border: "rgba(90, 187, 224, 0.34)" },
-      models:   { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.12)",  border: "rgba(40, 169, 207, 0.32)" },
-      hires:    { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.13)", border: "rgba(232, 141, 165, 0.32)" },
-      tile:     { accent: "#5abbe0", tint: "rgba(90, 187, 224, 0.13)",  border: "rgba(90, 187, 224, 0.32)" },
-      size:     { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.12)",  border: "rgba(40, 169, 207, 0.32)" },
-      audiogen: { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.14)", border: "rgba(232, 141, 165, 0.34)" },
-      sampling: { accent: "#5abbe0", tint: "rgba(90, 187, 224, 0.13)",  border: "rgba(90, 187, 224, 0.32)" },
-      models2:  { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.12)",  border: "rgba(40, 169, 207, 0.32)" },
-      out:      { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.13)", border: "rgba(232, 141, 165, 0.32)" },
-      shapes:   { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.14)",  border: "rgba(40, 169, 207, 0.36)" },
-      text:     { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.15)", border: "rgba(232, 141, 165, 0.36)" },
-      watermark:{ accent: "#5abbe0", tint: "rgba(90, 187, 224, 0.14)",  border: "rgba(90, 187, 224, 0.34)" },
-      bgremove: { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.13)",  border: "rgba(40, 169, 207, 0.34)" },
-      inpaint:  { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.14)", border: "rgba(232, 141, 165, 0.34)" },
-      bg:       { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.14)",  border: "rgba(40, 169, 207, 0.36)" },
-      effects:  { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.14)", border: "rgba(232, 141, 165, 0.34)" },
-      filter:   { accent: "#5abbe0", tint: "rgba(90, 187, 224, 0.14)",  border: "rgba(90, 187, 224, 0.34)" },
-      layers:   { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.13)",  border: "rgba(40, 169, 207, 0.34)" },
-      audio:    { accent: "#e88da5", tint: "rgba(232, 141, 165, 0.14)", border: "rgba(232, 141, 165, 0.34)" },
-      timeline: { accent: "#28a9cf", tint: "rgba(40, 169, 207, 0.14)",  border: "rgba(40, 169, 207, 0.36)" }
-    }
-  },
-  {
-    id: "dream",
-    name: "ドリーム",
-    light: true,
-    bg: "#faf7fe",
-    fg: "#291e3d",
-    accent: "#9a72cf",
-    accent2: "#e8bf5a",
-    grad: ["#fffdfb", "#dfd4f5"],
-    hueMap: [[0, "#e696b8"], [200, "#8eb8e8"], [320, "#e696b8"]],
-    vars: {
-      "--bg": "#faf7fe",
-      "--panel": "#fffdfb",
-      "--card": "#ffffff",
-      "--card2": "#ece3fa",
-      "--text": "#291e3d",
-      "--muted": "#584973",
-      "--border": "rgba(41, 30, 61, 0.16)",
-      "--accent": "#9a72cf",
-      "--accent2": "#e8bf5a",
-      "--accent-fg": "#ffffff",
-      "--danger": "#e696b8",
-      "--warn": "#e8bf5a",
-      "--ok": "#8eb8e8"
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(41, 30, 61, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
-      secCardShadow: "0 2px 10px rgba(41, 30, 61, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
-      btnGrad: "linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(242, 232, 255, 0.16) 48%, rgba(154, 114, 207, 0.08))",
-      btnShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 -2px 3px rgba(41, 30, 61, 0.10), 0 1px 3px rgba(41, 30, 61, 0.14)",
-      btnActiveShadow: "inset 0 2px 4px rgba(41, 30, 61, 0.22)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(41, 30, 61, 0.50)",
-      goShadow: "inset 0 2px 0 rgba(255, 255, 255, 0.65), inset 0 -6px 12px rgba(115, 75, 170, 0.24), 0 6px 16px rgba(154, 114, 207, 0.36)"
-    },
-    sections: {
-      model:    { accent: "#9a72cf", tint: "rgba(154, 114, 207, 0.14)", border: "rgba(154, 114, 207, 0.34)" },
-      images:   { accent: "#e696b8", tint: "rgba(230, 150, 184, 0.15)", border: "rgba(230, 150, 184, 0.36)" },
-      prompt:   { accent: "#8eb8e8", tint: "rgba(142, 184, 232, 0.15)", border: "rgba(142, 184, 232, 0.35)" },
-      models:   { accent: "#9a72cf", tint: "rgba(154, 114, 207, 0.12)", border: "rgba(154, 114, 207, 0.32)" },
-      hires:    { accent: "#8eb8e8", tint: "rgba(142, 184, 232, 0.13)", border: "rgba(142, 184, 232, 0.32)" },
-      tile:     { accent: "#e696b8", tint: "rgba(230, 150, 184, 0.13)", border: "rgba(230, 150, 184, 0.32)" },
-      size:     { accent: "#8eb8e8", tint: "rgba(142, 184, 232, 0.13)", border: "rgba(142, 184, 232, 0.32)" },
-      audiogen: { accent: "#e696b8", tint: "rgba(230, 150, 184, 0.14)", border: "rgba(230, 150, 184, 0.34)" },
-      sampling: { accent: "#d9ab3f", tint: "rgba(217, 171, 63, 0.15)",  border: "rgba(217, 171, 63, 0.36)" },
-      models2:  { accent: "#9a72cf", tint: "rgba(154, 114, 207, 0.12)", border: "rgba(154, 114, 207, 0.32)" },
-      out:      { accent: "#8eb8e8", tint: "rgba(142, 184, 232, 0.13)", border: "rgba(142, 184, 232, 0.32)" },
-      shapes:   { accent: "#9a72cf", tint: "rgba(154, 114, 207, 0.14)", border: "rgba(154, 114, 207, 0.36)" },
-      text:     { accent: "#e696b8", tint: "rgba(230, 150, 184, 0.15)", border: "rgba(230, 150, 184, 0.36)" },
-      watermark:{ accent: "#d9ab3f", tint: "rgba(217, 171, 63, 0.15)",  border: "rgba(217, 171, 63, 0.36)" },
-      bgremove: { accent: "#8eb8e8", tint: "rgba(142, 184, 232, 0.14)", border: "rgba(142, 184, 232, 0.34)" },
-      inpaint:  { accent: "#e696b8", tint: "rgba(230, 150, 184, 0.14)", border: "rgba(230, 150, 184, 0.34)" },
-      bg:       { accent: "#9a72cf", tint: "rgba(154, 114, 207, 0.14)", border: "rgba(154, 114, 207, 0.36)" },
-      effects:  { accent: "#e696b8", tint: "rgba(230, 150, 184, 0.14)", border: "rgba(230, 150, 184, 0.34)" },
-      filter:   { accent: "#d9ab3f", tint: "rgba(217, 171, 63, 0.14)",  border: "rgba(217, 171, 63, 0.34)" },
-      layers:   { accent: "#8eb8e8", tint: "rgba(142, 184, 232, 0.13)", border: "rgba(142, 184, 232, 0.34)" },
-      audio:    { accent: "#e696b8", tint: "rgba(230, 150, 184, 0.14)", border: "rgba(230, 150, 184, 0.34)" },
-      timeline: { accent: "#9a72cf", tint: "rgba(154, 114, 207, 0.14)", border: "rgba(154, 114, 207, 0.36)" }
-    }
-  },
-  {
-    id: "spring",
-    name: "春",
-    light: true,
-    bg: "#fff8fb",
-    fg: "#2e1621",
-    accent: "#e87296",
-    accent2: "#47a3db",
-    grad: ["#ffffff", "#fce4ee"],
-    hueMap: [[0, "#c83258"], [340, "#e87296"], [205, "#47a3db"]],
-    vars: {
-      "--bg": "#fff8fb",
-      "--panel": "#ffffff",
-      "--card": "#ffffff",
-      "--card2": "#fde6ef",
-      "--text": "#2e1621",
-      "--muted": "#613d4d",
-      "--border": "rgba(46, 22, 33, 0.16)",
-      "--accent": "#e87296",
-      "--accent2": "#47a3db",
-      "--accent-fg": "#ffffff",
-      "--danger": "#c83258",
-      "--warn": "#e87296",
-      "--ok": "#47a3db"
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(46, 22, 33, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
-      secCardShadow: "0 2px 10px rgba(46, 22, 33, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9)",
-      btnGrad: "linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 240, 246, 0.16) 48%, rgba(232, 114, 150, 0.08))",
-      btnShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.85), inset 0 -2px 3px rgba(46, 22, 33, 0.10), 0 1px 3px rgba(46, 22, 33, 0.14)",
-      btnActiveShadow: "inset 0 2px 4px rgba(46, 22, 33, 0.22)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(46, 22, 33, 0.50)",
-      goShadow: "inset 0 2px 0 rgba(255, 255, 255, 0.65), inset 0 -6px 12px rgba(190, 75, 110, 0.24), 0 6px 16px rgba(232, 114, 150, 0.36)"
-    },
-    sections: {
-      model:    { accent: "#e87296", tint: "rgba(232, 114, 150, 0.13)", border: "rgba(232, 114, 150, 0.34)" },
-      images:   { accent: "#47a3db", tint: "rgba(71, 163, 219, 0.13)",  border: "rgba(71, 163, 219, 0.34)" },
-      prompt:   { accent: "#c83258", tint: "rgba(200, 50, 88, 0.11)",   border: "rgba(200, 50, 88, 0.32)" },
-      models:   { accent: "#e87296", tint: "rgba(232, 114, 150, 0.12)", border: "rgba(232, 114, 150, 0.32)" },
-      hires:    { accent: "#47a3db", tint: "rgba(71, 163, 219, 0.12)",  border: "rgba(71, 163, 219, 0.32)" },
-      tile:     { accent: "#e87296", tint: "rgba(232, 114, 150, 0.12)", border: "rgba(232, 114, 150, 0.32)" },
-      size:     { accent: "#47a3db", tint: "rgba(71, 163, 219, 0.12)",  border: "rgba(71, 163, 219, 0.32)" },
-      audiogen: { accent: "#c83258", tint: "rgba(200, 50, 88, 0.11)",   border: "rgba(200, 50, 88, 0.32)" },
-      sampling: { accent: "#e87296", tint: "rgba(232, 114, 150, 0.12)", border: "rgba(232, 114, 150, 0.32)" },
-      models2:  { accent: "#e87296", tint: "rgba(232, 114, 150, 0.12)", border: "rgba(232, 114, 150, 0.32)" },
-      out:      { accent: "#47a3db", tint: "rgba(71, 163, 219, 0.12)",  border: "rgba(71, 163, 219, 0.32)" },
-      shapes:   { accent: "#e87296", tint: "rgba(232, 114, 150, 0.14)", border: "rgba(232, 114, 150, 0.36)" },
-      text:     { accent: "#c83258", tint: "rgba(200, 50, 88, 0.12)",   border: "rgba(200, 50, 88, 0.34)" },
-      watermark:{ accent: "#47a3db", tint: "rgba(71, 163, 219, 0.13)",  border: "rgba(71, 163, 219, 0.34)" },
-      bgremove: { accent: "#47a3db", tint: "rgba(71, 163, 219, 0.13)",  border: "rgba(71, 163, 219, 0.34)" },
-      inpaint:  { accent: "#e87296", tint: "rgba(232, 114, 150, 0.13)", border: "rgba(232, 114, 150, 0.34)" },
-      bg:       { accent: "#e87296", tint: "rgba(232, 114, 150, 0.14)", border: "rgba(232, 114, 150, 0.36)" },
-      effects:  { accent: "#47a3db", tint: "rgba(71, 163, 219, 0.13)",  border: "rgba(71, 163, 219, 0.34)" },
-      filter:   { accent: "#c83258", tint: "rgba(200, 50, 88, 0.12)",   border: "rgba(200, 50, 88, 0.34)" },
-      layers:   { accent: "#e87296", tint: "rgba(232, 114, 150, 0.13)", border: "rgba(232, 114, 150, 0.34)" },
-      audio:    { accent: "#47a3db", tint: "rgba(71, 163, 219, 0.13)",  border: "rgba(71, 163, 219, 0.34)" },
-      timeline: { accent: "#e87296", tint: "rgba(232, 114, 150, 0.14)", border: "rgba(232, 114, 150, 0.36)" }
-    }
-  },
-  {
-    id: "power",
-    name: "パワフル",
-    light: true,
-    bg: "#fff6ea",
-    fg: "#261207",
-    accent: "#d93429",
-    accent2: "#d97d1c",
-    grad: ["#fffbf4", "#f3d4aa"],
-    hueMap: [[35, "#d97d1c"], [120, "#4da83b"]],
-    vars: {
-      "--bg": "#fff6ea",
-      "--panel": "#fffbf4",
-      "--card": "#ffffff",
-      "--card2": "#f3d4aa",
-      "--text": "#261207",
-      "--muted": "#5c351c",
-      "--border": "rgba(38, 18, 7, 0.18)",
-      "--accent": "#d93429",
-      "--accent2": "#d97d1c",
-      "--accent-fg": "#ffffff",
-      "--danger": "#d93429",
-      "--warn": "#d97d1c",
-      "--ok": "#4da83b"
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(38, 18, 7, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.75)",
-      secCardShadow: "0 2px 10px rgba(38, 18, 7, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.75)",
-      btnGrad: "linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 246, 234, 0.08) 48%, rgba(38, 18, 7, 0.08))",
-      btnShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.65), inset 0 -2px 3px rgba(38, 18, 7, 0.15), 0 1px 3px rgba(38, 18, 7, 0.20)",
-      btnActiveShadow: "inset 0 2px 4px rgba(38, 18, 7, 0.28)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(38, 18, 7, 0.55)",
-      goShadow: "inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -6px 12px rgba(120, 20, 15, 0.25), 0 6px 16px rgba(217, 52, 41, 0.40)"
-    },
-    sections: {
-      model:    { accent: "#d93429", tint: "rgba(217, 52, 41, 0.12)",   border: "rgba(217, 52, 41, 0.34)" },
-      images:   { accent: "#d97d1c", tint: "rgba(217, 125, 28, 0.12)",  border: "rgba(217, 125, 28, 0.32)" },
-      prompt:   { accent: "#c76e18", tint: "rgba(199, 110, 24, 0.12)",  border: "rgba(199, 110, 24, 0.32)" },
-      models:   { accent: "#d93429", tint: "rgba(217, 52, 41, 0.11)",   border: "rgba(217, 52, 41, 0.32)" },
-      hires:    { accent: "#d97d1c", tint: "rgba(217, 125, 28, 0.11)",  border: "rgba(217, 125, 28, 0.30)" },
-      tile:     { accent: "#b85f1c", tint: "rgba(184, 95, 28, 0.11)",   border: "rgba(184, 95, 28, 0.30)" },
-      size:     { accent: "#d93429", tint: "rgba(217, 52, 41, 0.11)",   border: "rgba(217, 52, 41, 0.30)" },
-      audiogen: { accent: "#c93026", tint: "rgba(201, 48, 38, 0.12)",   border: "rgba(201, 48, 38, 0.32)" },
-      sampling: { accent: "#d97d1c", tint: "rgba(217, 125, 28, 0.12)",  border: "rgba(217, 125, 28, 0.32)" },
-      models2:  { accent: "#8c4e22", tint: "rgba(140, 78, 34, 0.11)",   border: "rgba(140, 78, 34, 0.30)" },
-      out:      { accent: "#d97d1c", tint: "rgba(217, 125, 28, 0.11)",  border: "rgba(217, 125, 28, 0.30)" },
-      shapes:   { accent: "#d93429", tint: "rgba(217, 52, 41, 0.13)",   border: "rgba(217, 52, 41, 0.36)" },
-      text:     { accent: "#d97d1c", tint: "rgba(217, 125, 28, 0.12)",  border: "rgba(217, 125, 28, 0.34)" },
-      watermark:{ accent: "#c76e18", tint: "rgba(199, 110, 24, 0.12)",  border: "rgba(199, 110, 24, 0.32)" },
-      bgremove: { accent: "#d97d1c", tint: "rgba(217, 125, 28, 0.12)",  border: "rgba(217, 125, 28, 0.32)" },
-      inpaint:  { accent: "#d93429", tint: "rgba(217, 52, 41, 0.12)",   border: "rgba(217, 52, 41, 0.34)" },
-      bg:       { accent: "#d93429", tint: "rgba(217, 52, 41, 0.13)",   border: "rgba(217, 52, 41, 0.36)" },
-      effects:  { accent: "#d97d1c", tint: "rgba(217, 125, 28, 0.12)",  border: "rgba(217, 125, 28, 0.34)" },
-      filter:   { accent: "#c76e18", tint: "rgba(199, 110, 24, 0.12)",  border: "rgba(199, 110, 24, 0.32)" },
-      layers:   { accent: "#8c4e22", tint: "rgba(140, 78, 34, 0.11)",   border: "rgba(140, 78, 34, 0.30)" },
-      audio:    { accent: "#c93026", tint: "rgba(201, 48, 38, 0.12)",   border: "rgba(201, 48, 38, 0.32)" },
-      timeline: { accent: "#d93429", tint: "rgba(217, 52, 41, 0.13)",   border: "rgba(217, 52, 41, 0.36)" }
-    }
-  },
-  {
-    id: "colorful",
-    name: "カラフル",
-    light: false,
-    bg: "#070a2c",
-    fg: "#ffffff",
-    accent: "#3fae3a",
-    accent2: "#f6c919",
-    rainbow: true,
-    vars: {
-      "--bg": "#070a2c",
-      "--panel": "#0f143d",
-      "--card": "#171d52",
-      "--card2": "#202768",
-      "--text": "#ffffff",
-      "--muted": "#cad3fa",
-      "--border": "rgba(255, 255, 255, 0.18)",
-      "--accent": "#3fae3a",
-      "--accent2": "#f6c919",
-      "--accent-fg": "#ffffff",
-      "--danger": "#ff4d6d",
-      "--warn": "#f6c919",
-      "--ok": "#3fae3a"
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.32)",
-      secCardShadow: "0 2px 10px rgba(0,0,0,.11), inset 0 1px 0 rgba(255,255,255,.35)",
-      btnGrad: "linear-gradient(180deg, rgba(255,255,255,.32), rgba(255,255,255,.06) 48%, rgba(0,0,0,.08))",
-      btnShadow: "inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 3px rgba(0,0,0,.16), 0 1px 3px rgba(0,0,0,.22)",
-      btnActiveShadow: "inset 0 2px 4px rgba(0,0,0,.3)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(0,0,0,.5)",
-      goShadow: "inset 0 2px 0 rgba(255,255,255,.45), inset 0 -6px 12px rgba(0,0,0,.22), 0 6px 16px rgba(0,0,0,.45)"
-    },
-    sections: {
-      model:    { accent: "#ff4d8d", tint: "rgba(255, 77, 141, 0.12)",  border: "rgba(255, 77, 141, 0.34)" },
-      images:   { accent: "#00d4ff", tint: "rgba(0, 212, 255, 0.12)",   border: "rgba(0, 212, 255, 0.32)" },
-      prompt:   { accent: "#f6c919", tint: "rgba(246, 201, 25, 0.12)",  border: "rgba(246, 201, 25, 0.32)" },
-      models:   { accent: "#a855f7", tint: "rgba(168, 85, 247, 0.12)",  border: "rgba(168, 85, 247, 0.32)" },
-      hires:    { accent: "#3fae3a", tint: "rgba(63, 174, 58, 0.12)",   border: "rgba(63, 174, 58, 0.32)" },
-      tile:     { accent: "#ff9f1c", tint: "rgba(255, 159, 28, 0.12)",  border: "rgba(255, 159, 28, 0.32)" },
-      size:     { accent: "#3a86ff", tint: "rgba(58, 134, 255, 0.12)",  border: "rgba(58, 134, 255, 0.32)" },
-      audiogen: { accent: "#f72585", tint: "rgba(247, 37, 133, 0.12)",  border: "rgba(247, 37, 133, 0.32)" },
-      sampling: { accent: "#ffd166", tint: "rgba(255, 209, 102, 0.12)", border: "rgba(255, 209, 102, 0.32)" },
-      models2:  { accent: "#4cc9f0", tint: "rgba(76, 201, 240, 0.12)",  border: "rgba(76, 201, 240, 0.32)" },
-      out:      { accent: "#52b788", tint: "rgba(82, 183, 136, 0.12)",  border: "rgba(82, 183, 136, 0.32)" },
-      shapes:   { accent: "#00d4ff", tint: "rgba(0, 212, 255, 0.13)",   border: "rgba(0, 212, 255, 0.36)" },
-      text:     { accent: "#ff4d8d", tint: "rgba(255, 77, 141, 0.13)",  border: "rgba(255, 77, 141, 0.36)" },
-      watermark:{ accent: "#f6c919", tint: "rgba(246, 201, 25, 0.13)",  border: "rgba(246, 201, 25, 0.36)" },
-      bgremove: { accent: "#3fae3a", tint: "rgba(63, 174, 58, 0.13)",   border: "rgba(63, 174, 58, 0.36)" },
-      inpaint:  { accent: "#a855f7", tint: "rgba(168, 85, 247, 0.13)",  border: "rgba(168, 85, 247, 0.36)" },
-      bg:       { accent: "#3a86ff", tint: "rgba(58, 134, 255, 0.13)",  border: "rgba(58, 134, 255, 0.36)" },
-      effects:  { accent: "#f72585", tint: "rgba(247, 37, 133, 0.13)",  border: "rgba(247, 37, 133, 0.36)" },
-      filter:   { accent: "#ffd166", tint: "rgba(255, 209, 102, 0.13)", border: "rgba(255, 209, 102, 0.36)" },
-      layers:   { accent: "#4cc9f0", tint: "rgba(76, 201, 240, 0.13)",  border: "rgba(76, 201, 240, 0.36)" },
-      audio:    { accent: "#ff9f1c", tint: "rgba(255, 159, 28, 0.13)",  border: "rgba(255, 159, 28, 0.36)" },
-      timeline: { accent: "#3fae3a", tint: "rgba(63, 174, 58, 0.13)",   border: "rgba(63, 174, 58, 0.36)" }
-    }
-  },
-  {
-    id: "purple",
-    name: "パープルエリア",
-    light: false,
-    bg: "#120629",
-    fg: "#ffffff",
-    accent: "#9d3be8",
-    accent2: "#ff4da6",
-    grad: ["#3b1278", "#120629"],
-    hueMap: [[0, "#ff4da6"], [315, "#ff4da6"], [52, "#ffd54f"]],
-    vars: {
-      "--bg": "#120629",
-      "--panel": "#210b47",
-      "--card": "#2d115e",
-      "--card2": "#3b177a",
-      "--text": "#ffffff",
-      "--muted": "#ebd9ff",
-      "--border": "rgba(255, 255, 255, 0.20)",
-      "--accent": "#9d3be8",
-      "--accent2": "#ff4da6",
-      "--accent-fg": "#ffffff",
-      "--danger": "#ff4da6",
-      "--warn": "#ffd54f",
-      "--ok": "#c084fc"
-    },
-    deco: {
-      cardShadow: "0 2px 12px rgba(10, 3, 25, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.24)",
-      secCardShadow: "0 2px 12px rgba(10, 3, 25, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.26)",
-      btnGrad: "linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(157, 59, 232, 0.10) 48%, rgba(18, 6, 41, 0.22))",
-      btnShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -2px 3px rgba(18, 6, 41, 0.28), 0 1px 3px rgba(0, 0, 0, 0.30)",
-      btnActiveShadow: "inset 0 2px 4px rgba(18, 6, 41, 0.42)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(23, 9, 51, 0.70)",
-      goShadow: "inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -6px 12px rgba(70, 15, 120, 0.35), 0 6px 16px rgba(157, 59, 232, 0.45)"
-    },
-    sections: {
-      model:    { accent: "#9d3be8", tint: "rgba(157, 59, 232, 0.18)",  border: "rgba(157, 59, 232, 0.40)" },
-      images:   { accent: "#ff4da6", tint: "rgba(255, 77, 166, 0.16)",  border: "rgba(255, 77, 166, 0.38)" },
-      prompt:   { accent: "#f3e8ff", tint: "rgba(243, 232, 255, 0.14)", border: "rgba(243, 232, 255, 0.34)" },
-      models:   { accent: "#7e22ce", tint: "rgba(126, 34, 206, 0.18)",  border: "rgba(126, 34, 206, 0.38)" },
-      hires:    { accent: "#f472b6", tint: "rgba(244, 114, 182, 0.15)", border: "rgba(244, 114, 182, 0.35)" },
-      tile:     { accent: "#ffd54f", tint: "rgba(255, 213, 79, 0.14)",  border: "rgba(255, 213, 79, 0.35)" },
-      size:     { accent: "#a855f7", tint: "rgba(168, 85, 247, 0.16)",  border: "rgba(168, 85, 247, 0.36)" },
-      audiogen: { accent: "#ff4da6", tint: "rgba(255, 77, 166, 0.16)",  border: "rgba(255, 77, 166, 0.36)" },
-      sampling: { accent: "#ffd54f", tint: "rgba(255, 213, 79, 0.14)",  border: "rgba(255, 213, 79, 0.35)" },
-      models2:  { accent: "#9d3be8", tint: "rgba(157, 59, 232, 0.16)",  border: "rgba(157, 59, 232, 0.36)" },
-      out:      { accent: "#f3e8ff", tint: "rgba(243, 232, 255, 0.13)", border: "rgba(243, 232, 255, 0.32)" },
-      shapes:   { accent: "#9d3be8", tint: "rgba(157, 59, 232, 0.18)",  border: "rgba(157, 59, 232, 0.40)" },
-      text:     { accent: "#ff4da6", tint: "rgba(255, 77, 166, 0.16)",  border: "rgba(255, 77, 166, 0.38)" },
-      watermark:{ accent: "#ffd54f", tint: "rgba(255, 213, 79, 0.15)",  border: "rgba(255, 213, 79, 0.36)" },
-      bgremove: { accent: "#f3e8ff", tint: "rgba(243, 232, 255, 0.14)", border: "rgba(243, 232, 255, 0.34)" },
-      inpaint:  { accent: "#f472b6", tint: "rgba(244, 114, 182, 0.16)", border: "rgba(244, 114, 182, 0.36)" },
-      bg:       { accent: "#9d3be8", tint: "rgba(157, 59, 232, 0.18)",  border: "rgba(157, 59, 232, 0.40)" },
-      effects:  { accent: "#ff4da6", tint: "rgba(255, 77, 166, 0.16)",  border: "rgba(255, 77, 166, 0.38)" },
-      filter:   { accent: "#ffd54f", tint: "rgba(255, 213, 79, 0.15)",  border: "rgba(255, 213, 79, 0.36)" },
-      layers:   { accent: "#f3e8ff", tint: "rgba(243, 232, 255, 0.14)", border: "rgba(243, 232, 255, 0.34)" },
-      audio:    { accent: "#f472b6", tint: "rgba(244, 114, 182, 0.16)", border: "rgba(244, 114, 182, 0.36)" },
-      timeline: { accent: "#9d3be8", tint: "rgba(157, 59, 232, 0.18)",  border: "rgba(157, 59, 232, 0.40)" }
-    }
-  },
-  {
-    id: "bluedia",
-    name: "ブルーダイヤモンド",
-    light: false,
-    bg: "#071326",
-    fg: "#ffffff",
-    accent: "#29b6f6",
-    accent2: "#e0f7ff",
-    grad: ["#163c73", "#071326"],
-    hueMap: [[0, "#e0f7ff"], [25, "#bae6fd"], [145, "#38bdf8"], [195, "#38bdf8"], [215, "#29b6f6"], [280, "#7dd3fc"], [335, "#f0f9ff"]],
-    vars: {
-      "--bg": "#071326",
-      "--panel": "#10284f",
-      "--card": "#153566",
-      "--card2": "#1c4582",
-      "--text": "#ffffff",
-      "--muted": "#d4efff",
-      "--border": "rgba(255, 255, 255, 0.22)",
-      "--accent": "#29b6f6",
-      "--accent2": "#e0f7ff",
-      "--accent-fg": "#051226",
-      "--danger": "#7dd3fc",
-      "--warn": "#e0f7ff",
-      "--ok": "#38bdf8"
-    },
-    deco: {
-      cardShadow: "0 2px 12px rgba(4, 12, 26, 0.28), inset 0 1px 0 rgba(240, 249, 255, 0.32)",
-      secCardShadow: "0 2px 14px rgba(4, 12, 26, 0.30), inset 0 1px 0 rgba(240, 249, 255, 0.36)",
-      btnGrad: "linear-gradient(180deg, rgba(240, 249, 255, 0.34), rgba(125, 211, 252, 0.08) 48%, rgba(7, 19, 38, 0.22))",
-      btnShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.52), inset 0 -2px 3px rgba(7, 19, 38, 0.26), 0 1px 3px rgba(0, 0, 0, 0.28)",
-      btnActiveShadow: "inset 0 2px 5px rgba(7, 19, 38, 0.40)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(6, 20, 41, 0.65)",
-      goShadow: "inset 0 2px 0 rgba(255, 255, 255, 0.55), inset 0 -6px 12px rgba(10, 60, 115, 0.30), 0 6px 16px rgba(41, 182, 246, 0.42)"
-    },
-    sections: {
-      model:    { accent: "#29b6f6", tint: "rgba(41, 182, 246, 0.16)",  border: "rgba(41, 182, 246, 0.38)" },
-      images:   { accent: "#e8f6ff", tint: "rgba(232, 246, 255, 0.18)", border: "rgba(232, 246, 255, 0.42)" },
-      prompt:   { accent: "#bae6fd", tint: "rgba(186, 230, 253, 0.16)", border: "rgba(186, 230, 253, 0.38)" },
-      models:   { accent: "#38bdf8", tint: "rgba(56, 189, 248, 0.15)",  border: "rgba(56, 189, 248, 0.36)" },
-      hires:    { accent: "#f0f9ff", tint: "rgba(240, 249, 255, 0.18)", border: "rgba(240, 249, 255, 0.40)" },
-      tile:     { accent: "#7dd3fc", tint: "rgba(125, 211, 252, 0.15)", border: "rgba(125, 211, 252, 0.36)" },
-      size:     { accent: "#0288d1", tint: "rgba(2, 136, 209, 0.16)",   border: "rgba(2, 136, 209, 0.38)" },
-      audiogen: { accent: "#e0f7ff", tint: "rgba(224, 247, 255, 0.17)", border: "rgba(224, 247, 255, 0.40)" },
-      sampling: { accent: "#7dd3fc", tint: "rgba(125, 211, 252, 0.15)", border: "rgba(125, 211, 252, 0.36)" },
-      models2:  { accent: "#1d4ed8", tint: "rgba(29, 78, 216, 0.16)",   border: "rgba(29, 78, 216, 0.38)" },
-      out:      { accent: "#e8f6ff", tint: "rgba(232, 246, 255, 0.18)", border: "rgba(232, 246, 255, 0.40)" },
-      shapes:   { accent: "#29b6f6", tint: "rgba(41, 182, 246, 0.17)",  border: "rgba(41, 182, 246, 0.40)" },
-      text:     { accent: "#f0f9ff", tint: "rgba(240, 249, 255, 0.18)", border: "rgba(240, 249, 255, 0.42)" },
-      watermark:{ accent: "#bae6fd", tint: "rgba(186, 230, 253, 0.16)", border: "rgba(186, 230, 253, 0.38)" },
-      bgremove: { accent: "#e0f7ff", tint: "rgba(224, 247, 255, 0.17)", border: "rgba(224, 247, 255, 0.40)" },
-      inpaint:  { accent: "#38bdf8", tint: "rgba(56, 189, 248, 0.16)",  border: "rgba(56, 189, 248, 0.38)" },
-      bg:       { accent: "#29b6f6", tint: "rgba(41, 182, 246, 0.17)",  border: "rgba(41, 182, 246, 0.40)" },
-      effects:  { accent: "#e8f6ff", tint: "rgba(232, 246, 255, 0.18)", border: "rgba(232, 246, 255, 0.42)" },
-      filter:   { accent: "#bae6fd", tint: "rgba(186, 230, 253, 0.16)", border: "rgba(186, 230, 253, 0.38)" },
-      layers:   { accent: "#7dd3fc", tint: "rgba(125, 211, 252, 0.15)", border: "rgba(125, 211, 252, 0.36)" },
-      audio:    { accent: "#e0f7ff", tint: "rgba(224, 247, 255, 0.17)", border: "rgba(224, 247, 255, 0.40)" },
-      timeline: { accent: "#29b6f6", tint: "rgba(41, 182, 246, 0.17)",  border: "rgba(41, 182, 246, 0.40)" }
-    }
-  },
-  {
-    id: "ocean",
-    name: "海",
-    light: false,
-    bg: "#051426",
-    fg: "#ffffff",
-    accent: "#14a8e8",
-    accent2: "#ffd6c2",
-    grad: ["#1888c8", "#061324"],
-    hueMap: [[0, "#ffd6c2"], [210, "#1d5fa8"], [185, "#38bdf8"]],
-    vars: {
-      "--bg": "#051426",
-      "--panel": "#0b2645",
-      "--card": "#10355e",
-      "--card2": "#16487d",
-      "--text": "#ffffff",
-      "--muted": "#c9ebff",
-      "--border": "rgba(255, 255, 255, 0.20)",
-      "--accent": "#14a8e8",
-      "--accent2": "#ffd6c2",
-      "--accent-fg": "#ffffff",
-      "--danger": "#ffd6c2",
-      "--warn": "#ffd6c2",
-      "--ok": "#38bdf8"
-    },
-    deco: {
-      cardShadow: "0 2px 10px rgba(4, 14, 28, 0.25), inset 0 1px 0 rgba(224, 247, 255, 0.24)",
-      secCardShadow: "0 2px 10px rgba(4, 14, 28, 0.25), inset 0 1px 0 rgba(224, 247, 255, 0.26)",
-      btnGrad: "linear-gradient(180deg, rgba(224, 247, 255, 0.28), rgba(20, 168, 232, 0.08) 48%, rgba(6, 19, 36, 0.20))",
-      btnShadow: "inset 0 1px 0 rgba(224, 247, 255, 0.45), inset 0 -2px 3px rgba(6, 19, 36, 0.25), 0 1px 3px rgba(0, 0, 0, 0.25)",
-      btnActiveShadow: "inset 0 2px 4px rgba(6, 19, 36, 0.36)",
-      goBorder: "#ffffff",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(6, 19, 36, 0.60)",
-      goShadow: "inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -6px 12px rgba(8, 70, 120, 0.30), 0 6px 16px rgba(20, 168, 232, 0.40)"
-    },
-    sections: {
-      model:    { accent: "#14a8e8", tint: "rgba(20, 168, 232, 0.15)",  border: "rgba(20, 168, 232, 0.36)" },
-      images:   { accent: "#38bdf8", tint: "rgba(56, 189, 248, 0.14)",  border: "rgba(56, 189, 248, 0.34)" },
-      prompt:   { accent: "#ffd6c2", tint: "rgba(255, 214, 194, 0.14)", border: "rgba(255, 214, 194, 0.34)" },
-      models:   { accent: "#1d5fa8", tint: "rgba(29, 95, 168, 0.16)",   border: "rgba(29, 95, 168, 0.36)" },
-      hires:    { accent: "#7dd3fc", tint: "rgba(125, 211, 252, 0.14)", border: "rgba(125, 211, 252, 0.34)" },
-      tile:     { accent: "#0284c7", tint: "rgba(2, 132, 199, 0.15)",   border: "rgba(2, 132, 199, 0.34)" },
-      size:     { accent: "#38bdf8", tint: "rgba(56, 189, 248, 0.14)",  border: "rgba(56, 189, 248, 0.34)" },
-      audiogen: { accent: "#ffd6c2", tint: "rgba(255, 214, 194, 0.13)", border: "rgba(255, 214, 194, 0.32)" },
-      sampling: { accent: "#7dd3fc", tint: "rgba(125, 211, 252, 0.14)", border: "rgba(125, 211, 252, 0.34)" },
-      models2:  { accent: "#1d5fa8", tint: "rgba(29, 95, 168, 0.16)",   border: "rgba(29, 95, 168, 0.36)" },
-      out:      { accent: "#14a8e8", tint: "rgba(20, 168, 232, 0.15)",  border: "rgba(20, 168, 232, 0.36)" },
-      shapes:   { accent: "#14a8e8", tint: "rgba(20, 168, 232, 0.16)",  border: "rgba(20, 168, 232, 0.38)" },
-      text:     { accent: "#ffd6c2", tint: "rgba(255, 214, 194, 0.15)", border: "rgba(255, 214, 194, 0.36)" },
-      watermark:{ accent: "#38bdf8", tint: "rgba(56, 189, 248, 0.15)",  border: "rgba(56, 189, 248, 0.36)" },
-      bgremove: { accent: "#7dd3fc", tint: "rgba(125, 211, 252, 0.14)", border: "rgba(125, 211, 252, 0.34)" },
-      inpaint:  { accent: "#1d5fa8", tint: "rgba(29, 95, 168, 0.16)",   border: "rgba(29, 95, 168, 0.36)" },
-      bg:       { accent: "#14a8e8", tint: "rgba(20, 168, 232, 0.16)",  border: "rgba(20, 168, 232, 0.38)" },
-      effects:  { accent: "#38bdf8", tint: "rgba(56, 189, 248, 0.15)",  border: "rgba(56, 189, 248, 0.36)" },
-      filter:   { accent: "#ffd6c2", tint: "rgba(255, 214, 194, 0.15)", border: "rgba(255, 214, 194, 0.36)" },
-      layers:   { accent: "#7dd3fc", tint: "rgba(125, 211, 252, 0.14)", border: "rgba(125, 211, 252, 0.34)" },
-      audio:    { accent: "#1d5fa8", tint: "rgba(29, 95, 168, 0.16)",   border: "rgba(29, 95, 168, 0.36)" },
-      timeline: { accent: "#14a8e8", tint: "rgba(20, 168, 232, 0.16)",  border: "rgba(20, 168, 232, 0.38)" }
-    }
-  },
-  {
-    id: "flame",
-    name: "炎",
-    light: false,
-    bg: "#17100c",
-    fg: "#ffffff",
-    accent: "#f97316",
-    accent2: "#facc15",
-    grad: ["#361d12", "#140e0b"],
-    hueMap: [[10, "#ef4444"], [45, "#facc15"]],
-    vars: {
-      "--bg": "#17100c",
-      "--panel": "#261811",
-      "--card": "#332017",
-      "--card2": "#42291d",
-      "--text": "#ffffff",
-      "--muted": "#ebd0b7",
-      "--border": "rgba(255, 255, 255, 0.20)",
-      "--accent": "#f97316",
-      "--accent2": "#facc15",
-      "--accent-fg": "#1c0d05",
-      "--danger": "#ef4444",
-      "--warn": "#facc15",
-      "--ok": "#fb923c"
-    },
-    deco: {
-      cardShadow: "0 2px 12px rgba(10, 5, 2, 0.35), inset 0 1px 0 rgba(255, 235, 195, 0.20)",
-      secCardShadow: "0 2px 12px rgba(10, 5, 2, 0.35), inset 0 1px 0 rgba(255, 235, 195, 0.22)",
-      btnGrad: "linear-gradient(180deg, rgba(255, 235, 195, 0.24), rgba(249, 115, 22, 0.08) 48%, rgba(20, 14, 11, 0.24))",
-      btnShadow: "inset 0 1px 0 rgba(255, 246, 229, 0.42), inset 0 -2px 3px rgba(20, 14, 11, 0.28), 0 1px 3px rgba(0, 0, 0, 0.28)",
-      btnActiveShadow: "inset 0 2px 4px rgba(20, 14, 11, 0.40)",
-      goBorder: "#fff6e5",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(28, 13, 5, 0.70)",
-      goShadow: "inset 0 2px 0 rgba(255, 246, 229, 0.48), inset 0 -6px 12px rgba(150, 35, 10, 0.32), 0 6px 16px rgba(249, 115, 22, 0.42)"
-    },
-    sections: {
-      model:    { accent: "#f97316", tint: "rgba(249, 115, 22, 0.15)",  border: "rgba(249, 115, 22, 0.36)" },
-      images:   { accent: "#facc15", tint: "rgba(250, 204, 21, 0.14)",  border: "rgba(250, 204, 21, 0.35)" },
-      prompt:   { accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.36)" },
-      models:   { accent: "#fb923c", tint: "rgba(251, 146, 60, 0.14)",  border: "rgba(251, 146, 60, 0.34)" },
-      hires:    { accent: "#fde047", tint: "rgba(253, 224, 71, 0.13)",  border: "rgba(253, 224, 71, 0.33)" },
-      tile:     { accent: "#dc2626", tint: "rgba(220, 38, 38, 0.15)",   border: "rgba(220, 38, 38, 0.35)" },
-      size:     { accent: "#f59e0b", tint: "rgba(245, 158, 11, 0.14)",  border: "rgba(245, 158, 11, 0.34)" },
-      audiogen: { accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.35)" },
-      sampling: { accent: "#fef08a", tint: "rgba(254, 240, 138, 0.13)", border: "rgba(254, 240, 138, 0.32)" },
-      models2:  { accent: "#c2410c", tint: "rgba(194, 65, 12, 0.15)",   border: "rgba(194, 65, 12, 0.35)" },
-      out:      { accent: "#fbbf24", tint: "rgba(251, 191, 36, 0.14)",  border: "rgba(251, 191, 36, 0.34)" },
-      shapes:   { accent: "#f97316", tint: "rgba(249, 115, 22, 0.16)",  border: "rgba(249, 115, 22, 0.38)" },
-      text:     { accent: "#facc15", tint: "rgba(250, 204, 21, 0.15)",  border: "rgba(250, 204, 21, 0.36)" },
-      watermark:{ accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.36)" },
-      bgremove: { accent: "#fb923c", tint: "rgba(251, 146, 60, 0.15)",  border: "rgba(251, 146, 60, 0.36)" },
-      inpaint:  { accent: "#f59e0b", tint: "rgba(245, 158, 11, 0.15)",  border: "rgba(245, 158, 11, 0.36)" },
-      bg:       { accent: "#f97316", tint: "rgba(249, 115, 22, 0.16)",  border: "rgba(249, 115, 22, 0.38)" },
-      effects:  { accent: "#facc15", tint: "rgba(250, 204, 21, 0.15)",  border: "rgba(250, 204, 21, 0.36)" },
-      filter:   { accent: "#ef4444", tint: "rgba(239, 68, 68, 0.15)",   border: "rgba(239, 68, 68, 0.36)" },
-      layers:   { accent: "#fb923c", tint: "rgba(251, 146, 60, 0.14)",  border: "rgba(251, 146, 60, 0.34)" },
-      audio:    { accent: "#f59e0b", tint: "rgba(245, 158, 11, 0.15)",  border: "rgba(245, 158, 11, 0.36)" },
-      timeline: { accent: "#f97316", tint: "rgba(249, 115, 22, 0.16)",  border: "rgba(249, 115, 22, 0.38)" }
-    }
-  },
-  {
-    id: "dandy",
-    name: "ダンディ",
-    light: false,
-    bg: "#0e171c",
-    fg: "#ffffff",
-    accent: "#c89d4c",
-    accent2: "#34b38a",
-    grad: ["#1f3640", "#0c1317"],
-    hueMap: [[0, "#c89d4c"], [42, "#c89d4c"], [160, "#34b38a"]],
-    vars: {
-      "--bg": "#0e171c",
-      "--panel": "#17262e",
-      "--card": "#1f323b",
-      "--card2": "#283f4a",
-      "--text": "#ffffff",
-      "--muted": "#cddae0",
-      "--border": "rgba(255, 255, 255, 0.20)",
-      "--accent": "#c89d4c",
-      "--accent2": "#34b38a",
-      "--accent-fg": "#111c21",
-      "--danger": "#c89d4c",
-      "--warn": "#dfb96a",
-      "--ok": "#34b38a"
-    },
-    deco: {
-      cardShadow: "0 2px 12px rgba(5, 10, 13, 0.32), inset 0 1px 0 rgba(244, 246, 247, 0.22)",
-      secCardShadow: "0 2px 12px rgba(5, 10, 13, 0.32), inset 0 1px 0 rgba(244, 246, 247, 0.24)",
-      btnGrad: "linear-gradient(180deg, rgba(244, 246, 247, 0.24), rgba(200, 157, 76, 0.07) 48%, rgba(12, 19, 23, 0.22))",
-      btnShadow: "inset 0 1px 0 rgba(244, 246, 247, 0.42), inset 0 -2px 3px rgba(12, 19, 23, 0.26), 0 1px 3px rgba(0, 0, 0, 0.26)",
-      btnActiveShadow: "inset 0 2px 4px rgba(12, 19, 23, 0.38)",
-      goBorder: "#f4f6f7",
-      goColor: "#ffffff",
-      goTextShadow: "0 1px 2px rgba(12, 19, 23, 0.70)",
-      goShadow: "inset 0 2px 0 rgba(244, 246, 247, 0.45), inset 0 -6px 12px rgba(85, 62, 20, 0.32), 0 6px 16px rgba(200, 157, 76, 0.38)"
-    },
-    sections: {
-      model:    { accent: "#c89d4c", tint: "rgba(200, 157, 76, 0.15)",  border: "rgba(200, 157, 76, 0.36)" },
-      images:   { accent: "#e2e8ec", tint: "rgba(226, 232, 236, 0.15)", border: "rgba(226, 232, 236, 0.35)" },
-      prompt:   { accent: "#dfb96a", tint: "rgba(223, 185, 106, 0.14)", border: "rgba(223, 185, 106, 0.34)" },
-      models:   { accent: "#4b8b9c", tint: "rgba(75, 139, 156, 0.15)",  border: "rgba(75, 139, 156, 0.35)" },
-      hires:    { accent: "#34b38a", tint: "rgba(52, 179, 138, 0.14)",  border: "rgba(52, 179, 138, 0.34)" },
-      tile:     { accent: "#b08940", tint: "rgba(176, 137, 64, 0.14)",  border: "rgba(176, 137, 64, 0.34)" },
-      size:     { accent: "#649eab", tint: "rgba(100, 158, 171, 0.14)", border: "rgba(100, 158, 171, 0.34)" },
-      audiogen: { accent: "#dfb96a", tint: "rgba(223, 185, 106, 0.14)", border: "rgba(223, 185, 106, 0.34)" },
-      sampling: { accent: "#c89d4c", tint: "rgba(200, 157, 76, 0.14)",  border: "rgba(200, 157, 76, 0.34)" },
-      models2:  { accent: "#94a3b8", tint: "rgba(148, 163, 184, 0.14)", border: "rgba(148, 163, 184, 0.34)" },
-      out:      { accent: "#e2e8ec", tint: "rgba(226, 232, 236, 0.14)", border: "rgba(226, 232, 236, 0.34)" },
-      shapes:   { accent: "#c89d4c", tint: "rgba(200, 157, 76, 0.16)",  border: "rgba(200, 157, 76, 0.38)" },
-      text:     { accent: "#e2e8ec", tint: "rgba(226, 232, 236, 0.15)", border: "rgba(226, 232, 236, 0.36)" },
-      watermark:{ accent: "#dfb96a", tint: "rgba(223, 185, 106, 0.15)", border: "rgba(223, 185, 106, 0.36)" },
-      bgremove: { accent: "#34b38a", tint: "rgba(52, 179, 138, 0.15)",  border: "rgba(52, 179, 138, 0.36)" },
-      inpaint:  { accent: "#4b8b9c", tint: "rgba(75, 139, 156, 0.15)",  border: "rgba(75, 139, 156, 0.36)" },
-      bg:       { accent: "#c89d4c", tint: "rgba(200, 157, 76, 0.16)",  border: "rgba(200, 157, 76, 0.38)" },
-      effects:  { accent: "#34b38a", tint: "rgba(52, 179, 138, 0.15)",  border: "rgba(52, 179, 138, 0.36)" },
-      filter:   { accent: "#dfb96a", tint: "rgba(223, 185, 106, 0.15)", border: "rgba(223, 185, 106, 0.36)" },
-      layers:   { accent: "#e2e8ec", tint: "rgba(226, 232, 236, 0.15)", border: "rgba(226, 232, 236, 0.35)" },
-      audio:    { accent: "#4b8b9c", tint: "rgba(75, 139, 156, 0.15)",  border: "rgba(75, 139, 156, 0.35)" },
-      timeline: { accent: "#c89d4c", tint: "rgba(200, 157, 76, 0.16)",  border: "rgba(200, 157, 76, 0.38)" }
-    }
-  },
-  { id: "classic", name: "クラシック", light: false, classic: true },
-];
+//   look    形と背景(書いた項目だけ置き換わる。書かない項目は今の見た目と同じ)
+//             グラデーションは 9 か所(0%・12.5%・25%・…・100% の等間隔)の色で書く。色は #rrggbb・rgba(...)・color-mix(...)・var(--…) が使える
+//             9 個より少なく書いたときは、0%〜100% に等間隔に並べて、間の色を混ぜて 9 か所にする
+//             block   ブロック(項目の欄。sections に書いた項目):
+//                       back: { gradation: [9 色], angle: 角度(度) }。既定は var(--sec-tint)(0%)→ 欄の地(52%)→ var(--sec-accent) 8%(100%)
+//                       radius 角丸(px) / border 枠の太さ(px) / opacity 欄の地の不透明度(0〜1。alpha.card と同じ)
+//             button  ボタン: back: { gradation: [9 色], angle }(ボタンのつや。既定は deco.btnGrad)/ radius 角丸(px)
+//             go      生成ボタン: back: { gradation: [9 色], angle }(既定はボタンと同じ)/ radius 角丸(px)
+//             panel   パネル・編集画面の地: back: { gradation: [9 色], angle }(既定は grad の 2 色・170 度)
+//             modal   ダイアログの枠(画像の合成・ギャラリー・履歴・設定・使い方・PNGinfo・確認など): back / radius / border / borderColor
+//             backdrop ダイアログの後ろの暗い部分の色(1 色)
+//             editor  画像編集・動画編集の画面の地: back / radius / border / borderColor
+//             inner   入れ子の枠(出力サイズの枠・入力画像の枠・LoRA の枠・結果の表示・説明の枠など): back / radius / border / borderColor
+//             item    一覧の項目(ギャラリー・履歴・レイヤーの行・履歴の画像・サンプルワードなど): back / radius / border / borderColor
+//             input   入力欄・プルダウン(生成パネル・編集画面・ダイアログ): back / radius / border / borderColor
+//             borderColor(枠の色)は block・button・go にも書ける。color(文字の色)は notice・license・clip に書ける
+//             notice  お知らせ: { error, info, warn } それぞれ back / radius / border / borderColor / color(エラー・お知らせ・注意の欄・帯)
+//             license ライセンスの札: { ok 商用可, cond 条件付き, out 生成物のみ商用可, no 非商用のみ, unknown 不明 } それぞれ back / borderColor / color
+//             clip    動画編集のタイムラインのクリップ: { clip 動画(つなげる), video 重ねる動画, image 画像, text 文字, shape 図形, mosaic モザイク, audio 音声, selected 選んでいる }
+//                       それぞれ back / radius / border / borderColor / color
+//             overlay 画像の上に重ねて出すもの(色。書いた色だけ置き換わる):
+//                       frame 選んだ物の枠 / handleBg・handleBorder 取っ手 / crop 切り取りの枠 / dim 切り取りの外の暗い部分 / guide 吸い付きの目印
+//                       artboard アートボードの枠 / remove オブジェクト除去の範囲 / brush・brush2 ブラシの円(外・内) / textedit 文字の編集枠 / caret 文字の入力位置
+//                       path パスの線 / pathhandle パスの曲線の取っ手 / volume 音量の線
+//             selection 文字を選んだときの色: { bg, fg }
+//           例: look: { block: { back: { gradation: ["#111", "#222", "#333", "#444", "#555", "#666", "#777", "#888", "#999"], angle: 135 }, radius: 12, opacity: 0.86 },
+//                       button: { radius: 8 } }
+// テーマの一覧。web/themes/ のファイル(1 ファイル 1 テーマ)を読み込んで入れる(loadThemes)。並びは order の小さい順
+export const THEMES = [];
+let themesLoading = null;
+export function loadThemes(reload = false) {
+  if (themesLoading && !reload) return themesLoading;
+  const bust = reload ? `?t=${Date.now()}` : ""; // 取り込んだあとは、ブラウザに残っている古いファイルを使わない
+  themesLoading = (async () => {
+    let files = [];
+    try {
+      const r = await api.fetchApi("/cca_generator/themes", { cache: "no-store" });
+      files = (await r.json()).files || [];
+    } catch (e) { console.warn("[CCA Generator] テーマの一覧を読めませんでした:", e); }
+    const base = new URL("./themes/", import.meta.url);
+    const list = await Promise.all(files.map((f) => import(new URL(f, base).href + bust).then((m) => m.default)
+      .catch((e) => { console.warn(`[CCA Generator] テーマ ${f} を読めませんでした:`, e); return null; })));
+    const ok = list.filter((t) => t && typeof t === "object" && t.id);
+    ok.sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999) || String(a.id).localeCompare(String(b.id)));
+    if (!ok.some((t) => t.id === "classic")) ok.push({ id: "classic", name: "クラシック", light: false, classic: true, order: 9999 });
+    THEMES.splice(0, THEMES.length, ...ok);
+    return THEMES;
+  })();
+  return themesLoading;
+}
 const DEFAULT = "cca10";
 let cur = null; // 今の配色(クラシックなら null = 置き換えない)
 const cache = new Map();
@@ -906,7 +165,30 @@ function mapToken(tok, th) {
 const COLOR = /(^|[:,\s(])(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))(?![0-9a-zA-Z_-])/g;
 export function mapCss(text, th = cur) {
   if (!th || !text) return text;
-  return text.replace(COLOR, (all, pre, tok) => pre + mapToken(tok, th));
+  return fixTextColors(text.replace(COLOR, (all, pre, tok) => pre + mapToken(tok, th)), th);
+}
+// ---- 文字の色の読みやすさ: 置き換えた文字の色(color: の値)が、欄の地の色に対して薄すぎる(コントラスト 4.5 未満)ときは、
+// テーマの文字の色(fg)に近づけて 4.5 以上にする。ほとんど地と同じ明るさの色(濃い色のボタンの上の文字など、別の地の上に乗る文字)は動かさない
+const lumOf3 = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+const ratioOf = (a, b) => { const x = lumOf3(a), y = lumOf3(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+const TEXT_DECL = /(^|[{;\s])(color\s*:\s*)([^;}]+)/g;
+function fixTextColors(text, th) {
+  if (th.textContrast === false) return text; // テーマで止められる
+  const ground = hex(th.vars?.["--card"] || th.bg), fg = hex(th.fg);
+  if (!ground || !fg) return text;
+  return text.replace(TEXT_DECL, (all, pre, prop, val) => pre + prop + val.replace(COLOR, (m, p2, tok) => {
+    const c = hex(tok);
+    if (!c) return m;
+    const a = (c[3] ?? 255) / 255;
+    const eff = (x) => [0, 1, 2].map((i) => x[i] * a + ground[i] * (1 - a));
+    const r0 = ratioOf(eff(c), ground);
+    if (r0 >= 4.5 || r0 < 1.6) return m;
+    for (let t = 0.1; t <= 1.001; t += 0.1) {
+      const n = [0, 1, 2].map((i) => Math.round(c[i] + (fg[i] - c[i]) * t));
+      if (ratioOf(eff(n), ground) >= 4.5 || t > 0.95) return p2 + fmt([...n, c[3] ?? 255], 1);
+    }
+    return m;
+  }));
 }
 
 // ---- 置き換える所
@@ -914,7 +196,7 @@ const ROOT = '#cca-ui, #cca-vedit, #cca-imged, [id^="cca-"], [class^="cca-"], [c
 const SKIP = '.stage, [data-c="stage"], [data-no-theme]'; // 画像・動画の中身は置き換えない
 const styleOrig = new WeakMap(), attrRec = new WeakMap();
 function doStyle(st) {
-  if (st.id === "cca-theme-deco") return; // 飾り(配色ごとに作る)は置き換えない
+  if (st.id === "cca-theme-deco" || st.id === "cca-disabled-check") return; // 飾り(配色ごとに作る)・使えないチェックボックス(どの配色でも同じグレー)は置き換えない
   if (!styleOrig.has(st)) { if (!/#cca-|\.cca-/.test(st.textContent)) return; styleOrig.set(st, st.textContent); }
   const want = mapCss(styleOrig.get(st));
   if (st.textContent !== want) { st.__ccaSet = want; st.textContent = want; }
@@ -977,9 +259,15 @@ const SELECT_VARS = {
 };
 const MENU_VARS = ["--text", "--muted", "--border", "--card", "--card2", "--accent", "--accent-fg", ...Object.values(SELECT_VARS)];
 const customSelects = new WeakMap();
+// フォントを選ぶ欄(select[data-font-preview]): 一覧の項目を、そのフォントの見本で見せる。fn(値, 要素) で要素にフォントを付ける(動画編集が登録する)
+let fontPreviewFn = null;
+export function setFontPreview(fn) { fontPreviewFn = fn; }
+const FONT_SAMPLE = "あいうえお 永 Abc 123";
 
+// モデル・LoRA などのファイル名は、拡張子を出さない(選ぶ値はそのまま)
+const noExt = (t) => String(t ?? "").replace(/\.(safetensors|ckpt|pt|pth|gguf|bin|sft|onnx)(?=$|[\s(（\[])/gi, "");
 function initCustomSelects() {
-  const roots = "#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout";
+  const roots = LOOK_ROOTS; // 生成パネル・編集画面・すべてのダイアログのプルダウンを作り直す
 
   let style = document.getElementById("cca-custom-select-style");
   if (!style) {
@@ -1036,6 +324,10 @@ function initCustomSelects() {
       .cca-select-arrow {
         flex: none;
       }
+      .cca-select-menu.fontpv { max-height: min(460px, 70vh); }
+      .cca-select-menu.fontpv .cca-select-option { display: block; }
+      .cca-select-fname { display: block; font-size: 11px; opacity: .75; line-height: 1.3; }
+      .cca-select-fsample { display: block; font-size: 21px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .cca-select-menu {
         position: fixed;
         z-index: 2147483000;
@@ -1117,7 +409,7 @@ function initCustomSelects() {
     document.head.appendChild(style);
   }
 
-  document.querySelectorAll(`:is(${roots}) select:not([multiple]):not([size])`).forEach(select => {
+  document.querySelectorAll(`:is(${roots}) select:not([multiple]):not([size]):not([data-lorapick])`).forEach(select => {
     if (customSelects.has(select)) return;
 
     const rect = select.getBoundingClientRect();
@@ -1173,13 +465,17 @@ function initCustomSelects() {
     menu.setAttribute("data-no-theme", "");
     menu.setAttribute("role", "listbox");
     menu.hidden = true;
+    // 画像・動画のファイルの項目は、カーソルを乗せるとその絵をカーソルの横に出す
+    hoverPreview(menu, ".cca-select-option", (it) => it.dataset.pv || "");
 
     function sync() {
-      const text = select.selectedOptions[0]?.textContent ?? "";
+      const text = noExt(select.selectedOptions[0]?.textContent ?? "");
       if (labelText.textContent !== text) labelText.textContent = text;
+      // フォントを選ぶ欄: 選んでいるフォントで名前を見せる
+      if (select.hasAttribute("data-font-preview") && fontPreviewFn && labelText._fk !== select.value) { labelText._fk = select.value; try { fontPreviewFn(select.value, labelText); } catch { /* 見本が出せなくても選べる */ } }
       button.disabled = select.disabled;
 
-      const texts = Array.from(select.options, o => o.textContent);
+      const texts = Array.from(select.options, o => noExt(o.textContent));
       const key = texts.join("\n");
       if (key !== sizerKey) {
         sizerKey = key;
@@ -1198,6 +494,7 @@ function initCustomSelects() {
     }
 
     function close() {
+      hidePreview();
       menu.hidden = true;
       button.setAttribute("aria-expanded", "false");
     }
@@ -1208,7 +505,18 @@ function initCustomSelects() {
       let hasNote = false;
       // 絞り込み(生成パネル・フォルダ設定・モデルの案内の選択欄)
       let filter = null;
-      if (select.closest("#cca-ui, #cca-dirs, #cca-guide")) {
+      const fontPv = select.hasAttribute("data-font-preview") && !!fontPreviewFn;
+      menu.classList.toggle("fontpv", fontPv);
+      // フォントの見本: 見えている項目だけ、そのフォントを読み込んで付ける
+      menu._io?.disconnect();
+      menu._io = fontPv ? new IntersectionObserver((ents) => {
+        for (const en of ents) {
+          if (!en.isIntersecting) continue;
+          menu._io.unobserve(en.target);
+          try { fontPreviewFn(en.target.dataset.fv, en.target); } catch { /* 見本が出せなくても選べる */ }
+        }
+      }, { root: menu, rootMargin: "120px 0px" }) : null;
+      if (select.closest("#cca-ui, #cca-dirs, #cca-guide") || fontPv) {
         filter = document.createElement("input");
         filter.type = "text";
         filter.className = "cca-select-filter";
@@ -1248,10 +556,22 @@ function initCustomSelects() {
             item.title = `${option.textContent} — ${note}`;
             hasNote = true;
           }
+        } else if (fontPv) {
+          const name = document.createElement("span");
+          name.className = "cca-select-fname";
+          name.textContent = option.textContent;
+          const sample = document.createElement("span");
+          sample.className = "cca-select-fsample";
+          sample.textContent = select.dataset.fontSample || FONT_SAMPLE;
+          sample.dataset.fv = option.value;
+          item.append(name, sample);
+          item.title = option.textContent;
+          menu._io.observe(sample);
         } else {
-          item.textContent = option.textContent;
+          item.textContent = noExt(option.textContent);
         }
         item.disabled = option.disabled;
+        if (mediaKind(option.value)) item.dataset.pv = option.value;
 
         item.addEventListener("click", () => {
           select.selectedIndex = index;
@@ -1289,7 +609,12 @@ function initCustomSelects() {
 
       const r = button.getBoundingClientRect();
       menu.style.minWidth = `${r.width}px`;
-      if (hasNote) {
+      if (fontPv) {
+        const nw = Math.min(window.innerWidth - 16, Math.max(r.width, 360));
+        menu.style.width = `${nw}px`;
+        menu.style.maxWidth = `${nw}px`;
+        menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - nw - 8))}px`;
+      } else if (hasNote) {
         // 説明書きは折り返して表示する(幅は、選択欄の幅か 300px の大きいほう)
         const nw = Math.min(window.innerWidth - 16, Math.max(r.width, 300));
         menu.style.width = `${nw}px`;
@@ -1356,7 +681,24 @@ function initCustomSelects() {
     });
 
     button.addEventListener("keydown", event => {
-      if (event.key === "ArrowDown" || event.key === "Enter") {
+      // 上下キー: 開かずに、前・次の選択肢へ(ふつうのプルダウンと同じ)。Alt + 下・Enter・スペースで一覧を開く
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !event.altKey && menu.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        const opts = [...select.options];
+        let i = select.selectedIndex;
+        for (;;) {
+          i += event.key === "ArrowDown" ? 1 : -1;
+          if (i < 0 || i >= opts.length) return;
+          if (!opts[i].disabled) break;
+        }
+        select.selectedIndex = i;
+        select.dispatchEvent(new Event("input", { bubbles: true }));
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        sync();
+        return;
+      }
+      if (event.key === "Enter" || event.key === " " || (event.key === "ArrowDown" && event.altKey)) {
         event.preventDefault();
         open();
         menu.querySelector('[aria-selected="true"]')?.focus();
@@ -1407,7 +749,56 @@ function refreshCustomSelects() {
   for (const s of document.querySelectorAll("select.cca-select-native")) customSelects.get(s)?.refresh();
 }
 let obs = null;
-export function startTheme() {
+// 使えない(押せない)チェックボックス・ラジオボタン: 中をグレーにして、枠も見えるように(どのテーマでも)
+function disabledCheckCss() {
+  if (document.getElementById("cca-disabled-check")) return;
+  const s = document.createElement("style");
+  s.id = "cca-disabled-check";
+  const R = LOOK_ROOTS.split(",").map((x) => x.trim()).filter(Boolean).map((x) => `${x} input[type=checkbox]:disabled`).join(",");
+  const check = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='%23444' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
+  // 編集画面の入力欄の決まり(地の色・半透明)より強く当てる(!important)
+  s.textContent = `${R}{-webkit-appearance:none !important;appearance:none !important;width:13px !important;height:13px !important;margin:3px 3px 3px 4px;flex:none;box-sizing:border-box !important;border:1.5px solid #8c8c8c !important;border-radius:3px !important;background:#a9a9a9 center/11px 11px no-repeat !important;opacity:1 !important;filter:none !important;box-shadow:none !important;outline:none !important;cursor:default !important;vertical-align:middle}
+${R.split(",").map((x) => `${x}:checked`).join(",")}{background-image:url("${check}") !important}`;
+  document.head.appendChild(s);
+}
+// 横に並べた行(ボタンなど)が折り返したときは、各行の物を行の幅いっぱいに広げる(1 個だけ取り残されて見えないように)。
+// 折り返していない行はそのまま。プルダウンは先に縮めて、となりのボタンと同じ行に入りやすくする
+const WRAP_ROWS = ".row, .tools, .transport, .ph2, .adjp, .ckrow, .hd, .ft";
+let wrapTimer = 0, wrapRo = null;
+function markWrapped() {
+  wrapTimer = 0;
+  for (const root of document.querySelectorAll(LOOK_ROOTS)) {
+    if (!root.offsetParent && getComputedStyle(root).position !== "fixed") continue;
+    for (const r of root.querySelectorAll(WRAP_ROWS)) {
+      if (!r.offsetParent || r.closest(".tl, .stage, .frame")) continue;
+      if (wrapRo && !r._ccaWrapObs) { r._ccaWrapObs = true; wrapRo.observe(r); } // 行の幅が変わったら見直す
+      let wrapped = false;
+      if (getComputedStyle(r).flexWrap === "wrap") {
+        const kids = [...r.children].filter((c) => c.offsetParent && getComputedStyle(c).position !== "absolute");
+        if (kids.length > 1) { const b0 = kids[0].getBoundingClientRect().bottom; wrapped = kids.some((c) => c.getBoundingClientRect().top >= b0 - 2); }
+      }
+      if (r.classList.contains("cca-wrapped") !== wrapped) r.classList.toggle("cca-wrapped", wrapped);
+    }
+  }
+}
+const scheduleWrap = () => { if (!wrapTimer) wrapTimer = setTimeout(markWrapped, 150); };
+function wrapRows() {
+  if (document.getElementById("cca-wrap-rows")) return;
+  const st = document.createElement("style");
+  st.id = "cca-wrap-rows";
+  const R = `:is(${LOOK_ROOTS})`;
+  st.textContent = `${R} .cca-wrapped > :not(.sp):not(.sep):not(.grow){flex-grow:1}
+${R} :is(.row, .tools) > :is(select.grow, .cca-select-button){min-width:0;flex:1 1 8em}`;
+  document.head.appendChild(st);
+  window.addEventListener("resize", scheduleWrap);
+  new MutationObserver(scheduleWrap).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden", "open"] });
+  if (window.ResizeObserver) wrapRo = new ResizeObserver(scheduleWrap);
+  scheduleWrap();
+}
+export async function startTheme() {
+  disabledCheckCss();
+  wrapRows();
+  await loadThemes();
   cur = themeOf(themeChoice());
   if (obs) return;
   obs = new MutationObserver((list) => {
@@ -1426,12 +817,262 @@ export function startTheme() {
   applyDeco();
   refreshOnFg();
 }
-function themeOf(id) { const t = THEMES.find((x) => x.id === id) || THEMES.find((x) => x.id === DEFAULT); return t.classic ? null : t; }
+function themeOf(id) { const t = THEMES.find((x) => x.id === id) || THEMES.find((x) => x.id === DEFAULT); return !t || t.classic ? null : prepTheme(t); }
+// ---------------------------------------------------------------- テーマの値の確かめと直し
+// AI などが作ったテーマでも崩れないようにする: 色の書き方をそろえる・地の明るさと light を合わせる・
+// 文字と地のコントラストが足りない組み合わせ(書いた色どうし)を、読める色に直す。直したものは写しに入れ、元のテーマは変えない
+let ctx2d = null;
+// どんな CSS の色(#rgb・#rrggbbaa・rgb()・rgba()・hsl()・色の名前)でも [r, g, b, 不透明度 0〜255] に。読めなければ null
+function colorOf(v) {
+  if (typeof v !== "string" || !v.trim()) return null;
+  const s = v.trim();
+  if (/^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(s)) return hex(s);
+  try {
+    ctx2d ||= document.createElement("canvas").getContext("2d");
+    ctx2d.fillStyle = "#010203";
+    ctx2d.fillStyle = s;
+    const o = String(ctx2d.fillStyle);
+    if (o === "#010203") return null; // 読めない色(そのままになる)
+    if (o.startsWith("#")) return hex(o);
+    const m = o.match(/[\d.]+/g);
+    return m ? [+m[0], +m[1], +m[2], Math.round((m[3] != null ? +m[3] : 1) * 255)] : null;
+  } catch { return null; }
+}
+const hex8 = (c) => `#${c.slice(0, 3).map((v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, "0")).join("")}${(c[3] ?? 255) >= 255 ? "" : clamp(Math.round(c[3]), 0, 255).toString(16).padStart(2, "0")}`;
+const over = (c, g) => { const a = (c[3] ?? 255) / 255; return [0, 1, 2].map((i) => c[i] * a + g[i] * (1 - a)); }; // 地 g の上に重ねた色
+// グラデーション・色の並び(配列か CSS)の平均の色
+function avgColor(v, ground) {
+  const list = (Array.isArray(v) ? v : String(v || "").match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/gi) || []).map(colorOf).filter(Boolean);
+  if (!list.length) return null;
+  const s = list.map((c) => over(c, ground)).reduce((a, c) => a.map((x, i) => x + c[i]), [0, 0, 0]);
+  return s.map((x) => x / list.length);
+}
+// 地 bg の上で、文字 fg のコントラストが min 未満なら、読める色を返す(テーマの文字の色・地の色・白・黒の順に、足りるもの。
+// どれも足りなければいちばん読めるもの)。足りていれば null
+let candFg = [[255, 255, 255], [0, 0, 0]];
+function readable(fg, bg, min = 3) {
+  if (!fg || !bg) return null;
+  if (ratioOf(over(fg, bg), bg) >= min) return null;
+  const c = candFg.concat([[255, 255, 255], [0, 0, 0]]);
+  return hex8(c.find((x) => ratioOf(x, bg) >= min) || c.reduce((a, x) => (ratioOf(x, bg) > ratioOf(a, bg) ? x : a)));
+}
+const prepCache = new WeakMap();
+export function prepTheme(t) {
+  if (!t || t.classic) return t;
+  if (prepCache.has(t)) return prepCache.get(t);
+  const th = JSON.parse(JSON.stringify(t));
+  const fixed = [];
+  // 色の書き方を #rrggbb(aa) にそろえる(処理が 16 進の色を前提にしている所)
+  const norm = (o, k) => { if (typeof o?.[k] !== "string") return; const c = colorOf(o[k]); if (c && !/^#[0-9a-f]{3,8}$/i.test(o[k].trim())) o[k] = hex8(c); else if (!c) { fixed.push(k); delete o[k]; } };
+  for (const k of ["bg", "fg", "accent", "accent2"]) norm(th, k);
+  if (Array.isArray(th.grad)) th.grad.forEach((_, i) => norm(th.grad, i));
+  if (Array.isArray(th.hueMap)) th.hueMap = th.hueMap.filter((h) => Array.isArray(h) && colorOf(h[1])).map((h) => { const x = [...h]; norm(x, 1); return x; });
+  if (!th.bg) th.bg = th.light ? "#f5f5f5" : "#16191e";
+  if (!th.fg) th.fg = lumOf3(hex(th.bg)) > 0.35 ? "#1a1a1a" : "#eeeeee";
+  if (!th.accent) th.accent = th.light ? "#2b6cb0" : "#38b2ac";
+  if (!th.accent2) th.accent2 = th.accent;
+  if (!th.sections || typeof th.sections !== "object") th.sections = {}; // 書いていなければ、ブロックは強調色から色を付ける
+  // 色の変数(vars): 書いていない項目は、地・文字・強調色から作る(文字の色などはこの変数を使うので、無いと読めなくなる)
+  {
+    const B = hex(th.bg), F = hex(th.fg), mx = (t) => hex8(B.map((v, i) => v + (F[i] - v) * t)), lt = lumOf3(B) > 0.35;
+    const ac = hex(th.accent), onAc = ratioOf(F, ac) >= ratioOf(B, ac) ? th.fg : th.bg;
+    th.vars = {
+      "--bg": th.bg, "--panel": mx(0.03), "--card": mx(0.06), "--card2": mx(0.12), "--text": th.fg, "--muted": mx(0.7),
+      "--border": `rgba(${F[0]}, ${F[1]}, ${F[2]}, 0.22)`, "--accent": th.accent, "--accent2": th.accent2, "--accent-fg": onAc,
+      "--danger": lt ? "#b3261e" : "#ff6b6b", "--warn": lt ? "#8a6a1c" : "#ffd166", "--ok": lt ? "#2e7d32" : "#5fd38d",
+      ...(th.vars && typeof th.vars === "object" ? th.vars : {}),
+    };
+  }
+  // light は地の明るさに合わせる(書き忘れ・逆に書いたとき)
+  const bgL = lumOf3(hex(th.bg)), light = bgL > 0.35;
+  if (typeof th.light !== "boolean" || th.light !== light) { if (typeof th.light === "boolean") fixed.push("light"); th.light = light; }
+  const bg = over(hex(th.bg), [128, 128, 128]);
+  candFg = [over(hex(th.fg), bg), bg];
+  const ground = over(colorOf(th.vars?.["--card"]) || hex(th.bg), bg);
+  if (ratioOf(over(hex(th.fg), ground), ground) < 3) { th.fg = ratioOf([255, 255, 255], ground) > ratioOf([0, 0, 0], ground) ? "#f2f2f2" : "#1a1a1a"; fixed.push("fg"); candFg = [hex(th.fg), bg]; }
+  const accent = over(colorOf(th.vars?.["--accent"]) || hex(th.accent), ground);
+  const fix = (o, k, bgc, min = 3) => { if (!o || o[k] == null) return; const c = colorOf(o[k]); if (!c) { fixed.push(k); delete o[k]; return; } const n = readable(c, bgc, min); if (n) { o[k] = n; fixed.push(k); } };
+  if (th.vars) fix(th.vars, "--accent-fg", accent, 2);
+  fix(th, "onFg", accent, 2);
+  if (th.deco) fix(th.deco, "goColor", accent, 2);
+  const sl = th.select;
+  if (sl) {
+    const g = (k) => colorOf(sl[k]) ? over(colorOf(sl[k]), ground) : null;
+    if (g("bg")) fix(sl, "fg", g("bg"));
+    if (g("menuBg")) fix(sl, "menuFg", g("menuBg"));
+    if (g("hoverBg")) fix(sl, "hoverFg", g("hoverBg"));
+    if (g("selectedBg")) fix(sl, "selectedFg", g("selectedBg"));
+  }
+  const tn = th.tune;
+  if (tn) {
+    fix(tn, "selFg", accent);
+    fix(tn, "labelColor", ground, 4.5);
+    fix(tn, "descColor", ground, 4.5);
+    if (colorOf(tn.infoBg)) fix(tn, "infoFg", over(colorOf(tn.infoBg), ground), 3);
+    if (tn.spin && colorOf(tn.spin.bg)) fix(tn.spin, "fg", over(colorOf(tn.spin.bg), ground), 3);
+    if (tn.layerSel) { // 選んでいるレイヤーの行の文字: 書いていなければ、地に合わせて読める色にする
+      const lb = avgColor(tn.layerSel.bg, ground) || ground;
+      tn.layerSel.fg = tn.layerSel.fg && colorOf(tn.layerSel.fg) ? tn.layerSel.fg : th.fg;
+      fix(tn.layerSel, "fg", lb);
+    }
+  }
+  if (th.snapOn && colorOf(th.snapOn.bg)) fix(th.snapOn, "fg", over(colorOf(th.snapOn.bg), ground), 3);
+  if (th.secDoneFg) { const m = mapRGB(th, 0x3a, 0x34, 0x17, 1) || hex(th.bg); fix(th, "secDoneFg", over(m, ground)); }
+  const lk = th.look;
+  if (lk?.selection && colorOf(lk.selection.bg)) fix(lk.selection, "fg", over(colorOf(lk.selection.bg), ground));
+  for (const grp of ["notice", "license", "clip"]) for (const v of Object.values(lk?.[grp] || {})) {
+    const b = v?.back?.gradation ? avgColor(v.back.gradation, ground) : null;
+    if (b && v.color) fix(v, "color", b);
+  }
+  // リンクの色: 書いていなければ強調色から、地に対して読める色を作る
+  th.link = th.link && colorOf(th.link) ? th.link : th.accent;
+  fix(th, "link", ground, 4.5);
+  // 強調色の地に乗る白い文字(回転の取っ手など)
+  th._accentFg = readable([255, 255, 255], accent) ? (readable([0, 0, 0], accent) ? "#ffffff" : "#000000") : "#ffffff";
+  if (fixed.length) console.info(`[CCA Generator] テーマ「${th.id}」の読みにくい色・読めない値を直しました:`, [...new Set(fixed)].join(", "));
+  prepCache.set(t, th);
+  return th;
+}
+// テーマのファイルの中身(.js・.txt)→ テーマ。AI の説明文・Markdown のコードブロック・JSON の形でも、値の部分を取り出して読む
+export async function themeFromText(text) {
+  const src = String(text || "").replace(/^﻿/, "");
+  const ok = (t) => t && typeof t === "object" && !Array.isArray(t);
+  const load = async (code) => {
+    const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+    try { return (await import(url)).default; } finally { URL.revokeObjectURL(url); }
+  };
+  try { const t = await load(src); if (ok(t)) return t; } catch { /* 次の読み方で */ }
+  // コードブロック(大きい順)と全体から、最初の { から最後の } までを値として読む
+  const blocks = [...src.matchAll(/```[^\n]*\n([\s\S]*?)(```|$)/g)].map((m) => m[1]).sort((a, b) => b.length - a.length);
+  for (const s of [...blocks, src]) {
+    const i = s.indexOf("{"), j = s.lastIndexOf("}");
+    if (i < 0 || j <= i) continue;
+    const body = s.slice(i, j + 1);
+    try { const t = await load(`export default (${body});`); if (ok(t)) return t; } catch { /* 次へ */ }
+    try { const t = JSON.parse(body); if (ok(t)) return t; } catch { /* 次へ */ }
+  }
+  const open = (src.match(/\{/g) || []).length, close = (src.match(/\}/g) || []).length;
+  throw new Error(open > close ? T("ファイルが途中で切れているようです(最後が }; で終わっていません)。AI に「続きを最後まで」と頼むか、省略できる項目を減らして作り直してもらってください")
+    : T("export default { … } の形のテーマではありません"));
+}
 export function themeChoice() { try { return localStorage.getItem(KEY) || DEFAULT; } catch { return DEFAULT; } }
 // 飾り: 背景のグラデーション・ボタンのハイライトと内側の影(半透明に見えるように)・生成ボタン(少し透かした強調の色・白い縁・黒のぼかしの影)・欄を少し透かす
 const mixHex = (a, b, t) => toHex(hex(a).map((v, i) => Math.round(v + (hex(b)[i] - v) * t)));
+// ---------------------------------------------------------------- 形と背景(look): 9 か所のグラデーション
+const STOPS9 = [0, 12.5, 25, 37.5, 50, 62.5, 75, 87.5, 100];
+// 一番上の , で分ける(かっこの中の , は分けない)
+function splitTop(s) {
+  const out = [];
+  let d = 0, cur = "";
+  for (const ch of s) {
+    if (ch === "(") d++;
+    if (ch === ")") d--;
+    if (ch === "," && d === 0) { out.push(cur.trim()); cur = ""; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+// "linear-gradient(180deg, A, B 48%, C)" → { angle, stops: [[位置, 色], …] }。位置の無い色は前後の間に等間隔に置く
+function parseGrad(css) {
+  const m = /^\s*linear-gradient\((.*)\)\s*$/s.exec(css || "");
+  if (!m) return null;
+  const parts = splitTop(m[1]);
+  let angle = "180deg";
+  if (/^-?[\d.]+deg$|^to /.test(parts[0] || "")) angle = parts.shift();
+  if (!parts.length) return null;
+  const st = parts.map((x) => { const mm = /^(.*?)\s+(-?[\d.]+)%$/.exec(x); return mm ? [mm[1].trim(), Number(mm[2])] : [x, null]; });
+  if (st[0][1] == null) st[0][1] = 0;
+  if (st[st.length - 1][1] == null) st[st.length - 1][1] = 100;
+  for (let i = 1; i < st.length; i++) {
+    if (st[i][1] != null) continue;
+    let j = i;
+    while (st[j][1] == null) j++;
+    const a = st[i - 1][1], b = st[j][1];
+    for (let k = i; k < j; k++) st[k][1] = a + ((b - a) * (k - i + 1)) / (j - i + 1);
+    i = j;
+  }
+  return { angle, stops: st.map(([c, q]) => [q, c]) };
+}
+// [[位置, 色], …] → 9 か所の色(間は前後の色を混ぜる)
+function to9(stops) {
+  return STOPS9.map((q) => {
+    if (q <= stops[0][0]) return stops[0][1];
+    if (q >= stops[stops.length - 1][0]) return stops[stops.length - 1][1];
+    const i = stops.findIndex(([x]) => x >= q), [a, ca] = stops[i - 1], [b, cb] = stops[i];
+    if (b === q) return cb;
+    const w = Math.round((1 - (q - a) / (b - a)) * 1000) / 10;
+    return `color-mix(in srgb, ${ca} ${w}%, ${cb})`;
+  });
+}
+// テーマの back({ gradation, angle })→ CSS の変数(--<名前>-angle・--<名前>-g1〜g9)。書かなければ既定の色から作る
+function nineVars(name, back, defAngle, defStops) {
+  const g = back?.gradation;
+  const list = Array.isArray(g) && g.length ? (g.length === 9 ? g : to9(g.map((c, i) => [g.length === 1 ? 0 : (i * 100) / (g.length - 1), c]))) : to9(defStops);
+  const ang = back?.angle == null ? defAngle : (typeof back.angle === "number" ? `${back.angle}deg` : back.angle);
+  return [`--${name}-angle:${ang}`, ...list.map((c, i) => `--${name}-g${i + 1}:${c}`)].join(";");
+}
+const gradOf = (name) => `linear-gradient(var(--${name}-angle), ${STOPS9.map((q, i) => `var(--${name}-g${i + 1}) ${q}%`).join(", ")})`;
+const pxOf = (v) => (typeof v === "number" ? `${v}px` : String(v));
+// look の種類ごとの場所(:where で弱くして使う。!important で元の色に勝つ)
+const LOOK_ROOTS = "#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout,#cca-gal,#cca-hbox,#cca-wm,#cca-dirs,#cca-mediadirs,#cca-guide,#cca-addon,#cca-mg,#cca-gfont,#cca-vpick,#cca-pdfpick,#cca-pop,.cca-askclose";
+const LOOK_SEL = {
+  modal: "#cca-comp .box, #cca-gal .win, #cca-hbox .hb, #cca-layout .win, #cca-mg .win, #cca-pnginfo .box, #cca-setio .bx, .cca-askclose > div, #cca-guide .box, #cca-addon .box, #cca-dirs .box, #cca-mediadirs .box, #cca-pop, #cca-gfont .pb, #cca-vpick .pb, #cca-pdfpick .pb, #cca-wm .wb, #cca-mask .mb",
+  inner: "#cca-ui .card .card, #cca-ui .sizebox, #cca-ui .slot, #cca-ui .drop, #cca-ui .viewer, #cca-ui .audiohelp, #cca-ui .layoutrow, #cca-ui .help, .cca-help, #cca-ui .info .txt, #cca-ui .tilebox, #cca-ui .tprev, #cca-ui .foldbox, #cca-ui .wced, #cca-ui .editinfo, #cca-layout .row, #cca-layout .bx .h, #cca-mg .licbox, #cca-vedit .kfrow, #cca-imged .guide .lead, #cca-setio .msg, #cca-comp .guide",
+  editor: "#cca-imged > .box, #cca-vedit > .box",
+  item: "#cca-gal .it, #cca-hbox .it, #cca-hbox .th, #cca-wm .it, #cca-wm .it .th, #cca-imged .ly, #cca-ui .hist .t, #cca-ui .words .chip",
+  input: `:is(${LOOK_ROOTS}) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]), textarea, select), .cca-select-button`,
+};
+// お知らせ・ライセンスの札・タイムラインのクリップ(種類ごと)
+const LOOK_SUB = {
+  notice: { error: "#cca-toast .t.error, #cca-ui .inl-msg.error, #cca-ui .err", info: "#cca-toast .t.info, #cca-ui .inl-msg.info", warn: "#cca-ui .warn, #cca-vedit .warn" },
+  license: { ok: ".cca-lic.ok.ok", cond: ".cca-lic.cond.cond", out: ".cca-lic.out.out", no: ".cca-lic.no.no", unknown: ".cca-lic.unknown.unknown" },
+  clip: { clip: "#cca-vedit .blk.clip.clip", video: "#cca-vedit .blk.video.video", image: "#cca-vedit .blk.image.image", text: "#cca-vedit .blk.text.text", shape: "#cca-vedit .blk.shape.shape", mosaic: "#cca-vedit .blk.mosaic.mosaic", audio: "#cca-vedit .blk.audio.audio", selected: "#cca-vedit .blk.sel.sel.sel" },
+};
+// 1 つの場所に、back・radius・border・borderColor・color を当てる。weak = :where で弱くする(sel の強さで当てるときは false)
+function lookPartsCss(sel, cfg, name, weak) {
+  if (!cfg) return "";
+  const parts = [];
+  if (cfg.back) parts.push(`${nineVars(name, cfg.back, "180deg", [[0, "transparent"], [100, "transparent"]])};background:${gradOf(name)} !important`);
+  if (cfg.radius != null) parts.push(`border-radius:${pxOf(cfg.radius)} !important`);
+  if (cfg.border != null) parts.push(`border-width:${pxOf(cfg.border)} !important;border-style:solid !important`);
+  if (cfg.borderColor) parts.push(`border-color:${cfg.borderColor} !important`);
+  if (cfg.color) parts.push(`color:${cfg.color} !important`);
+  if (!parts.length) return "";
+  const kids = cfg.color ? `\n${sel.split(",").map((x) => `${x.trim()} *:not(canvas)`).join(",")}{color:${cfg.color} !important}` : "";
+  return `${weak ? `:where(${sel})` : sel}{${parts.join(";")}}${kids}`;
+}
+// 画像の上に重ねて出すもの: CSS で描いている部品は規則で、キャンバスに描いている色は変数(--ov-<名前>)で
+function lookOverlayCss(o) {
+  if (!o) return "";
+  const E = ":is(#cca-imged,#cca-vedit)", out = [];
+  const vars = Object.entries(o).filter(([, v]) => typeof v === "string" && v).map(([k, v]) => `--ov-${k}:${v}`);
+  if (vars.length) out.push(`${E}{${vars.join(";")}}`);
+  if (o.frame) out.push(`${E} .bb{border-color:${o.frame} !important}`);
+  if (o.handleBg) out.push(`${E} .bb-h,#cca-vedit .ov .rz,#cca-vedit .win .rz,#cca-vedit .crop .h{background:${o.handleBg} !important}`);
+  if (o.handleBorder) out.push(`${E} .bb-h,#cca-vedit .ov .rz,#cca-vedit .win .rz,#cca-vedit .crop .h{border-color:${o.handleBorder} !important}`);
+  if (o.crop) out.push(`#cca-imged .cbox .bb,#cca-imged .cbox .bb-h,#cca-imged .lcbox .bb,#cca-imged .lcbox .bb-h,#cca-vedit .crop{border-color:${o.crop} !important}`);
+  if (o.dim) out.push(`${E} .cdim{background:${o.dim} !important}`);
+  if (o.guide) out.push(`#cca-vedit .dmark .v,#cca-vedit .dmark .h{background:${o.guide} !important}\n#cca-vedit .dmark .lb{border-color:${o.guide} !important}`);
+  return out.join("\n");
+}
+const LOOK_BACKDROP = "#cca-comp, #cca-gal, #cca-hbox, #cca-pnginfo, #cca-setio, #cca-guide, #cca-addon, #cca-dirs, #cca-mg, #cca-layout, #cca-mask, #cca-zoom, #cca-gfont, #cca-vpick, #cca-pdfpick, #cca-wm, .cca-askclose";
+// 枠と中: back(9 か所のグラデーション)・radius(角丸)・border(枠の太さ)・borderColor(枠の色)のうち、書いたものだけ
+function lookRoleCss(name, cfg) {
+  if (!cfg) return "";
+  const parts = [];
+  if (cfg.back) parts.push(`${nineVars(name, cfg.back, "180deg", [[0, "transparent"], [100, "transparent"]])};background:${gradOf(name)} !important`);
+  if (cfg.radius != null) parts.push(`border-radius:${pxOf(cfg.radius)} !important`);
+  if (cfg.border != null) parts.push(`border-width:${pxOf(cfg.border)} !important;border-style:solid !important`);
+  if (cfg.borderColor) parts.push(`border-color:${cfg.borderColor} !important`);
+  if (!parts.length) return "";
+  // プルダウン(見た目を作り直したボタン)は、ボタンのつやより強くする
+  const strong = name === "input" ? `\n:is(${LOOK_ROOTS}) .cca-select-button.cca-select-button.cca-select-button{${parts.join(";")}}` : "";
+  const weak = !["modal", "editor"].includes(name); // ダイアログ・編集画面の地は、パネルの地の規則に勝つように弱くしない
+  return `${weak ? `:where(${LOOK_SEL[name]})` : LOOK_SEL[name]}{${parts.join(";")}}${strong}`;
+}
 function decoCss(th) {
   if (!th) return "";
+  const lk = th.look || {};
   const al = { panel: 1, card: 0.86, go: 0.78, ...(th.alpha || {}) };
   const deco = {
     cardShadow: "0 2px 10px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.32)",
@@ -1447,7 +1088,7 @@ function decoCss(th) {
   };
   const ga = (c) => fmt(hex(c), al.panel); // グラデーションの色(色の不透明度 × panel)
   const [g0, g1] = (th.grad || (th.light ? [th.bg, mixHex(th.bg, th.fg, 0.45) + hex(th.bg)[3].toString(16).padStart(2, "0")] : [mixHex(th.bg, th.accent, 0.22) + hex(th.bg)[3].toString(16).padStart(2, "0"), th.bg])).map(ga);
-  const [ar, ag, ab, aa] = hex(th.accent), B = ":is(#cca-ui, #cca-vedit, #cca-imged, #cca-comp, #cca-pnginfo, .cca-askclose) button:not(:disabled):not(.errx)";
+  const [ar, ag, ab, aa] = hex(th.accent), B = `:is(${LOOK_ROOTS}) button:not(:disabled):not(.errx)`; // 生成パネル・編集画面・すべてのダイアログのボタン
   const varLines = [
     ...Object.entries(th.vars || {}).map(([k, v]) => `${k}:${v}`),
     ...Object.entries(SELECT_VARS).filter(([k]) => th.select?.[k] != null).map(([k, name]) => `${name}:${th.select[k]}`)
@@ -1455,8 +1096,19 @@ function decoCss(th) {
   const selBtn = [["bg", "background-color"], ["fg", "color"], ["border", "border-color"]]
     .filter(([k]) => th.select?.[k] != null)
     .map(([k, prop]) => `${prop}:var(${SELECT_VARS[k]}) !important`).join(";");
-  const cardPct = Math.round(clamp(al.card, 0, 1) * 100);
-  const ROOTS = ":is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout)";
+  const cardPct = Math.round(clamp(lk.block?.opacity ?? al.card, 0, 1) * 100);
+  // 形と背景(look)。ブロック: 今の 3 か所(0%・52%・100%)の色を 9 か所に割り当て直したものが既定
+  const blkVars = nineVars("blk", lk.block?.back, "135deg", [[0, "var(--sec-tint)"], [52, `color-mix(in srgb,var(--card) ${cardPct}%,transparent)`], [100, "color-mix(in srgb,var(--sec-accent) 8%,transparent)"]]);
+  const blkShape = [lk.block?.radius != null ? `border-radius:${pxOf(lk.block.radius)} !important` : "", lk.block?.border != null ? `border-width:${pxOf(lk.block.border)} !important` : "",
+    lk.block?.borderColor ? `border-color:${lk.block.borderColor} !important` : ""].filter(Boolean).map((x) => `;${x}`).join("");
+  const btnDef = parseGrad(deco.btnGrad);
+  const btnBack = lk.button?.back || btnDef ? `${nineVars("btn", lk.button?.back, btnDef?.angle || "180deg", btnDef?.stops || [[0, "transparent"], [100, "transparent"]])};background-image:${gradOf("btn")} !important` : `background-image:${deco.btnGrad} !important`;
+  const btnShape = (lk.button?.radius != null ? `;border-radius:${pxOf(lk.button.radius)}` : "") + (lk.button?.borderColor ? `;border-color:${lk.button.borderColor} !important` : "");
+  const goBack = lk.go?.back || btnDef ? `${nineVars("go", lk.go?.back, btnDef?.angle || "180deg", btnDef?.stops || [[0, "transparent"], [100, "transparent"]])};background-image:${gradOf("go")} !important;` : "";
+  const goShape = (lk.go?.radius != null ? `border-radius:${pxOf(lk.go.radius)} !important;` : "") + (lk.go?.borderColor ? `border-color:${lk.go.borderColor} !important;` : "");
+  // sections に書いていない項目(生成ボタン・生成結果など)にも、look に書いたブロックの背景・形を使う(:where で弱くして、sections の色が勝つようにする)
+  const blkAllCss = lk.block?.back || blkShape ? `:where(#cca-ui .area > [data-sec], #cca-imged [data-sec], #cca-vedit [data-sec], #cca-setio [data-sec], #cca-mask [data-sec], #cca-comp section, #cca-imged section, #cca-vedit section, #cca-pnginfo section, #cca-setio .sec){--sec-tint:transparent;--sec-accent:var(--accent);--sec-border:var(--border)${lk.block?.back ? `;${blkVars};background:${gradOf("blk")} !important` : ""}${blkShape}}` : "";
+  const ROOTS = `:is(${LOOK_ROOTS})`;
   // 選んでいるボタン(.on)の文字色(スナップ以外)。.on.on は、項目ごとの色指定(.seg button.on)より優先させるため
   const snapOn = [["bg", "background-color"], ["fg", "color"], ["border", "border-color"]]
     .filter(([k]) => th.snapOn?.[k] != null)
@@ -1466,32 +1118,41 @@ function decoCss(th) {
     snapOn ? `${ROOTS} button[data-c="snap"].on{${snapOn}}` : "",
     th.secDoneFg ? `${ROOTS} button.sec-edit.on.on.on.on{color:${th.secDoneFg} !important}` : ""
   ].filter(Boolean).join("\n");
-  const secCss = Object.entries(th.sections || {}).map(([sec, cfg]) => {
-    const sel = `:is(#cca-ui [data-sec="${sec}"], #cca-imged [data-sec="${sec}"], #cca-vedit [data-sec="${sec}"], #cca-setio [data-sec="${sec}"], #cca-mask [data-sec="${sec}"])`;
+  const secRule = (sel, cfg) => {
     const headRule = th.secTitleUseAccent ? `${sel} > .sec-head,${sel} > summary.sec-head{color:var(--sec-accent) !important;border-bottom:1px solid color-mix(in srgb,var(--sec-accent) 28%,transparent) !important;padding-bottom:6px}` : `${sel} > .sec-head,${sel} > summary.sec-head{border-bottom:1px solid color-mix(in srgb,var(--sec-accent) 24%,transparent) !important;padding-bottom:6px}`;
-    return `${sel}{--sec-accent:${cfg.accent};--sec-tint:${cfg.tint};--sec-border:${cfg.border};background:linear-gradient(135deg,var(--sec-tint) 0%,color-mix(in srgb,var(--card) ${cardPct}%,transparent) 52%,color-mix(in srgb,var(--sec-accent) 8%,transparent) 100%) !important;border-color:var(--sec-border) !important;box-shadow:${deco.secCardShadow} !important}`
+    return `${sel}{${cfg ? `--sec-accent:${cfg.accent};--sec-tint:${cfg.tint};--sec-border:${cfg.border};` : ""}${blkVars};background:${gradOf("blk")} !important;border-color:var(--sec-border) !important;box-shadow:${deco.secCardShadow} !important${blkShape}}`
       + headRule
       + `${sel} .sec-grip{color:color-mix(in srgb,var(--sec-accent) 78%,var(--muted)) !important}`
       + `${sel} button.pri,${sel} .seg button.on{background-color:var(--sec-accent) !important;color:var(--accent-fg) !important;border-color:var(--sec-accent) !important}`;
-  }).join("\n");
+  };
+  const secCss = [
+    // sections に書いていない生成パネルの欄(マイナスプロンプト・範囲別指定・生成ボタン・生成結果など)も、強調色から同じ形で色を付ける(:where で弱く。書いた項目の色が勝つ)
+    th.sections ? `:where(#cca-ui .area > [data-sec]){--sec-accent:var(--accent);--sec-tint:color-mix(in srgb,var(--accent) 22%,transparent);--sec-border:color-mix(in srgb,var(--accent) 46%,transparent)}\n`
+      + secRule(":where(#cca-ui .area > [data-sec])", null) : "",
+    ...Object.entries(th.sections || {}).map(([sec, cfg]) => secRule(`:is(#cca-ui [data-sec="${sec}"], #cca-imged [data-sec="${sec}"], #cca-vedit [data-sec="${sec}"], #cca-setio [data-sec="${sec}"], #cca-mask [data-sec="${sec}"])`, cfg)),
+  ].filter(Boolean).join("\n");
   const textCss = [
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout){color:var(--text)}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) :is(summary,.sec-head,h1,h2,h3,h4,b,strong){color:var(--text)}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) :is(.note,.hint,.help,.sub,.muted,.desc,.tip,small,label){color:var(--muted) !important}`,
+    `:is(${LOOK_ROOTS}){color:var(--text)}`,
+    th.link ? `:is(${LOOK_ROOTS}) a[href],:is(${LOOK_ROOTS}) a[href]:visited{color:${th.link} !important}` : "",
+    th._accentFg ? `:is(#cca-imged,#cca-vedit) .bb-rot{color:${th._accentFg} !important}` : "",
+    `:is(${LOOK_ROOTS}) :is(summary,.sec-head,h1,h2,h3,h4,b,strong){color:var(--text)}`,
+    `:is(${LOOK_ROOTS}) :is(.note,.hint,.help,.sub,.muted,.desc,.tip,small,label){color:var(--muted) !important}`,
     `:is(#cca-ui,#cca-vedit,#cca-imged) .note{background:transparent !important;border:none !important;box-shadow:none !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) :is(input,textarea,select){color:var(--text) !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) select option:hover{background:var(--hover, revert) !important;color:var(--text) !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) select option:checked{background:var(--checked, revert) !important;color:var(--text) !important}`,
-    `:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) button.pri,:is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-layout) .seg button.on{background-color:var(--accent) !important;color:var(--accent-fg) !important;border-color:var(--accent) !important}`
+    `:is(${LOOK_ROOTS}) :is(input,textarea,select){color:var(--text) !important}`,
+    `:is(${LOOK_ROOTS}) select option:hover{background:var(--hover, revert) !important;color:var(--text) !important}`,
+    `:is(${LOOK_ROOTS}) select option:checked{background:var(--checked, revert) !important;color:var(--text) !important}`,
+    `:is(${LOOK_ROOTS}) button.pri,:is(${LOOK_ROOTS}) .seg button.on{background-color:var(--accent) !important;color:var(--accent-fg) !important;border-color:var(--accent) !important}`
   ].join("\n");
-  return `${varLines ? `#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-zoom,#cca-layout{${varLines}}\n` : ""}#cca-ui, #cca-vedit > .win, #cca-imged > .win, #cca-comp > .box, #cca-pnginfo > .box{background-image:linear-gradient(170deg, ${g0}, ${g1}) !important}
+  return `${varLines ? `${LOOK_ROOTS},#cca-zoom{${varLines}}\n` : ""}#cca-ui{${nineVars("pnl", lk.panel?.back, "170deg", [[0, g0], [100, g1]])};background-image:${gradOf("pnl")}
+#cca-imged > .box, #cca-vedit > .box, ${LOOK_SEL.modal}{${nineVars("mdl", null, "170deg", [[0, "var(--bg)"], [100, "var(--panel, var(--bg))"]])};background-image:${gradOf("mdl")} !important} !important}
 #cca-ui .card, #cca-vedit .card, #cca-imged .card, #cca-comp .card, #cca-pnginfo .card{background-color:color-mix(in srgb, var(--card) ${cardPct}%, transparent);box-shadow:${deco.cardShadow}}
-${B}{background-image:${deco.btnGrad} !important;box-shadow:${deco.btnShadow}}
+${B}{${btnBack};box-shadow:${deco.btnShadow}${btnShape}}
 ${B}:hover{filter:brightness(1.06)}
 ${B}:active{box-shadow:${deco.btnActiveShadow}}
-#cca-ui #cca-go:not(:disabled){background-color:rgba(${ar},${ag},${ab},${Math.round(clamp(al.go, 0, 1) * (aa / 255) * 1000) / 1000}) !important;border:2px solid ${deco.goBorder} !important;color:${deco.goColor} !important;text-shadow:${deco.goTextShadow};
+#cca-ui #cca-go:not(:disabled){${goBack}${goShape}background-color:rgba(${ar},${ag},${ab},${Math.round(clamp(al.go, 0, 1) * (aa / 255) * 1000) / 1000}) !important;border:2px solid ${deco.goBorder} !important;color:${deco.goColor} !important;text-shadow:${deco.goTextShadow};
   box-shadow:${deco.goShadow} !important}
-${textCss}${secCss ? `\n${secCss}` : ""}${onCss ? `\n${onCss}` : ""}${tuneCss(th) ? `\n${tuneCss(th)}` : ""}${th.extraCss ? `\n${th.extraCss}` : ""}${selBtn ? `\n.cca-select-button{${selBtn}}` : ""}`;
+${varLines ? `\n:is(${LOOK_ROOTS}) :is(input[type=checkbox],input[type=radio],input[type=range]){accent-color:var(--accent)}` : ""}
+${textCss}${blkAllCss ? `\n${blkAllCss}` : ""}${["editor", "modal", "inner", "item", "input"].map((k) => lookRoleCss(k, lk[k])).filter(Boolean).map((x) => `\n${x}`).join("")}${lk.backdrop ? `\n:where(${LOOK_BACKDROP}){background-color:${lk.backdrop} !important}` : ""}${Object.entries(LOOK_SUB).flatMap(([g, m]) => Object.entries(m).map(([k, sel]) => lookPartsCss(sel, lk[g]?.[k], `${g}-${k}`, g === "notice"))).filter(Boolean).map((x) => `\n${x}`).join("")}${lk.overlay ? `\n${lookOverlayCss(lk.overlay)}` : ""}${lk.selection ? `\n:is(${LOOK_ROOTS}) ::selection,:is(${LOOK_ROOTS})::selection{${lk.selection.bg ? `background:${lk.selection.bg} !important;` : ""}${lk.selection.fg ? `color:${lk.selection.fg} !important` : ""}}` : ""}${secCss ? `\n${secCss}` : ""}${onCss ? `\n${onCss}` : ""}${tuneCss(th) ? `\n${tuneCss(th)}` : ""}${th.extraCss ? `\n${th.extraCss}` : ""}${selBtn ? `\n.cca-select-button{${selBtn}}` : ""}`;
 }
 // th.tune → CSS。書いた項目だけ出す(書かない項目・tune 自体が無い配色は何も出さない)
 // 数字欄の上下ボタン: 地の色 + 白い ▲▼ の矢印(SVG)
@@ -1503,7 +1164,7 @@ function spinDecl({ bg, fg }) {
 function tuneCss(th) {
   const t = th.tune;
   if (!t) return "";
-  const R = ":is(#cca-ui,#cca-vedit,#cca-imged,#cca-setio,#cca-mask,#cca-comp,#cca-pnginfo,#cca-hbox)";
+  const R = `:is(${LOOK_ROOTS})`; // 生成パネル・編集画面・すべてのダイアログ
   const sel = (arr) => arr.map((x) => `${R} ${x}`).join(", ");
   const decl = (o) => Object.entries(o).filter(([, v]) => v != null).map(([k, v]) => `${k}:${v} !important`).join(";");
   const op = t.solid ? 1 : null;
@@ -1512,7 +1173,8 @@ function tuneCss(th) {
     [sel([":is(.sec-head,summary,h4)"]), { opacity: op, "font-weight": t.headWeight }],
     [sel(["label.l", "label.l span", "label.fl", "summary span"]), { color: t.labelColor, opacity: op, "font-weight": t.labelWeight }],
     [sel(["div.note", "div.ibox", "div.hint", "div.help", "div.sub", "div.desc", "div.tip", "p"]), { color: t.descColor, opacity: op, "font-weight": t.descWeight }],
-    [sel(["button.ib"]), { color: t.infoFg, "background-color": t.infoBg, "border-color": t.infoBorder }],
+    // ⓘボタン: 編集画面の部品の決まりより強く当てる(.ib を重ねて優先度を上げる)。ボタン共通の明るいグラデーションは重ねない
+    [sel(["button.ib.ib.ib", "button.ib.ib.ib:hover", "button.ib.ib.ib.on"]), { color: t.infoFg, "background-color": t.infoBg, "background-image": t.infoBg ? "none" : null, "border-color": t.infoBorder, "text-shadow": t.infoBg ? "none" : null, "font-weight": t.infoBg ? 700 : null }],
     ...Object.entries(t.groupFix || {}).flatMap(([g, v]) => [
       [sel([`.ly.grp[style*="--g:${g}"]`]), { "--g": v.hue }],
       [sel([`.ly.grp[style*="--g:${g}"] .gtag`]), { color: v.fg }]
@@ -1525,7 +1187,7 @@ function tuneCss(th) {
       [`${S} ::-webkit-scrollbar-thumb:hover, ${S}::-webkit-scrollbar-thumb:hover`, { background: t.scroll.hover || t.scroll.thumb }],
       [`${S} ::-webkit-scrollbar-button, ${S}::-webkit-scrollbar-button`, { display: "none" }]
     ])(`:is(${R.slice(4, -1)},[id^="cca-"],.cca-select-menu)`) : []), // 生成パネルの外にあるダイアログ・プルダウンの一覧も含める
-    ...(t.layerSel ? [[sel([".ly.sel"]), { background: t.layerSel.bg, "border-color": t.layerSel.border, color: "#1a100a" }]] : []),
+    ...(t.layerSel ? [[sel([".ly.sel"]), { background: t.layerSel.bg, "border-color": t.layerSel.border, color: t.layerSel.fg }]] : []),
     ...(t.check ? [[sel(["input[type=checkbox]", "input[type=radio]"]), { "accent-color": t.check, "color-scheme": "light" }]] : []),
     ...(t.spin ? [[sel(["input[type=number]::-webkit-inner-spin-button"]), spinDecl(t.spin)]] : []),
     ...(t.boxGrad ? [[sel([".lcrop", "[class*=\"lcrop\"]"]), { "background-image": `linear-gradient(135deg, ${t.boxGrad.light} 0%, ${t.boxGrad.dark} 100%)`, "border": `1px solid ${t.boxGrad.border}`, "border-radius": "10px", "padding": "8px 10px", "margin": "6px 0", "box-shadow": "0 2px 6px rgba(42,29,20,0.14), inset 0 1px 0 rgba(255,255,255,0.8)" }]] : []),

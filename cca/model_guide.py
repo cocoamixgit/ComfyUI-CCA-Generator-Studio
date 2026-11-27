@@ -318,6 +318,63 @@ GUIDES.update({
         dict(field="vae_name", file="ace_1.5_vae.safetensors", tag="VAE", size=0.34, star=True,
              use="音にする部分", src=HF + "Comfy-Org/ace_step_1.5_ComfyUI_files/tree/main/split_files/vae"),
     ]),
+    "SenseNova-U1.6": dict(license="apache", source=HF + "sensenova/SenseNova-U1.6-8B-MoT", note=(
+        "モデルは追加ノード ComfyUI-SenseNova-U1 が初めて使うときに Hugging Face から自動でダウンロードします。"
+        "手元に置くときは models/sensenova に入れ、「Local | …」を選びます。追加ノード自体のライセンスは Apache-2.0 です。"
+        "Turbo の LoRA は、名前に ComfyUI が付かないもの(SenseNova-U1 Python 用)を models/loras に入れます。"
+        "名前に ComfyUI が付くものと Comfy-Org/SenseNova-U1 のファイルは ComfyUI 本体のノード用で、追加ノードでは使いません。"
+        "ただし「自己修正」は公式ワークフローと同じ方式で動かすため、下の「Core | …」のファイル(Comfy-Org/SenseNova-U1 の checkpoints)を models/checkpoints に入れてください。"
+        "Turbo で使うときは、Comfy-Org/SenseNova-U1 の loras にある sensenova_u1.6_8b_mot_8step_lora_bf16 を Turbo LoRA に選びます。"), rows=[
+        dict(field="unet_name", file="HF | sensenova/SenseNova-U1.6-8B-MoT", tag="自動で入手", size=35.07, star=True,
+             use="標準(50 ステップ・CFG 4)", src=HF + "sensenova/SenseNova-U1.6-8B-MoT",
+             how='ダウンロードは要りません。この名前を選んで生成すると、初めての 1 回だけ自動でダウンロードします(約 35 GB。進み具合は生成ボタンの下に出ます)。'),
+        dict(field="unet_name", file="Local | SenseNova-U1.6-8B-MoT", tag="手で入れる", size=35.07,
+             use="自動のダウンロードが使えないとき(中身は上と同じ)", src=HF + "sensenova/SenseNova-U1.6-8B-MoT/tree/main",
+             how='ファイルが分かれているので、LICENSE・README・.gitattributes 以外を全部ダウンロードします:\n・model-00001-of-00008.safetensors 〜 model-00008-of-00008.safetensors(8 個)\n・model.safetensors.index.json・config.json\n・added_tokens.json・merges.txt・special_tokens_map.json・tokenizer_config.json・vocab.json\n全部を models/sensenova/SenseNova-U1.6-8B-MoT フォルダに入れ、🔄 を押して「Local | SenseNova-U1.6-8B-MoT」を選びます。'),
+        dict(field="unet_name", file="HF | sensenova/SenseNova-U1.6-8B-MoT-GGUF/SenseNova-U1.6-8B-MoT-Q8_0.gguf", tag="軽い版 GGUF Q8_0", size=20.7,
+             use="軽い版(3 つの中では元に近い)。LoRA・Turbo とは一緒に使えません(追加ノードの制限)", src=HF + "sensenova/SenseNova-U1.6-8B-MoT-GGUF/tree/main",
+             how='選んで生成すると、この 1 ファイルと設定の小さいファイルだけを models/sensenova/SenseNova-U1.6-8B-MoT-GGUF に自動でダウンロードします。パッケージ gguf と diffusers が必要です(無ければ、生成したときに入れるコマンドを出します)。\n手で入れるときは、この .gguf と同じ名前の .conversion.json、config.json・manifest.json・added_tokens.json・merges.txt・special_tokens_map.json・tokenizer_config.json・vocab.json を一緒にそのフォルダに入れます。'),
+        dict(field="unet_name", file="HF | sensenova/SenseNova-U1.6-8B-MoT-GGUF/SenseNova-U1.6-8B-MoT-Q6_K.gguf", tag="軽い版 GGUF Q6_K", size=16.62,
+             use="軽い版。LoRA・Turbo とは一緒に使えません(追加ノードの制限)", src=HF + "sensenova/SenseNova-U1.6-8B-MoT-GGUF/tree/main",
+             how='選んで生成すると、この 1 ファイルと設定の小さいファイルだけを models/sensenova/SenseNova-U1.6-8B-MoT-GGUF に自動でダウンロードします。パッケージ gguf と diffusers が必要です(無ければ、生成したときに入れるコマンドを出します)。\n手で入れるときは、この .gguf と同じ名前の .conversion.json、config.json・manifest.json・added_tokens.json・merges.txt・special_tokens_map.json・tokenizer_config.json・vocab.json を一緒にそのフォルダに入れます。'),
+        dict(field="unet_name", file="HF | sensenova/SenseNova-U1.6-8B-MoT-GGUF/SenseNova-U1.6-8B-MoT-Q4_0.gguf", tag="軽い版 GGUF Q4_0", size=12.28,
+             use="いちばん軽い版(3 つの中では粗くなりやすい)。LoRA・Turbo とは一緒に使えません(追加ノードの制限)", src=HF + "sensenova/SenseNova-U1.6-8B-MoT-GGUF/tree/main",
+             how='選んで生成すると、この 1 ファイルと設定の小さいファイルだけを models/sensenova/SenseNova-U1.6-8B-MoT-GGUF に自動でダウンロードします。パッケージ gguf と diffusers が必要です(無ければ、生成したときに入れるコマンドを出します)。\n手で入れるときは、この .gguf と同じ名前の .conversion.json、config.json・manifest.json・added_tokens.json・merges.txt・special_tokens_map.json・tokenizer_config.json・vocab.json を一緒にそのフォルダに入れます。'),
+        dict(field="unet_name", file="Core | sensenova_u1.6_8b_mot_int8_convrot.safetensors", tag="自己修正用 int8", size=17.6, star=True,
+             use="自己修正を使うとき(公式ワークフローと同じ方式)。Turbo でも使えます(Comfy-Org 版の 8 ステップ LoRA と組み合わせます)", src=HF + "Comfy-Org/SenseNova-U1/tree/main/checkpoints",
+             how="入手先から 1 ファイルだけダウンロードして models/checkpoints に入れ、🔄 を押して「Core | sensenova_u1.6_8b_mot_int8_convrot.safetensors」を選びます。"),
+        dict(field="unet_name", file="Core | sensenova_u1.6_8b_mot_bf16.safetensors", tag="自己修正用 bf16", size=35.1,
+             use="自己修正を使うとき。int8 より大きい版。Turbo でも使えます(Comfy-Org 版の 8 ステップ LoRA と組み合わせます)", src=HF + "Comfy-Org/SenseNova-U1/tree/main/checkpoints",
+             how="入手先から 1 ファイルだけダウンロードして models/checkpoints に入れ、🔄 を押して「Core | sensenova_u1.6_8b_mot_bf16.safetensors」を選びます。"),
+        dict(field="turbo_lora_name", types=["SenseNova-U1.6 Turbo"], file="sensenova_u1.6_8b_mot_8step_lora_bf16.safetensors",
+             tag="Core 用 8 ステップ", star=True, use="「Core | …」のモデルと組み合わせる Turbo(8 ステップ・CFG 1・強度 1.0)。自己修正も使えます",
+             src=HF + "Comfy-Org/SenseNova-U1/tree/main/loras",
+             how="入手先から 1 ファイルだけダウンロードして models/loras に入れ、🔄 を押して選びます。"),
+        dict(field="clip_name", file="qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors", tag="PE テキスト→画像", size=8.82, star=True,
+             use="PE(短い指示を細かい描写に書き直す)をテキスト→画像で使うとき", src=HF + "Comfy-Org/Qwen-Image-2.1/tree/main/text_encoders",
+             how="入手先から 1 ファイルだけダウンロードして models/text_encoders に入れ、🔄 を押して選びます。"),
+        dict(field="clip_name", file="qwen3.5_9b_qwen_image_2.1_pe_i2i.int8_convrot.safetensors", tag="PE 画像→画像", size=8.82,
+             use="PE を画像→画像で使うとき(入力画像も見て編集用のプロンプトにする)", src=HF + "Comfy-Org/Qwen-Image-2.1/tree/main/text_encoders",
+             how="入手先から 1 ファイルだけダウンロードして models/text_encoders に入れ、🔄 を押して選びます。"),
+        dict(field="turbo_lora_name", types=["SenseNova-U1.6 Turbo"], file="SenseNova-U1.6-8B-MoT-LoRA-8step-v1.0.safetensors",
+             tag="8 ステップ", size=0.81, use="Turbo の標準(8 ステップ・CFG 1・強度 1.0)", src=HF + "sensenova/SenseNova-U1.6-8B-MoT-LoRAs/tree/main"),
+        dict(field="turbo_lora_name", types=["SenseNova-U1.6 Turbo"], file="SenseNova-U1.6-8B-MoT-LoRA-4step-v1.0.safetensors",
+             tag="4 ステップ", size=0.81, use="もっと速く(ステップ数を 4 にする)", src=HF + "sensenova/SenseNova-U1.6-8B-MoT-LoRAs/tree/main"),
+    ]),
+    "TRELLIS.2": dict(license="mit", source=HF + "Comfy-Org/TRELLIS.2", note=(
+        "TRELLIS.2(microsoft/TRELLIS.2)は MIT です。画像エンコーダーの DINOv3 は Meta の DINOv3 License で、"
+        "使う前に条件を確認してください。"), rows=[
+        dict(field="unet_name", file="trellis_2_int8_convrot.safetensors", tag="int8", size=4.89, star=True,
+             use="3D にする本体(テンプレートと同じ)", src=HF + "Comfy-Org/TRELLIS.2/tree/main/diffusion_models"),
+        dict(field="vae_name", file="trellis_2_shape_vae_bf16.safetensors", tag="形の VAE", size=1.02, star=True,
+             use="形を作る部分", src=HF + "Comfy-Org/Pixal3D/tree/main/vae"),
+        dict(field="audio_vae_name", file="trellis_2_texture_vae_bf16.safetensors", tag="色の VAE", size=0.9, star=True,
+             use="色を作る部分", src=HF + "Comfy-Org/Pixal3D/tree/main/vae"),
+        dict(field="clip_name", file="dino_v3_L_naf_fp32.safetensors", tag="DINOv3", size=1.13, star=True, license="unknown",
+             use="画像を読む部分(models/clip_vision)", src=HF + "Comfy-Org/Pixal3D/tree/main/clip_vision"),
+        dict(field="clip_name_2", file="birefnet.safetensors", tag="BiRefNet", size=0.42, star=True, license="unknown",
+             use="背景を外す部分(models/background_removal)", src=HF + "Comfy-Org/BiRefNet/tree/main/background_removal"),
+    ]),
 })
 
 # 種別 → (案内のキー, ライセンス)。Turbo は元の種別と同じモデルに LoRA を足すだけ
@@ -353,4 +410,6 @@ def missing_help(model_type, info, field, tr=lambda x: x):
         size = f" / {r['size']} GB" if r.get("size") else ""
         out.append(f"  {'★ ' if r.get('star') else ''}{r['file']} ({tr(r['tag'])}{size}) {tr(r['use'])}")
         out.append(f"    {r.get('src') or g.get('source', '')}")
+        if r.get("how"):
+            out.extend("    " + x for x in tr(r["how"]).split("\n"))
     return "\n".join(out)

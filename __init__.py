@@ -1,13 +1,13 @@
-from . import compat, model_dirs
-from .audiogen import NODES as AUDIO_NODES
-from .extra_models import EXTRA_NODES
-from .imgedit import NODES as IMGEDIT_NODES
-from .pnginfo import NODES as PNGINFO_NODES
-from .videoedit import NODES as VIDEOEDIT_NODES
-from .rvcnode import NODES as RVC_NODES
-from .panel import PARTS, CCAEditLatent, CCAGeneratorPanel, CCAGeneratorRoutes, CCAHiresFix, CCAMidFrameGuide, CCASizeSelect
-from .regional import CCAGenAdv
-from .server import register_prompt_hook, register_routes
+from .cca import compat, model_dirs
+from .cca.audiogen import NODES as AUDIO_NODES
+from .cca.extra_models import EXTRA_NODES
+from .cca.imgedit import NODES as IMGEDIT_NODES
+from .cca.pnginfo import NODES as PNGINFO_NODES
+from .cca.videoedit import NODES as VIDEOEDIT_NODES
+from .cca.rvcnode import NODES as RVC_NODES
+from .cca.panel import PARTS, CCAEditLatent, CCAGeneratorPanel, CCAGeneratorRoutes, CCAHiresFix, CCAMidFrameGuide, CCASizeSelect
+from .cca.regional import CCAGenAdv
+from .cca.server import register_prompt_hook, register_routes
 
 NODE_CLASS_MAPPINGS = {
     "CCAGeneratorPanel": CCAGeneratorPanel,

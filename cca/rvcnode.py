@@ -66,8 +66,8 @@ def _device():
 
 
 def _assets(device):
-    from .rvc.infer import ensure_assets, load_hubert
-    from .rvc.rmvpe import RMVPE
+    from ..rvc.infer import ensure_assets, load_hubert
+    from ..rvc.rmvpe import RMVPE
     key = ("assets", str(device))
     if key not in _cache:
         hub, rm = ensure_assets(_root())
@@ -76,7 +76,7 @@ def _assets(device):
 
 
 def _voice(path, device):
-    from .rvc.infer import load_voice
+    from ..rvc.infer import load_voice
     key = ("voice", path, os.path.getmtime(path), str(device))
     if key not in _cache:
         for k in [k for k in _cache if k[0] == "voice"]:
@@ -98,7 +98,7 @@ def convert_audio(audio, model, index="", pitch=0, index_rate=0.75, protect=0.33
     """ComfyUI の AUDIO({"waveform": [B, C, T], "sample_rate"})→ 変換した AUDIO(モデルの速さ・モノラル)"""
     import torch
     import torchaudio
-    from .rvc.infer import Converter, load_index
+    from ..rvc.infer import Converter, load_index
     path = folder_paths.get_full_path(KIND, model) if model and model != NONE else None
     if not path or not os.path.isfile(path):
         raise ValueError(f"RVC の声のモデルが見つかりません: {model}(models/rvc に .pth を入れてください)")

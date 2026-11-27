@@ -376,7 +376,7 @@ def target_for(value, fallback_name="image", prefix=None, name=None, ext="png"):
     ext = ext if ext in SAVE_EXTS else "png"
     os.makedirs(folder, exist_ok=True)
     custom = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", "_", os.path.basename(str(name_ or "")).strip())
-    custom = re.sub(r"\.(png|jpe?g|webp)$", "", custom, flags=re.I).strip(" .")[:120]
+    custom = re.sub(r"\.(png|jpe?g|webp|pdf)$", "", custom, flags=re.I).strip(" .")[:120]
     if custom:
         # 名前を決めたとき: その名前(あれば _1、_2 …)
         fname, n = f"{custom}.{ext}", 1
@@ -394,7 +394,7 @@ def target_for(value, fallback_name="image", prefix=None, name=None, ext="png"):
     return folder, fname, typ, sub
 
 
-SAVE_EXTS = ("png", "jpg", "webp")
+SAVE_EXTS = ("png", "jpg", "webp", "pdf")
 
 
 def image_kind(data):
@@ -407,6 +407,8 @@ def image_kind(data):
         return "jpg"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "webp"
+    if data[:5] == b"%PDF-":
+        return "pdf"  # 画像編集の書き出し(画像を 1 ページに入れた PDF)
     return None
 
 
@@ -423,8 +425,9 @@ def save_edit(data, value, prefix=None, name=None, ext=None):
     rel = f"{sub}/{fname}" if sub else fname
     value_out = f"{rel} [{typ}]"
     try:
-        from .uploads import remember
-        remember(value_out)  # 入力画像のプルダウンの選択肢に出るように
+        if kind != "pdf":
+            from .uploads import remember
+            remember(value_out)  # 入力画像のプルダウンの選択肢に出るように(PDF は画像ではないので入れない)
     except Exception:  # noqa: BLE001
         pass
     return {"filename": fname, "subfolder": sub, "type": typ, "path": path, "value": value_out}

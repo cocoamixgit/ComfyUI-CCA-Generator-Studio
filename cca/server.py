@@ -1,15 +1,17 @@
 """フロントエンド(web/*.js)向けの API。"""
 import asyncio
 import json
+import mimetypes
 import os
+import re
 
 import folder_paths
 
 from .i18n import tr
-from . import addons, audiogen, history, i18n, imgedit, media_dirs, model_dirs, model_guide, store, tile, uploads, videoedit, wildcards
+from . import addons, audiogen, civitai, history, i18n, imgedit, lorameta, media_dirs, model_dirs, model_guide, store, tile, uploads, videoedit, wildcards
 from .downloads import links_for
 from .regional import PRESET_KEYS, adv_presets
-from .panel import NODE_INSTALL_HELP, choice_lists, edit_format_info, node_installed, parse_loras
+from .panel import NODE_INSTALL_HELP, choice_lists, edit_format_info, missing_node_text, node_installed, parse_loras
 from .specs import (
     ALL_WIDGETS, COMMON_TASK_DEFAULTS, COMMON_TYPE_DEFAULTS, IMAGE_WIDGETS, LABELS, MODEL_TYPES, NONE,
     SIZE_MODES, VISIBLE_TYPES,
@@ -17,6 +19,9 @@ from .specs import (
     TASK_DEFAULTS, TASK_LABELS, TASKS_ALL, TYPE_DEFAULTS, TYPE_INFO, Hint, builtin_presets,
     image_names, image_roles, keys_for, layout_kind, standard_files, uses_mask, visible_widgets,
 )
+
+# PDF の読み込み(web/lib/pdfjs の .mjs)を、ブラウザが JavaScript として読めるようにする(古い Python では .mjs の種類が決まっていない)
+mimetypes.add_type("text/javascript", ".mjs")
 
 FILE_KEYS = {
     "unet_name": "unets", "wan_high_unet": "unets", "wan_low_unet": "unets",
@@ -30,7 +35,7 @@ LIST_KEYS = {**FILE_KEYS, "hires_upscaler": "upscalers"}
 # 選択肢の一覧名 → ComfyUI のフォルダ種別
 LIST_KIND = {"unets": "diffusion_models", "ckpts": "checkpoints", "clips": "text_encoders",
              "vaes": "vae", "loras": "loras", "edit_loras": "loras", "upscalers": "upscale_models",
-             "latent_upscalers": "latent_upscale_models"}
+             "latent_upscalers": "latent_upscale_models", "clip_visions": "clip_vision", "bg_models": "background_removal"}
 SIZE_PRESETS = [
     [512, 512], [512, 768], [768, 512], [1024, 1024], [896, 1152], [1152, 896],
     [832, 1216], [1216, 832], [768, 1344], [1344, 768], [704, 1280], [1280, 704],
@@ -90,8 +95,15 @@ def _resolved_defaults(name, task, c):
     if vals.get("clip_type") not in c["clip_types"]:
         vals["clip_type"] = ("stable_diffusion" if "stable_diffusion" in c["clip_types"]
                              else c["clip_types"][0])
+    lists = TYPE_INFO[name].get("lists") or {}
     for k, folder in FILE_KEYS.items():
-        vals[k] = resolve_file(vals.get(k), c[folder][1:])
+        lst = lists.get(k)
+        if lst == "sn_models":  # 追加ノードの選択肢の名前(ファイル名ではない)
+            vals[k] = vals.get(k) or c[lst][0]
+        elif lst:
+            vals[k] = resolve_file(vals.get(k), [f for f in c[lst] if f != NONE])
+        else:
+            vals[k] = resolve_file(vals.get(k), c[folder][1:])
     loras = []
     for l in vals.get("loras") or []:
         l = dict(l)
@@ -100,6 +112,30 @@ def _resolved_defaults(name, task, c):
     vals["loras"] = json.dumps(parse_loras(loras), ensure_ascii=False)
     vals.setdefault("auto_image_size", False)
     return vals
+
+
+def _missing(need):
+    """追加ノードが無いときの案内(調べられなくても、パネルは開けるように)"""
+    try:
+        return missing_node_text(need) if need and not node_installed(need) else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _downloaded(c, info):
+    try:
+        from . import hf_fetch
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for l_ in (info.get("lists") or {}).values():
+        for v in c.get(l_) or []:
+            if str(v).startswith(hf_fetch.HF_PREFIX) and v not in out:
+                try:
+                    out[v] = bool(hf_fetch.downloaded(v))
+                except Exception:  # noqa: BLE001
+                    out[v] = False
+    return out
 
 
 def build_spec():
@@ -135,10 +171,15 @@ def build_spec():
             # 第11版: モデルの選び方の案内のキーと、この種別の(公式の)モデルのライセンス
             "guide": model_guide.guide_key(info) or "", "license": model_guide.type_license(name, info),
             # 追加ノードが必要で、まだ入っていないときの案内(Kandinsky 6)
-            "missing_node": (NODE_INSTALL_HELP.get(need, need) if need and not node_installed(need) else ""),
+            "missing_node": _missing(need),
             # 第42版: 声・音楽の作り方・欄の名前と入力例・結果の種類・入れ方の案内があるか
             "gen": info.get("gen") or "", "labels": info.get("labels") or {}, "output": info.get("output") or "",
             "addon": bool(need and need in addons.ADDONS),
+            # その種別だけ別の選択肢にする欄 {欄: 選択肢} と、その一覧の名前(ファイルの種類の案内に使う)
+            "lists": {k: list(c.get(l_) or []) for k, l_ in (info.get("lists") or {}).items()},
+            # 自動でダウンロードする選択肢(HF | …)が、もう入っているか {値: True / False}
+            "downloaded": _downloaded(c, info),
+            "list_names": dict(info.get("lists") or {}),
         }
     return {
         "version": 9, "size_modes": SIZE_MODES, "guides": guides(),
@@ -165,13 +206,32 @@ def guides():
     """モデル種別ごとの使い方(パネルの「? 使い方」で表示する Markdown)。tools/notes.py が元"""
     try:
         import importlib.util
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "notes.py")
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "notes.py")
         spec = importlib.util.spec_from_file_location("cca_notes_runtime", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return {"usage": mod.USAGE, "types": {t: md for t, md in mod.GUIDES}}
     except Exception as e:  # noqa: BLE001
         return {"usage": f"使い方を読み込めませんでした: {e}", "types": {}}
+
+
+_LORA_PREVIEW_EXT = (".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp", ".png", ".jpg", ".jpeg", ".webp")
+
+
+def _lora_names():
+    return list(folder_paths.get_filename_list("loras") or [])
+
+
+def _lora_preview_path(name):
+    """LoRA の隣にあるプレビュー画像(Forge と同じ置き方。無ければ None)。LoRA の一覧にある名前しか受け付けない"""
+    full = folder_paths.get_full_path("loras", name)
+    if not full:
+        return None
+    stem = os.path.splitext(full)[0]
+    for ext in _LORA_PREVIEW_EXT:
+        if os.path.isfile(stem + ext):
+            return stem + ext
+    return None
 
 
 def register_routes():
@@ -191,9 +251,45 @@ def register_routes():
     @routes.get("/cca_generator/spec")
     async def cca_generator_spec(request):
         try:
-            return web.json_response(build_spec())
+            from .version import VERSION, VERSION_SHORT
+            return web.json_response({**build_spec(), "version": VERSION, "version_short": VERSION_SHORT})
         except Exception as e:  # noqa: BLE001
             return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+    @routes.get("/cca_generator/themes")
+    async def cca_generator_themes(request):
+        """web/themes/ のテーマのファイル(1 ファイル 1 テーマ)。名前が _ で始まるもの(テンプレートなど)は除く"""
+        d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "themes")
+        try:
+            files = sorted(f for f in os.listdir(d) if f.endswith(".js") and not f.startswith("_"))
+        except OSError:
+            files = []
+        return web.json_response({"files": files})
+
+    @routes.post("/cca_generator/themes/import")
+    async def cca_generator_themes_import(request):
+        """取り込んだテーマを web/themes/<id>.js に保存する。中身は値だけ(JSON)にする(関数などの処理は保存しない)"""
+        try:
+            data = await request.json()
+            tid = str(data.get("id") or "")
+            theme = data.get("theme")
+            if not re.fullmatch(r"[a-z0-9_-]{1,64}", tid) or tid.startswith("_"):
+                return web.json_response({"error": "id は英小文字・数字・_・- で書いてください(_ で始まる名前は使えません)"}, status=400)
+            if not isinstance(theme, dict) or str(theme.get("id")) != tid:
+                return web.json_response({"error": "テーマの形が正しくありません"}, status=400)
+            d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "themes")
+            path = os.path.join(d, f"{tid}.js")
+            if os.path.exists(path) and not data.get("overwrite"):
+                return web.json_response({"error": "exists", "exists": True}, status=409)
+            text = ("// CCA Generator の配色(テーマ)。設定の「テーマのファイルを取り込む」で取り込んだもの(値だけ)。\n"
+                    "// 項目の説明は、設定の「AI に渡すテンプレートをダウンロード」で取れるテンプレートにあります。\n"
+                    "export default " + json.dumps(theme, ensure_ascii=False, indent=2) + ";\n")
+            os.makedirs(d, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return web.json_response({"ok": True, "file": f"{tid}.js"})
+        except Exception as e:  # noqa: BLE001
+            return web.json_response({"error": str(e)}, status=500)
 
     @routes.get("/cca_generator/i18n")
     async def cca_generator_i18n(request):
@@ -317,6 +413,29 @@ def register_routes():
             return web.json_response({"ok": True, "data": settings_io.export_all()})
         except Exception as e:  # noqa: BLE001
             return _bad(e)
+
+    # 外部 API の認証キー(状態の確認・作る・自分で決める・外す)。キーそのものは保存せず、作った直後の返事でだけ見せる
+    @routes.get("/cca_generator/settings/api_key")
+    async def cca_generator_api_key_status(request):
+        return web.json_response({"ok": True, **store.api_key_status()})
+
+    @routes.post("/cca_generator/settings/api_key")
+    async def cca_generator_api_key_set(request):
+        try:
+            body = await request.json()
+            act = body.get("action")
+            if act == "generate":
+                key = store.set_api_key()
+            elif act == "set":
+                key = store.set_api_key(str(body.get("key") or ""))
+            elif act == "clear":
+                store.clear_api_key()
+                key = None
+            else:
+                raise ValueError("action")
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+        return web.json_response({"ok": True, "key": key, **store.api_key_status()})
 
     @routes.post("/cca_generator/settings/import")
     async def cca_generator_settings_import(request):
@@ -521,6 +640,98 @@ def register_routes():
         except Exception as e:  # noqa: BLE001
             return _bad(e)
         return web.json_response({"ok": True})
+
+    async def _in_thread(fn, *args):
+        return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args))
+
+    @routes.get("/cca_generator/loras")
+    async def cca_generator_loras(request):
+        # LoRA エクスプローラ(ローカル): LoRA の一覧と、プレビュー画像の有無
+        try:
+            return web.json_response({"ok": True, "items": [{"name": n, "preview": _lora_preview_path(n) is not None} for n in _lora_names()]})
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+
+    @routes.get("/cca_generator/lora_preview")
+    async def cca_generator_lora_preview(request):
+        name = request.query.get("name", "")
+        if name not in set(_lora_names()):  # 一覧にある名前だけ(任意のパスは読ませない)
+            return web.Response(status=404)
+        path = _lora_preview_path(name)
+        if not path:
+            return web.Response(status=404)
+        return web.FileResponse(path, headers={"Content-Type": mimetypes.guess_type(path)[0] or "image/png", "Cache-Control": "max-age=300"})
+
+    @routes.get("/cca_generator/lora_info")
+    async def cca_generator_lora_info(request):
+        # ⓘ: LoRA の詳細(ファイルの大きさ・学習時の情報・トリガーワード)
+        name = request.query.get("name", "")
+        full = folder_paths.get_full_path("loras", name) if name in set(_lora_names()) else None
+        if not full:
+            return web.json_response({"ok": False, "error": "LoRA が見つかりません"}, status=404)
+        try:
+            return web.json_response({"ok": True, "name": name, "path": full, **await _in_thread(lorameta.info, full)})
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+
+    @routes.post("/cca_generator/lora_delete")
+    async def cca_generator_lora_delete(request):
+        # LoRA のファイルを削除する(一覧にある名前だけ)。隣の情報ファイル(.json)とプレビュー画像も一緒に消す
+        try:
+            name = str((await request.json()).get("name") or "")
+            full = folder_paths.get_full_path("loras", name) if name in set(_lora_names()) else None
+            if not full:
+                return web.json_response({"ok": False, "error": "LoRA が見つかりません"}, status=404)
+            targets = [full, os.path.splitext(full)[0] + ".json", _lora_preview_path(name)]
+            for t in targets:
+                if t and os.path.isfile(t):
+                    os.remove(t)
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+        return web.json_response({"ok": True})
+
+    @routes.get("/cca_generator/civitai/status")
+    async def cca_generator_civitai_status(request):
+        return web.json_response({"ok": True, **civitai.status()})
+
+    @routes.post("/cca_generator/civitai/login")
+    async def cca_generator_civitai_login(request):
+        try:
+            body = await request.json()
+            await _in_thread(civitai.login, body.get("key"))
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+        return web.json_response({"ok": True, **civitai.status()})
+
+    @routes.post("/cca_generator/civitai/logout")
+    async def cca_generator_civitai_logout(request):
+        civitai.logout()
+        return web.json_response({"ok": True, **civitai.status()})
+
+    @routes.get("/cca_generator/civitai/search")
+    async def cca_generator_civitai_search(request):
+        try:
+            q = request.query
+            data = await _in_thread(civitai.search, q.get("q", "").strip()[:200], q.get("sort", ""), q.get("nsfw") == "1", q.get("cursor", "")[:500], [b[:60] for b in q.get("bases", "").split("|") if b][:6])
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+        return web.json_response({"ok": True, **data})
+
+    @routes.post("/cca_generator/civitai/download")
+    async def cca_generator_civitai_download(request):
+        try:
+            body = await request.json()
+            job = civitai.start_download(body.get("versionId"), body.get("image"), body.get("words"), body.get("base"), body.get("title"))
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
+        return web.json_response({"ok": True, "job": job})
+
+    @routes.get("/cca_generator/civitai/progress")
+    async def cca_generator_civitai_progress(request):
+        try:
+            return web.json_response({"ok": True, **civitai.progress(request.query.get("job", ""))})
+        except Exception as e:  # noqa: BLE001
+            return _bad(e)
 
     @routes.get("/cca_generator/choices")
     async def cca_generator_choices(request):
@@ -774,6 +985,11 @@ def register_routes():
             return _bad(e)
         return web.json_response({"ok": True, "deleted": existed})
 
+    try:  # 外部から生成を頼む API(api.py)
+        from . import api
+        api.register(routes, web)
+    except Exception as e:  # noqa: BLE001
+        print(f"[CCA Generator] API を登録できませんでした: {e}")
     return True
 
 

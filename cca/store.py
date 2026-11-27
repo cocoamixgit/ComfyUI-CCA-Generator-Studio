@@ -5,8 +5,11 @@
   prompt_presets.json  プロンプトプリセット(Positive / Negative のセット)
   prompt_presets_hidden.json  一覧から消したおすすめプリセット(★)の記録 {"hidden": ["<基礎モデル>|<タスク>|<名前>", ...]}
 """
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import threading
 
 import folder_paths
@@ -263,3 +266,60 @@ def hide_text_style(name, hide=True):
         data["hidden"] = hidden
         _write(STYLE_FILE, data)
     return hidden
+
+
+# ---- 外部 API の認証キー(平文では保存せず、ハッシュだけを api_auth.json に置く)
+API_AUTH_FILE = "api_auth.json"
+API_KEY_ENV = "CCA_API_KEY"  # 環境変数があれば、そちらを優先する
+
+
+def _key_hash(key):
+    return hashlib.sha256(str(key).encode("utf-8")).hexdigest()
+
+
+def api_key_status():
+    """{"state": "closed"(すべて断る・初期状態) / "key"(キーのある依頼だけ) / "open"(誰でも), "enabled": キーが設定されているか, "env": 環境変数の設定か}"""
+    env = bool(os.environ.get(API_KEY_ENV, "").strip())
+    with _lock:
+        saved = _read(API_AUTH_FILE, {})
+    key = env or bool(saved.get("hash"))
+    return {"state": "key" if key else "open" if saved.get("open") else "closed", "enabled": key, "env": env}
+
+
+def api_key_check(candidate):
+    """送られてきたキーが合っているか。True = 通す / False = キーが違う / None = キーなしで誰でも通す設定 / "closed" = すべて断る設定"""
+    env = os.environ.get(API_KEY_ENV, "").strip()
+    with _lock:
+        saved = _read(API_AUTH_FILE, {})
+    if not env and not saved.get("hash"):
+        return None if saved.get("open") else "closed"
+    candidate = str(candidate or "")
+    ok = False
+    if env:
+        ok = hmac.compare_digest(_key_hash(candidate), _key_hash(env))
+    if saved.get("hash") and not ok:
+        ok = hmac.compare_digest(_key_hash(candidate), saved["hash"])
+    return ok
+
+
+def set_api_key(key=None):
+    """キーを設定する。key を省くと、ランダムなキーを作る。空欄("")で設定すると、キーなしで誰でも使える設定にする(None を返す)。
+    設定したキーを返す(保存するのはハッシュだけ)"""
+    if key is not None and not str(key).strip():
+        with _lock:
+            _write(API_AUTH_FILE, {"open": True})
+        return None
+    if key is None:
+        key = "cca-" + secrets.token_urlsafe(32)
+    key = str(key).strip()
+    if len(key) < 8:
+        raise ValueError(tr("キーは 8 文字以上にしてください"))
+    with _lock:
+        _write(API_AUTH_FILE, {"hash": _key_hash(key)})
+    return key
+
+
+def clear_api_key():
+    """キーを外す = すべての依頼を断る初期状態に戻す"""
+    with _lock:
+        _write(API_AUTH_FILE, {})

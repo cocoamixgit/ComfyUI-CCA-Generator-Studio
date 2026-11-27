@@ -51,6 +51,7 @@ function css() {
 #cca-mg .star{color:#ffd54f}
 #cca-mg .have{color:#7fe0a8;font-weight:700}
 #cca-mg .miss{color:#aab3bf}
+#cca-mg .how{margin-top:4px;padding:5px 7px;border-left:3px solid #4a5568;color:#c3cad5;font-size:11.5px;white-space:pre-line;word-break:break-all}
 #cca-mg .other{display:block;color:#aab3bf;font-size:12px}
 #cca-mg .ft{padding:8px 16px;border-top:1px solid #303744;color:#aab3bf;font-size:12.5px}
 #cca-mg a{color:#7cc4ff}
@@ -125,8 +126,10 @@ function renderFiles() {
       const i = g.rows.indexOf(r);
       const lic = r.license || (r.types && r.types.every((t) => spec.types_info[t]) ? spec.types_info[r.types[0]].license : ti.license) || g.license;
       const placeholder = r.file.startsWith("(");
-      const have = placeholder ? null : findInstalled(spec.choices?.[LIST_OF[r.field]], r.file);
-      const cur = have && values[r.field] && base(values[r.field]) === base(have) && (!r.types || r.types.includes(type));
+      const have = placeholder ? null : findInstalled(ti.lists?.[r.field] || spec.choices?.[LIST_OF[r.field]], r.file); // 種別だけの選択肢(SenseNova のモデル)
+      const dl = ti.downloaded?.[r.file]; // 自動でダウンロードする選択肢(HF | …): true 済み / false まだ
+      const cur = dl !== undefined ? values[r.field] === r.file && (!r.types || r.types.includes(type))
+        : have && values[r.field] && base(values[r.field]) === base(have) && (!r.types || r.types.includes(type));
       const otherType = r.types && !r.types.includes(type) ? r.types[0] : null;
       const star = r.star && (!r.types || r.types.includes(type));
       let act = "";
@@ -136,8 +139,9 @@ function renderFiles() {
       else if (!have) act = `<a href="${esc(r.src || g.source)}" target="_blank" rel="noopener noreferrer">入手先</a>`;
       html += `<tr class="${cur ? "cur" : ""}${r.ok === false ? " ng" : ""}"><td><span class="tag">${star ? '<span class="star">★</span> ' : ""}${esc(r.tag)}</span>`
         + `${otherType ? `<span class="other">種別「${esc(r.types.join(" / "))}」用</span>` : ""}</td>`
-        + `<td class="fn">${esc(r.file)}</td><td>${esc(r.use)}</td><td>${r.size ? `${r.size.toFixed(1)} GB` : ""}</td>`
-        + `<td>${licBadge(spec, lic)}</td><td>${placeholder ? "" : cur ? '<span class="have">使用中</span>' : have ? '<span class="have">✓ 入っている</span>' : '<span class="miss">入っていない</span>'}</td><td>${act}</td></tr>`;
+        + `<td class="fn">${esc(r.file)}</td><td>${esc(r.use)}${r.how ? `<div class="how">${esc(r.how)}</div>` : ""}</td><td>${r.size ? `${r.size.toFixed(1)} GB` : ""}</td>`
+        + `<td>${licBadge(spec, lic)}</td><td>${dl !== undefined ? (dl ? '<span class="have">✓ ダウンロード済み</span>' : '<span class="miss">未ダウンロード(生成すると自動で入る)</span>') + (cur ? '<br><span class="have">使用中</span>' : "")
+          : placeholder ? "" : cur ? '<span class="have">使用中</span>' : have ? '<span class="have">✓ 入っている</span>' : '<span class="miss">入っていない</span>'}</td><td>${act}</td></tr>`;
     }
     html += "</table>";
   }

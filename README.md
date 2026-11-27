@@ -46,6 +46,17 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 - If you installed using the Quick Installer, updating is as simple as overwriting all existing files.
 Note: The file structure was reorganized between versions 1.2 and 1.3. Overwriting the existing files is fine, but for a cleaner installation, it is recommended to delete the existing files first and then install all files again.
 
+### Version 1.6 – Changes & Fixes
+* Added API connectivity.
+* Added a Low VRAM mode for SenseNova-U1.6 when available VRAM is insufficient.
+* Added support for SenseNova-U1.6 Turbo.
+* Added a self-repair feature for SenseNova-U1.6.
+* Added additional configuration options for TRELLIS.2 3D generation.
+* Reworked the LoRA Explorer.
+* Fixed an issue where images overlapped in the Gallery.
+* Fixed an issue that prevented image-to-image (I2I) generation from working with SenseNova-U1.6.
+
+
 ### Version 1.5 – Changes & Fixes  -2026/11/26
 * Added a Forge-style layout as Default Settings 2.
 * Added support for SenseNova-U1.6.

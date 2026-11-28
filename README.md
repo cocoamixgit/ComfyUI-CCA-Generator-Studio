@@ -14,8 +14,9 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 ## Contents
 
 - [Easy Installation](#easy-installation)
-- [Normal Installation](#normal-installation)
   - [Prerequisites](#prerequisites)
+- [Normal Installation](#normal-installation)
+  - [Prerequisites](#prerequisites-1)
   - [Installing Git](#installing-git)
   - [Step 1: Install ComfyUI Manager V3.42](#step-1-install-comfyui-manager-v342)
   - [Step 2: Install CCA Generator](#step-2-install-cca-generator)
@@ -40,6 +41,9 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 
 
 ##  easy Installation (over Comfyui 0.45.0)
+### Prerequisites
+- ComfyUI 0.45.0 or later must be installed (tested with ComfyUI 0.45.0 / Frontend 1.59.1). If you haven't installed it yet, please refer to [this guide](https://note.com/cocoat/n/n8780c1ca3b1f#e9a103d0-79ce-43a5-b53d-f6ff8fb16a35) for instructions on installing ComfyUI using Stability Matrix.
+
 ![ダウンロード](assets/image_00032__edit_1.png)
 ![ダウンロード](assets/image_00032__edit_2.png)
 ![ダウンロード](assets/044552_edit.png)

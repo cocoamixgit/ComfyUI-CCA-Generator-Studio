@@ -45,6 +45,15 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 ## Changelog
 - If you installed using the Quick Installer, updating is as simple as overwriting all existing files.
 Note: The file structure was reorganized between versions 1.2 and 1.3. Overwriting the existing files is fine, but for a cleaner installation, it is recommended to delete the existing files first and then install all files again.
+For updates other than version 1.2 -> 1.3, simply overwrite all existing files.
+If you want to perform a clean installation, make sure to back up any custom themes you have created. They are stored in:
+`ComfyUI-CCA-Generator-Studio\web\themes`
+
+### Version 1.7 – Changes & Fixes - 2026/11/28
+* Improved the Path Tool, including the ability to place and process multiple paths.
+* Improved the Mosaic/Blur Tool, including the ability to specify the target area.
+* Added a new in-place editing mode, similar to the old Lama Cleaner, allowing you to remove or modify objects by simply painting over them with a brush.
+
 
 ### Version 1.6 – Changes & Fixes
 * Added API connectivity.

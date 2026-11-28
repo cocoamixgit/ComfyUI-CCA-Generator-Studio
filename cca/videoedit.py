@@ -14,7 +14,7 @@
   位置・大きさ・回転・動きは画像と同じ。下の段を描いた画面のその場所を加工する
 - loop: ずっと続ける動き {"type", "speed", "amt", "dir", "pin"}(LOOPS)。第21版: edge(ふちのぼかし {"mode": "feather" | "blur", "size", "amt"})・
   トランジションの blur(ぼかしも重ねる)と type "blur"・ループの "focus"・文字の strokeBlur(縁 = 影のぼかし。文字の大きさに対して)。文字: wrap(折り返し幅・画面の幅に対して)・wrapped(画面で折り返した文)・bgRadius(背景の角の丸み 0〜1)
-- key: 背景を透明にする {"mode": "chroma"(色で抜く)| "ai"(BiRefNet)| "alpha"(元の透明度), "color", "tol", "soft", "despill"}
+- key: 背景を透明にする {"mode": "chroma"(色で抜く)| "ai"(BiRefNet)| "alpha"(元の透明度), "color", "tol", "soft", "despill", "area"(「範囲を選ぶ」の内側だけ消す)}
 - audios が無いとき(第18版までの形)は、つなげる動画の音を音量(volume)で使う。音が全部無音なら、音の無いファイルにする
 - 出力: 最初の動画と同じフォルダに「元の名前_edit.<形式>」(あれば _edit_1 …)
 """
@@ -34,7 +34,7 @@ from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter, ImageFont
 
 import folder_paths
 
-from .adjust import adj_at, adj_kf_on, adj_on, adjust_image, sel_on
+from .adjust import adj_at, adj_kf_on, adj_on, adjust_image, sel_mask, sel_on
 from .i18n import tr
 from .imgedit import EDIT_SUFFIX, parse_value
 from .prefix import prefix_folder
@@ -1142,14 +1142,17 @@ def despill(rgb, alpha, key):
     return out.astype(np.uint8)
 
 
-def to_rgba(frame, key=None, use_alpha=False):
-    """コマ(配列)→ RGBA の画像。背景を透明にする設定があれば透明度を作る"""
+def to_rgba(frame, key=None, use_alpha=False, sel=None):
+    """コマ(配列)→ RGBA の画像。背景を透明にする設定があれば透明度を作る。sel: 範囲を選ぶ(key の area のとき、その内側だけ消す)"""
     if not (key and key.get("mode") in ("chroma", "ai")):
         if frame.shape[2] == 4 and use_alpha:
             return Image.fromarray(np.ascontiguousarray(frame), "RGBA")
         return Image.fromarray(np.ascontiguousarray(frame[:, :, :3]), "RGB").convert("RGBA")
     rgb = np.ascontiguousarray(frame[:, :, :3])
     a = key_alpha(rgb, key)
+    if key.get("area") and sel_on(sel):  # 選んだ範囲の外は、そのまま残す
+        src = frame if frame.shape[2] == 4 else np.dstack([rgb, np.full(rgb.shape[:2], 255, np.uint8)])
+        a = 1.0 - sel_mask(Image.fromarray(np.ascontiguousarray(src), "RGBA"), sel) * (1.0 - a)
     if key.get("mode") == "chroma" and key.get("despill", True):
         rgb = despill(rgb, a, key)
     if frame.shape[2] == 4 and use_alpha:
@@ -1547,9 +1550,10 @@ def shape_mask_img(sh, w, h):
     elif shape == "ellipse":
         d.ellipse([x0, y0, x0 + bw - 1, y0 + bh - 1], fill=255)
     elif shape == "path":
-        poly = path_points(sh.get("pts"), bw, bh, sh.get("closed") is not False)
-        if len(poly) >= 3:
-            d.polygon([(x0 + px, y0 + py) for px, py in poly], fill=255)
+        for pp in [sh.get("pts"), *(sh.get("more") or [])]:  # 足した範囲もまとめて塗る
+            poly = path_points(pp, bw, bh, sh.get("closed") is not False)
+            if len(poly) >= 3:
+                d.polygon([(x0 + px, y0 + py) for px, py in poly], fill=255)
     elif shape in PATTERNS:
         rr = _cl(_f(sh.get("round"), 0.0), 0.0, 1.0)
         ik = _cl(_f(sh.get("itemK"), 1.0), 0.0, 10.0)  # 1 つずつの伸び縮み・回転(タイル)
@@ -1612,7 +1616,7 @@ def _base_mask(mk, bw, bh, item_rot=0.0, item_k=1.0):
     w, h = (L, max(1, _iround(L / asp))) if asp >= 1 else (max(1, _iround(L * asp)), L)
     ir, ik = round(item_rot, 1), round(item_k, 3)
     key = (mk.get("shape"), _f(mk.get("radius"), 0.25), _f(mk.get("points"), 5), _f(mk.get("feather"), 0.0), mk.get("fit"),
-           str(mk.get("pts")), mk.get("closed"), tuple(str(mk.get(k)) for k in PAT_DEF), w, h, ir, ik)
+           str(mk.get("pts")), str(mk.get("more")), mk.get("closed"), tuple(str(mk.get(k)) for k in PAT_DEF), w, h, ir, ik)
     m = _MASK_CACHE.get(key)
     if m is None:
         m = shape_mask_img(dict(mk, points=mk.get("points", 5), itemRot=ir, itemK=ik, center=True, uniform=mk.get("fit") != "fill"), w, h)
@@ -2530,7 +2534,7 @@ def render(project, progress=None, interrupted=None):
         if o.get("kind") == "image":
             im = Image.open(full_path(o["src"]))
             arr = np.asarray(im.convert("RGBA"))
-            imgs[id(o)] = to_rgba(arr, o.get("key"), use_alpha=True) if (o.get("key") or {}).get("mode") in ("chroma", "ai") \
+            imgs[id(o)] = to_rgba(arr, o.get("key"), use_alpha=True, sel=None if o.get("adjOff") else o.get("asel")) if (o.get("key") or {}).get("mode") in ("chroma", "ai") \
                 else Image.fromarray(np.ascontiguousarray(arr), "RGBA")
             osel = None if o.get("adjOff") else o.get("asel")  # 範囲を選ぶ
             if not o.get("adjOff") and (adj_on(o.get("adj")) or sel_on(osel)) and not adj_kf_on(o):  # 色・明るさの補正(キーフレームで変わるときは、コマごとに)
@@ -2594,7 +2598,7 @@ def render(project, progress=None, interrupted=None):
                     sp = min(16.0, max(0.05, _f(o.get("speed"), 1)))
                     f = ov_readers[id(o)].at(_f(o.get("in"), 0) + local * sp)
                     if f is not None:
-                        draw_overlay(target, o, adjust_image(to_rgba(crop_arr(f, o.get("crop")), o.get("key"), use_alpha=alpha_src[id(o)]), adj_at(o, local), None if o.get("adjOff") else o.get("asel")), local, s1 - s0, font)
+                        draw_overlay(target, o, adjust_image(to_rgba(crop_arr(f, o.get("crop")), o.get("key"), use_alpha=alpha_src[id(o)], sel=None if o.get("adjOff") else o.get("asel")), adj_at(o, local), None if o.get("adjOff") else o.get("asel")), local, s1 - s0, font)
                 if b is not None:
                     clip_composite(canvas, target, alphas.get(id(b)), o.get("clip"))
                 elif id(o) in need:
@@ -2630,7 +2634,7 @@ def draw_clip(canvas, c, frame, local, length, use_alpha):
     """つなげる動画を描く。枠に収めた大きさ × 大きさ(s)、位置・回転・不透明度・動き・トランジション・背景の透明化"""
     W, H = canvas.size
     arr = crop_arr(frame, c.get("crop"))
-    im = adjust_image(to_rgba(arr, c.get("key"), use_alpha), adj_at(c, local), None if c.get("adjOff") else c.get("asel"))  # 色・明るさの補正(キーフレームがあればその時刻の値)・範囲を選ぶ
+    im = adjust_image(to_rgba(arr, c.get("key"), use_alpha, sel=None if c.get("adjOff") else c.get("asel")), adj_at(c, local), None if c.get("adjOff") else c.get("asel"))  # 色・明るさの補正(キーフレームがあればその時刻の値)・範囲を選ぶ
     st = anim_state(c, ANIM_KEYS["clip"], local)
     pin, pout = _trans_all(c, local, length, "clip")
     dip = apply_trans_state(st, c.get("tin"), pin, "clip") or apply_trans_state(st, c.get("tout"), pout, "clip")
@@ -2732,8 +2736,8 @@ def draw_overlay(canvas, o, img, local, length, font):
         cx, cy, w, h = apply_loop(st, o.get("loop"), local, cx, cy, w, h)
     masks = (None if pc_on(o.get("tin"), key) else trans_mask(o.get("tin"), pin, int(round(w)), int(round(h))),
              None if pc_on(o.get("tout"), key) else trans_mask(o.get("tout"), pout, int(round(w)), int(round(h))))
-    if o.get("kind") in ("image", "video"):
-        masks += (shape_mask(o.get("mask"), w, h, local),)  # 図形マスク
+    if o.get("kind") in ("image", "video", "mosaic"):
+        masks += (shape_mask(o.get("mask"), w, h, local),)  # 図形マスク(モザイクはパスの形)
     if o.get("kind") == "shape":
         img = shape_image(o, w, h, H)  # 図形のレイヤー(その時刻の大きさで描く)
     edge = o.get("edge") if o.get("kind") != "text" else None

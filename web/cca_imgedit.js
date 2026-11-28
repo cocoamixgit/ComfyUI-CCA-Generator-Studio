@@ -197,6 +197,11 @@ ${cardCss("#cca-imged .side", "> section[data-sec]", { image: "blue", layers: "t
 }
 
 const range = (k, label, min, max, step, val, extra = "") => `<label class="rg" data-rg="${k}" ${extra}>${label}<input type="range" data-c="${k}" min="${min}" max="${max}" step="${step}" value="${val}"><input type="number" data-n="${k}" min="${min}" max="${max}" step="${step}" value="${val}"></label>`;
+// 「色で抜く」の設定(似た色の幅・つながっている所だけ)。ツール欄と「背景を透明にする」欄の両方に置き、同じ値にそろえる
+const wandOpts = (id, hid = "") => `<div data-wand="${id}" ${hid}>
+          ${range("tol", "似た色の幅", 0, 160, 1, 32)}
+          <div class="note">「似た色の幅」は、「色で抜く」でクリックしたときに使います。変えたあとは、もう一度クリックして再処理してください(すでに抜いた所は変わりません。やり直すときは Ctrl+Z で戻してからクリックします)。</div>
+          <label class="row" style="margin-top:4px;font-size:13px;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" data-c="contig" checked style="margin-top:3px"> <span>つながっている所だけ(「色で抜く」)</span></label></div>`;
 
 function build() {
   css();
@@ -232,9 +237,9 @@ function build() {
             <button data-tool="mosaic" title="なぞった所をモザイク(またはぼかし)にする">▦ モザイク</button>
             <button data-tool="paint" title="なぞった所に色を塗ります(ペンタブの筆圧も使えます)">お絵描き</button>
             <button data-tool="text" title="クリックした所に文字を入れる。文字を押すと選べます">T 文字</button>
-            <button data-tool="path" title="クリックで点を置いてパスを作ります(Alt + クリックで曲線)。内側・外側の削除、塗りつぶし、線の描画ができます">✒ パスツール</button>
-            <button data-tool="msrect" title="ドラッグで四角く範囲を選びます(Shift で正方形)。切り抜いて移動・コピー・削除・塗りつぶしができます">四角で選択</button>
-            <button data-tool="msell" title="ドラッグで丸く範囲を選びます(Shift で正円)。切り抜いて移動・コピー・削除・塗りつぶしができます">丸で選択</button>
+            <button data-tool="path" title="クリックで点を置いてパスを作ります(Alt + クリックで曲線)。内側・外側の削除・モザイク、塗りつぶし、線の描画ができます">✒ パスを編集</button>
+            <button data-tool="msrect" title="ドラッグで四角く範囲を選びます(Shift で正方形)。切り抜いて移動・コピー・削除・モザイク・塗りつぶしができます">四角で選択</button>
+            <button data-tool="msell" title="ドラッグで円形に範囲を選びます(Shift で正円)。切り抜いて移動・コピー・削除・モザイク・塗りつぶしができます">円で選択</button>
           </div>
           ${range("brush", "ブラシの太さ", 2, 400, 1, 40)}
           ${range("balpha", "アルファ値(%)", 1, 100, 1, 100)}
@@ -244,6 +249,7 @@ function build() {
             <label class="fl">ブラシの色<input type="color" data-c="bcolor" value="#222222"></label>
             <div data-c="bpanel"></div>
           </div>
+          ${wandOpts("tool", "hidden")}
           <div data-c="penopts" hidden>
             <label class="row" style="font-size:13px"><input type="checkbox" data-c="pen"> ペンタブモード(筆圧を使う)</label>
             <label class="fl">筆圧で変えるもの<select data-c="penwhat"><option value="both">太さと濃さ</option><option value="size">太さ</option><option value="alpha">濃さ</option></select></label>
@@ -255,12 +261,13 @@ function build() {
           <div data-c="pathopts" hidden>
             <div class="row"><button data-c="pathcut" title="作業中の画像の、選んだ範囲(パスの内側)を切り抜いて新しいレイヤーにします。そのままドラッグで動かせます(Ctrl+X で切り取り)">切り抜いて移動</button><button data-c="pathcopy" title="作業中の画像の、選んだ範囲(パスの内側)をコピーして新しいレイヤーにします(Ctrl+C でコピー、Ctrl+V で同じ位置に貼り付け)">コピーして新しいレイヤー</button></div>
             <div class="row"><button data-c="pathin" title="作業中の画像の、パスの内側を透明にします">✂ 内側を削除</button><button data-c="pathout" title="作業中の画像の、パスの外側を透明にします">✂ 外側を削除</button></div>
+            <div class="row"><button data-c="pathmzin" title="作業中の画像の、パスの内側をモザイク(またはぼかし)にします">▦ 内側をモザイク</button><button data-c="pathmzout" title="作業中の画像の、パスの外側をモザイク(またはぼかし)にします">▦ 外側をモザイク</button></div>
             <div class="row"><button data-c="pathselin" title="作業中の画像の、パスの内側を「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)">内側を選ぶ</button><button data-c="pathselout" title="作業中の画像の、パスの外側を「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)">外側を選ぶ</button></div>
             <div class="row"><button data-c="pathfill" title="パスの内側を選んだ色で塗りつぶし、新しいレイヤーとして追加します">■ 塗りつぶし</button><button data-c="pathline" title="パスに沿った線を、新しいレイヤーとして追加します(閉じたパスは 1 周)">〰 線を描画</button></div>
             <label class="fl">色<input type="color" data-c="pcolor" value="#ff3b30"></label>
             ${range("palpha", "不透明度(%)", 1, 100, 1, 100)}
             ${range("pwidth", "線の太さ(px)", 1, 200, 1, 4)}
-            ${range("pfeather", "削除するときの境目のぼかし(px)", 0, 100, 1, 0)}
+            ${range("pfeather", "削除・モザイクのときの境目のぼかし(px)", 0, 100, 1, 0)}
             <div class="row" style="margin-top:4px"><button data-c="pathback" title="Backspace">最後の点を削除</button><button data-c="pathclear" title="Esc">パスをクリア</button></div>
           </div>
           <div class="note" data-c="toolnote"></div></section>
@@ -284,17 +291,17 @@ function build() {
             <button data-shape="rect" title="四角">▭ 四角</button><button data-shape="rrect" title="角の丸い四角">▢ 角丸</button><button data-shape="ellipse" title="丸(楕円)">◯ 丸</button>
             <button data-shape="tri" title="三角">△ 三角</button><button data-shape="line" title="線">╱ 線</button><button data-shape="arrow" title="矢印">→ 矢印</button>
             <button data-shape="pen" title="手書きの線(なぞった線が 1 つのレイヤーになります)">✎ ペン</button>
-            <button data-tool="path" title="クリックで点を置いてパスを作ります(Alt + クリックで曲線)。内側・外側の削除、塗りつぶし、線の描画ができます">✒ パスツール</button></div>
+            <button data-tool="path" title="クリックで点を置いてパスを作ります(Alt + クリックで曲線)。内側・外側の削除・モザイク、塗りつぶし、線の描画ができます">✒ パスを編集</button></div>
           <div class="note">形を選んで、画面の上をドラッグすると、その大きさで置きます(Shift で正方形・正円・15 度ずつ)。クリックだけなら決まった大きさで置きます。置いたあとは「↖ 選択」で動かす・大きさ・色を変えられます。</div></section>
         <section class="sec-folded" data-sec="bg"><h4>背景を透明にする</h4>
           <div class="row"><button data-c="bg">背景を自動で消す</button></div>
           ${range("thr", "しきい値", 0, 100, 1, 0, 'class="rg off"')}
           ${range("grow", "縮める・広げる", -40, 40, 1, 0, 'class="rg off"')}
           ${range("feather", "縁のぼかし", 0, 40, 1, 0, 'class="rg off"')}
-          <div class="note" data-c="bgnote">「背景を自動で消す」のあと、しきい値(上げると薄い所も消える)・縮める/広げる(px)・縁のぼかし(px)で縁を調整できます。</div>
+          <div class="note" data-c="bgnote">「背景を自動で消す」のあと、しきい値(上げると薄い所も消える)・縮める/広げる(px)・縁のぼかし(px)で縁を調整できます。パス・四角・円で範囲を囲んでいるときは、その内側だけを消します(範囲を外すには Esc か「パスをクリア」)。</div>
           <div class="guide" data-c="bgguide" hidden></div>
-          ${range("tol", "似た色の幅", 0, 160, 1, 32)}
-          <label class="row" style="margin-top:4px;font-size:13px;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" data-c="contig" checked style="margin-top:3px"> <span>つながっている所だけ(「色で抜く」)</span></label></section>
+          <div class="row" style="margin-top:6px"><button data-tool="wand" title="クリックした所と似た色を透明にする">色で抜く</button></div>
+          ${wandOpts("bg")}</section>
         <section class="sec-folded" data-sec="remove"><h4>オブジェクト除去(AI)</h4>
           <div class="row"><button data-tool="remove" title="消したい部分を塗る(「塗った所を消す」で消える)">🖌 塗る</button>
             <button data-tool="rmerase" title="除去範囲の塗りを、なぞった所だけ消します(塗りすぎた所を戻す)">🧽 塗りを消す</button>
@@ -303,6 +310,7 @@ function build() {
             <option value="lama">軽い(LaMa・約 200MB)</option>
             <option value="flux">きれい(FLUX.2 Klein・重い)</option></select></label>
           <div class="note" data-c="rmnote"></div>
+          <div data-c="rmoncebox"><label class="row" title="塗って筆を離すたびに、その場で消します(「塗った所を消す」を押さなくても反映されます)。Ctrl+Z で 1 筆ずつ戻せます" style="margin-top:4px;font-size:13px;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" data-c="rmonce" style="margin-top:3px"> <span>1筆ごとに反映する(塗って離すとすぐ消える)</span></label></div>
           <div class="row" style="margin-top:6px"><button class="pri" data-c="rm">塗った所を消す</button><button data-c="rmclear" title="除去範囲の塗りを全部消します(元に戻せます)">塗りを全部消す</button>
             <label class="row" title="塗りの見える色です(画像に似た色があって見えにくいときに変えます。消す処理には関係しません)" style="margin-left:auto;font-size:13px">塗りの色 <input type="color" data-c="maskcolor"></label></div>
           <div class="guide" data-c="rmguide" hidden></div>
@@ -655,17 +663,17 @@ function refreshTool() {
       : "画面の上をドラッグすると、その大きさで置きます(Shift で正方形・正円・15 度ずつ)。クリックだけなら決まった大きさで置きます。",
     select: "押したレイヤー(画像・文字・図形)を選びます。枠の中をドラッグで動かし、角で大きさ(縦横比はそのまま)、辺で幅・高さ、下の丸で回転(Shift で 15 度ずつ)。透明な所は押しても後ろのレイヤーが選ばれます。",
     pan: "ドラッグで移動、ホイールで拡大・縮小します。どのツールでも、右ドラッグかスペースキーを押しながらのドラッグで移動できます。",
-    wand: "透明にしたい色の所をクリックします。「似た色の幅」を広げると、近い色もまとめて透明になります。",
+    wand: "透明にしたい色の所をクリックします。「似た色の幅」を広げると、近い色もまとめて透明になります。パス・四角・円で範囲を囲んでいるときは、その内側だけに掛かります。",
     erase: "なぞった所を透明にします。アルファ値 50% なら半分だけ透けます(1 回なぞる間は重ねても同じ。もう一度なぞると、さらに透けます)。",
     restore: "なぞった所を、開いたときの画像に戻します(消しすぎた所を直すとき)。アルファ値 50% なら半分だけ戻ります。",
-    mosaic: "なぞった所をモザイクにします。「ブラシの太さ」で塗る幅、「モザイクの大きさ」で 1 マスの大きさ(画像の px)を変えます。種類を「ぼかし」にすると、なぞった所がぼけます。アルファ値 50% なら半分だけ掛かります。Ctrl+Z で戻せます。",
-    remove: "消したい部分を塗って、「塗った所を消す」を押します(軽い方法は塗った所だけ、きれいな方法は塗った所を囲む四角の中が作り直されます)。塗りすぎたら「🧽 塗りを消す」でなぞるか、Ctrl+Z でひと塗りずつ戻せます。",
+    mosaic: "なぞった所をモザイクにします。「ブラシの太さ」で塗る幅、「モザイクの大きさ」で 1 マスの大きさ(画像の px)を変えます。種類を「ぼかし」にすると、なぞった所がぼけます。アルファ値 50% なら半分だけ掛かります。Ctrl+Z で戻せます。 「モザイクの種類」「モザイクの大きさ」を変えると、直前に掛けたモザイクも掛け直されます(そのあと別の操作をしていなければ)。",
+    remove: "消したい部分を塗って、「塗った所を消す」を押します(軽い方法は塗った所だけ、きれいな方法は塗った所を囲む四角の中が作り直されます)。塗りすぎたら「🧽 塗りを消す」でなぞるか、Ctrl+Z でひと塗りずつ戻せます。軽い方法では「1筆ごとに反映する」にすると、塗って離すたびにその場で消えます。",
     rmerase: "除去範囲の塗りを、なぞった所だけ消します(塗りすぎた所を戻すとき)。全部消すときは「塗りを全部消す」。Ctrl+Z で戻せます。",
     text: "クリックした所に文字を入れます。入れた文字を押すと選べ、枠の角で大きさ・左右の □ で折り返す幅・下の丸で回転を変えられます。",
-    path: "画像の上をクリックして点を置きます(点はドラッグで移動)。最初の点のクリック・ダブルクリック・Enter でパスを閉じます。Alt + クリックで点を曲線にし(もう一度で角に戻す)、出てきたハンドルをドラッグで曲がり方を変えます(Alt を押しながらで片側だけ)。Backspace で最後の点を削除、Esc でクリア。点をクリックで選び(Shift + クリックで複数)、ドラッグか矢印キー(Shift で 10 ずつ)で動かします。線をつかむとパス全体を動かします。「内側を削除」「外側を削除」は作業中の画像に、「塗りつぶし」「線を描画」は新しいレイヤーとして追加します。",
+    path: "画像の上をクリックして点を置きます(点はドラッグで移動)。最初の点のクリック・ダブルクリック・Enter でパスを閉じます。Alt + クリックで点を曲線にし(もう一度で角に戻す)、出てきたハンドルをドラッグで曲がり方を変えます(Alt を押しながらで片側だけ)。Backspace で最後の点を削除、Esc でクリア。点をクリックで選び(Shift + クリックで複数)、ドラッグか矢印キー(Shift で 10 ずつ)で動かします。線をつかむとパス全体を動かします。「内側を削除」「外側を削除」は作業中の画像に、「塗りつぶし」「線を描画」は新しいレイヤーとして追加します。 Shift を押しながら押すと、ほかの場所にも範囲を足せます(削除・モザイク・切り抜き・選ぶ・塗りつぶし・線の描画は、足した範囲すべてに掛かります。塗りつぶし・線は範囲ごとに別のレイヤーになります)。 Ctrl または Alt を押しながら前のパスの点か線をクリックすると、そのパスをもう一度編集できます。",
     paint: "ブラシの一覧から選んで、なぞった所に「ブラシの色」で描きます。選んだブラシの太さ・不透明度・流量・硬さ・間隔などは下の欄で変えられ、ブラシごとに覚えます。元の画像に描きたくないときは「レイヤー」の「＋ 新規レイヤー」で新しいレイヤーに描きます。ペンタブモードにすると、筆圧で太さ・濃さが変わります(変えるものはブラシごとに選べます)。",
-    msrect: "ドラッグで四角く範囲を選びます(Shift で正方形)。下のボタンで、切り抜いて移動・コピー・削除・塗りつぶしができます。Ctrl+C でコピー、Ctrl+X で切り取り(Ctrl+V で同じ位置に貼り付け)、Delete で内側を削除、Esc で選ぶのをやめます。",
-    msell: "ドラッグで丸く範囲を選びます(Shift で正円)。下のボタンで、切り抜いて移動・コピー・削除・塗りつぶしができます。Ctrl+C でコピー、Ctrl+X で切り取り(Ctrl+V で同じ位置に貼り付け)、Delete で内側を削除、Esc で選ぶのをやめます。",
+    msrect: "ドラッグで四角く範囲を選びます(Shift で正方形)。下のボタンで、切り抜いて移動・コピー・削除・モザイク・塗りつぶしができます。Ctrl+C でコピー、Ctrl+X で切り取り(Ctrl+V で同じ位置に貼り付け)、Delete で内側を削除、Esc で選ぶのをやめます。 Shift を押しながらドラッグすると、ほかの場所にも範囲を足せます(足すときの正方形・正円は、ドラッグを始めてから Shift を押し直します)。",
+    msell: "ドラッグで円形に範囲を選びます(Shift で正円)。下のボタンで、切り抜いて移動・コピー・削除・モザイク・塗りつぶしができます。Ctrl+C でコピー、Ctrl+X で切り取り(Ctrl+V で同じ位置に貼り付け)、Delete で内側を削除、Esc で選ぶのをやめます。 Shift を押しながらドラッグすると、ほかの場所にも範囲を足せます(足すときの正方形・正円は、ドラッグを始めてから Shift を押し直します)。",
   }[st.tool];
   const cv = $(".stage > canvas");
   cv.style.cursor = st.tool === "pan" ? "grab" : st.tool === "select" ? "default" : st.tool === "shape" || SEL_TOOLS.includes(st.tool) ? "crosshair" : st.tool === "wand" ? "crosshair" : st.tool === "text" ? "text" : "none";
@@ -680,7 +688,8 @@ function refreshTool() {
   st._bpTool = st.tool;
   for (const k of ["brush", "balpha", "bhard"]) $(`[data-rg="${k}"]`).style.display = pt ? "none" : "";
   $('[data-c="penwhat"]').closest("label").style.display = pt ? "none" : "";
-  $('[data-c="mzopts"]').hidden = st.tool !== "mosaic";
+  $('[data-c="mzopts"]').hidden = !(st.tool === "mosaic" || SEL_TOOLS.includes(st.tool));
+  $('[data-wand="tool"]').hidden = st.tool !== "wand";
   $('[data-c="pathopts"]').hidden = !SEL_TOOLS.includes(st.tool);
   const lab = $('[data-rg="mzsize"]').firstChild;
   if (lab) lab.textContent = T(st.mzmode === "blur" ? "ぼかしの強さ(px)" : "モザイクの大きさ(px)");
@@ -1479,8 +1488,15 @@ function mapPath(P, fn) {
 // パスを変える前の形を覚える(Ctrl+Z で 1 手ずつ戻す。パスで削除・塗りつぶしなどをしたら消す)
 // { t: "p", s: パスの写し } = パスの編集、{ t: "a" } = パスで行った処理(削除・塗りつぶしなど。戻すとふつうの「元に戻す」)。
 // 新しい順に戻すので、処理の後に Ctrl+Z を押すと処理の前のパスの編集に戻り、続けて押すとパスを 1 手ずつ戻す
+// 足した範囲(Shift を押しながら置いた、前の閉じたパス)も含めて、パスの形を覚える
+function regionPts() { // 範囲になるパスの点の一覧(足した範囲 + 今のパス)
+  const out = (st.extra || []).filter((q) => q.pts?.length >= 3).map((q) => q.pts);
+  const P = st.path?.pts || [];
+  if (P.length >= 3) out.push(P);
+  return out;
+}
 function pathSnap() {
-  const s = JSON.stringify(st.path);
+  const s = JSON.stringify([st.path, st.extra || []]);
   st.pathUndo = st.pathUndo || [];
   const last = st.pathUndo.at(-1);
   if (!(last && last.t === "p" && last.s === s)) st.pathUndo.push({ t: "p", s });
@@ -1491,13 +1507,13 @@ function pathAct() { st.pathUndo = st.pathUndo || []; st.pathUndo.push({ t: "a" 
 function pathUndoRedo(again) {
   st.pathUndo = st.pathUndo || []; st.pathRedo = st.pathRedo || [];
   const from = again ? st.pathRedo : st.pathUndo, to = again ? st.pathUndo : st.pathRedo;
-  const cur = JSON.stringify(st.path);
+  const cur = JSON.stringify([st.path, st.extra || []]);
   while (from.length && from.at(-1).t === "p" && from.at(-1).s === cur) from.pop(); // 変わらなかった手は飛ばす
   if (!from.length) return false;
   const e = from.pop();
   if (e.t === "a") { to.push(e); if (again) redo(); else undo(); return true; }
   to.push({ t: "p", s: cur });
-  st.path = JSON.parse(e.s);
+  [st.path, st.extra] = JSON.parse(e.s);
   st.pathSel = [];
   draw();
   return true;
@@ -1515,6 +1531,23 @@ function pathDown(p, e) {
   }
   const i = P.findIndex((q) => near(q.x, q.y));
   if (i >= 0 && e?.altKey) { toggleCurve(i); return; }
+  // Ctrl / Alt + クリックで、Shift で足した前のパスの点・線をつかむと、そのパスを今のパスにして編集できる
+  if (i < 0 && (e?.ctrlKey || e?.metaKey || e?.altKey) && !nearPathLine(P, st.path?.closed, d.x, d.y, PATH_HIT / k)) {
+    const ex = st.extra || [];
+    for (let j = ex.length - 1; j >= 0; j--) {
+      const Q = ex[j].pts || [];
+      const qi = Q.findIndex((q) => near(q.x, q.y));
+      if (qi < 0 && !nearPathLine(Q, true, d.x, d.y, PATH_HIT / k)) continue;
+      const cur = st.path;
+      ex.splice(j, 1);
+      if (cur?.pts.length >= 3) { cur.closed = true; ex.push(cur); } // 今のパスは足した範囲に回す
+      st.extra = ex;
+      st.path = { pts: Q, closed: true };
+      st.pathSel = qi >= 0 ? [qi] : st.path.pts.map((_, n) => n);
+      st.drag = { mode: "pathsel", x0: d.x, y0: d.y, org: st.pathSel.map((n) => [n, st.path.pts[n].x, st.path.pts[n].y]) };
+      return;
+    }
+  }
   let sel = (st.pathSel || []).filter((j) => P[j]);
   if (i >= 0) {
     if (i === 0 && !st.path.closed && P.length >= 3 && !e?.shiftKey) st.path.closed = true;
@@ -1523,7 +1556,12 @@ function pathDown(p, e) {
   } else if (nearPathLine(P, st.path?.closed, d.x, d.y, PATH_HIT / k)) sel = P.map((_, j) => j); // 線をつかむと、パス全体
   else if (st.path?.closed && (e?.ctrlKey || e?.metaKey)) { st.pathSel = []; return; } // 閉じたパスで Ctrl+クリック: 新しく作らず、未選択にする
   else {
-    if (!st.path || st.path.closed) st.path = { pts: [], closed: false };
+    if (!st.path || st.path.closed) {
+      // Shift を押しながら置くと、今の範囲を残して、別の場所にも範囲を足す
+      if (e?.shiftKey && st.path?.closed && st.path.pts.length >= 3) (st.extra = st.extra || []).push(st.path);
+      else if (!e?.shiftKey) st.extra = [];
+      st.path = { pts: [], closed: false };
+    }
     st.path.pts.push({ x: r1(d.x), y: r1(d.y) }); // 置いてそのままドラッグすれば動かせる
     sel = [st.path.pts.length - 1];
   }
@@ -1553,8 +1591,17 @@ function pathBack() {
 // 画面にパス・点・ハンドルを描く(パスツールのときだけ)
 function drawPathGuide(g) {
   const P = st.path?.pts;
-  if (!SEL_TOOLS.includes(st.tool) || !P?.length) return;
-  const marq = st.tool !== "path"; // 四角・丸で選択: 線だけ(点・ハンドルは、パスツールにすると動かせる)
+  if (!(SEL_TOOLS.includes(st.tool) || st.tool === "wand")) return;
+  for (const q of st.extra || []) { // 足した範囲(線だけ)
+    const { k, ox, oy } = st.view;
+    g.save(); g.lineJoin = "round";
+    tracePts(g, mapPath(q.pts, (x, y) => [ox + x * k, oy + y * k]), true);
+    g.strokeStyle = "rgba(0,0,0,0.75)"; g.lineWidth = 3; g.stroke();
+    g.strokeStyle = ovc("path", "#ffd24d"); g.lineWidth = 1.5; g.setLineDash([6, 4]); g.stroke(); g.setLineDash([]);
+    g.restore();
+  }
+  if (!P?.length) return;
+  const marq = st.tool !== "path"; // 四角・円で選択: 線だけ(点・ハンドルは、パスツールにすると動かせる)
   const { k, ox, oy } = st.view, S = mapPath(P, (x, y) => [ox + x * k, oy + y * k]);
   g.save();
   g.lineJoin = "round";
@@ -1600,26 +1647,32 @@ function pathSelect(mode) {
   endBg();
   pushUndo(true);
   const w = A.cv.width, h = A.cv.height;
-  const path = flattenPath(mapPath(P, (x, y) => { const q = docToLayer(A, x, y); return [q.x / w, q.y / h]; }));
-  A.asel = { ...(A.asel || {}), on: true, path, pmode: mode };
+  const fl = (R) => flattenPath(mapPath(R, (x, y) => { const q = docToLayer(A, x, y); return [q.x / w, q.y / h]; }));
+  const regs = regionPts(); // 足した範囲もまとめて選ぶ(最後が今のパス)
+  const path = fl(regs.at(-1)), more = regs.slice(0, -1).map(fl);
+  A.asel = { ...(A.asel || {}), on: true, path, more, pmode: mode };
   st.isel = A.id;
   st.dirty = true;
   refresh();
   ctx.notify(T(mode === "in" ? "パスの内側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)" : "パスの外側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)"), "info");
 }
-// ---------------------------------------------------------------- 四角・丸で選択(閉じたパスを作る。パスと同じ操作が使える)
+// ---------------------------------------------------------------- 四角・円で選択(閉じたパスを作る。パスと同じ操作が使える)
 const SEL_TOOLS = ["path", "msrect", "msell"];
-function marqDown(p) {
+function marqDown(p, e) {
   const d = toDoc(p.x, p.y);
   pathSnap();
+  const add = !!e?.shiftKey; // Shift を押しながら押すと、今の範囲を残して足す
+  if (add && st.path?.closed && st.path.pts.length >= 3) (st.extra = st.extra || []).push(st.path);
+  else if (!add) st.extra = [];
   st.path = null;
   st.pathSel = [];
-  st.drag = { mode: "marq", x0: d.x, y0: d.y };
+  st.drag = { mode: "marq", x0: d.x, y0: d.y, add };
 }
 function marqMove(p, e) {
   const d = toDoc(p.x, p.y), { x0, y0 } = st.drag;
   let dx = d.x - x0, dy = d.y - y0;
-  if (e?.shiftKey) { const m = Math.max(Math.abs(dx), Math.abs(dy)); dx = Math.sign(dx || 1) * m; dy = Math.sign(dy || 1) * m; }
+  if (st.drag.add && !e?.shiftKey) st.drag.add = false; // 足すために押した Shift を離したら、押し直すと正方形・正円になる
+  if (e?.shiftKey && !st.drag.add) { const m = Math.max(Math.abs(dx), Math.abs(dy)); dx = Math.sign(dx || 1) * m; dy = Math.sign(dy || 1) * m; }
   const l = Math.min(x0, x0 + dx), t = Math.min(y0, y0 + dy), w = Math.abs(dx), h = Math.abs(dy);
   if (st.tool === "msrect") {
     st.path = { closed: true, pts: [[l, t], [l + w, t], [l + w, t + h], [l, t + h]].map(([x, y]) => ({ x: r1(x), y: r1(y) })) };
@@ -1646,9 +1699,11 @@ function pathPiece(cut, undo = true) {
   const m = canvasOf(w, h), mg = m.getContext("2d", { willReadFrequently: true });
   mg.save();
   mg.beginPath(); mg.rect(c.x, c.y, c.w, c.h); mg.clip(); // 見えている範囲(切り取った範囲)の中だけ
-  tracePts(mg, mapPath(P, (x, y) => { const q = docToLayer(A, x, y); return [q.x, q.y]; }), true);
   mg.fillStyle = "#fff";
-  mg.fill();
+  for (const R of regionPts()) {
+    tracePts(mg, mapPath(R, (x, y) => { const q = docToLayer(A, x, y); return [q.x, q.y]; }), true);
+    mg.fill();
+  }
   mg.restore();
   const md = mg.getImageData(0, 0, w, h).data;
   let x0 = w, y0 = h, x1 = -1, y1 = -1;
@@ -1703,20 +1758,14 @@ function selCopy(cut) {
   return true;
 }
 // パスの内側(inside)/ 外側を、作業中の画像から削除する(境目のぼかし: キャンバスの px)
-function pathErase(inside) {
-  const A = activeImg();
-  if (A?.locked) { ctx.notify(T("この画像はロック中です(ロック解除すると使えます)"), "error"); return; }
-  if (!A || A.hidden) { ctx.notify(T(A ? "作業中の画像が非表示です(一覧の 👁 で表示してください)" : "作業する画像を選んでください(「↖ 選択」で画像をクリックするか、「レイヤー」の一覧で選びます)"), "info"); return; }
-  const P = st.path?.pts || [];
-  if (P.length < 3) { ctx.notify(T("点を 3 つ以上置いてください"), "info"); return; }
-  endBg();
-  pushUndo(); // 作業中の画像の画素を写してから変える(元に戻せる)
-  pathAct();
-  const cv = st.img, w = cv.width, h = cv.height;
+// パスの内側を白くした板(境目のぼかし付き)。作業中の画像と同じ大きさ
+function pathMaskCanvas(A, P, w, h) {
   const m = canvasOf(w, h), mg = m.getContext("2d", { willReadFrequently: true });
-  tracePts(mg, mapPath(P, (x, y) => { const q = docToLayer(A, x, y); return [q.x, q.y]; }), true);
   mg.fillStyle = "#fff";
-  mg.fill();
+  for (const R of regionPts()) { // 足した範囲もまとめて白くする
+    tracePts(mg, mapPath(R, (x, y) => { const q = docToLayer(A, x, y); return [q.x, q.y]; }), true);
+    mg.fill();
+  }
   const f = clamp(Number(st.popt.feather) || 0, 0, 200) * (cropOf(A).w / A.w); // 画像の px
   if (f >= 1) {
     const img = mg.getImageData(0, 0, w, h), d = img.data;
@@ -1727,6 +1776,19 @@ function pathErase(inside) {
     for (let i = 0; i < a.length; i++) d[i * 4 + 3] = Math.round(clamp(a[i], 0, 1) * 255);
     mg.putImageData(img, 0, 0);
   }
+  return m;
+}
+function pathErase(inside) {
+  const A = activeImg();
+  if (A?.locked) { ctx.notify(T("この画像はロック中です(ロック解除すると使えます)"), "error"); return; }
+  if (!A || A.hidden) { ctx.notify(T(A ? "作業中の画像が非表示です(一覧の 👁 で表示してください)" : "作業する画像を選んでください(「↖ 選択」で画像をクリックするか、「レイヤー」の一覧で選びます)"), "info"); return; }
+  const P = st.path?.pts || [];
+  if (P.length < 3) { ctx.notify(T("点を 3 つ以上置いてください"), "info"); return; }
+  endBg();
+  pushUndo(); // 作業中の画像の画素を写してから変える(元に戻せる)
+  pathAct();
+  const cv = st.img, w = cv.width, h = cv.height;
+  const m = pathMaskCanvas(A, P, w, h);
   const g = cv.getContext("2d");
   g.save();
   g.globalCompositeOperation = inside ? "destination-out" : "destination-in";
@@ -1737,25 +1799,97 @@ function pathErase(inside) {
   refresh();
   ctx.notify(T(inside ? "パスの内側を削除しました(元に戻せます)" : "パスの外側を削除しました(元に戻せます)"), "info");
 }
+// 直前に掛けたモザイク(st.lastMz = { img, w, h, base: 掛ける前の画素, cov: 掛けた濃さ(0〜1), pxv })。
+// 種類・大きさを変えたら、同じ場所に掛け直す(そのあと別の操作をしていたら何もしない)
+function mzRender() {
+  const Z = st.lastMz;
+  if (!Z || Z.img !== st.img || Z.pxv !== st.pxv) return;
+  const { w, h } = Z, bc = canvasOf(w, h);
+  bc.getContext("2d").putImageData(Z.base, 0, 0);
+  const M = mosaicData(bc, st.mzmode, st.mzsize).data, B = Z.base.data, C = Z.cov;
+  const out = new ImageData(w, h), D = out.data;
+  for (let p = 0, i = 0; p < C.length; p++, i += 4) {
+    const c = C[p];
+    if (c <= 0) { D[i] = B[i]; D[i + 1] = B[i + 1]; D[i + 2] = B[i + 2]; D[i + 3] = B[i + 3]; continue; }
+    const ba = B[i + 3] / 255, ma = M[i + 3] / 255, ao = ba * (1 - c) + ma * c;
+    D[i + 3] = Math.round(ao * 255);
+    if (ao > 0) for (let q = 0; q < 3; q++) D[i + q] = Math.round((B[i + q] * ba * (1 - c) + M[i + q] * ma * c) / ao);
+  }
+  st.img.getContext("2d").putImageData(out, 0, 0);
+  st.pxv = (st.pxv || 0) + 1;
+  Z.pxv = st.pxv;
+  st.dirty = true;
+  refresh();
+}
+let mzTimer = 0;
+function mzRefresh() {
+  const Z = st.lastMz;
+  if (!Z || Z.img !== st.img || Z.pxv !== st.pxv) return;
+  clearTimeout(mzTimer);
+  mzTimer = setTimeout(mzRender, 40);
+}
+// パスの内側(または外側)をモザイク(またはぼかし)にする。種類・大きさは「モザイク」ツールと同じ設定
+function pathMosaic(inside) {
+  const A = activeImg();
+  if (A?.locked) { ctx.notify(T("この画像はロック中です(ロック解除すると使えます)"), "error"); return; }
+  if (!A || A.hidden) { ctx.notify(T(A ? "作業中の画像が非表示です(一覧の 👁 で表示してください)" : "作業する画像を選んでください(「↖ 選択」で画像をクリックするか、「レイヤー」の一覧で選びます)"), "info"); return; }
+  const P = st.path?.pts || [];
+  if (P.length < 3) { ctx.notify(T("点を 3 つ以上置いてください"), "info"); return; }
+  endBg();
+  pushUndo();
+  pathAct();
+  const cv = st.img, w = cv.width, h = cv.height;
+  const md = pathMaskCanvas(A, P, w, h).getContext("2d").getImageData(0, 0, w, h).data;
+  const cov = new Float32Array(w * h);
+  for (let p = 0; p < cov.length; p++) { const v = md[p * 4 + 3] / 255; cov[p] = inside ? v : 1 - v; } // 外側は、内側の濃さを反転する
+  st.pxv = (st.pxv || 0) + 1;
+  st.lastMz = { img: cv, w, h, base: cv.getContext("2d").getImageData(0, 0, w, h), cov, pxv: st.pxv };
+  mzRender();
+  ctx.notify(T(inside ? "パスの内側をモザイクにしました(元に戻せます)" : "パスの外側をモザイクにしました(元に戻せます)"), "info");
+}
+// 閉じたパス・四角・丸で囲った範囲(作業中の画像の画素ごとの 0〜1。囲っていなければ null)。境目のぼかしは「内側を削除」と同じ設定
+function rangeAlpha() {
+  const A = activeImg(), P = st.path?.pts || [];
+  const regs = [...(st.extra || []).map((q) => q.pts), ...(st.path?.closed ? [P] : [])].filter((R) => R?.length >= 3);
+  if (!A || !st.img || !regs.length) return null;
+  const w = st.img.width, h = st.img.height;
+  const m = canvasOf(w, h), mg = m.getContext("2d", { willReadFrequently: true });
+  mg.fillStyle = "#fff";
+  for (const R of regs) {
+    tracePts(mg, mapPath(R, (x, y) => { const q = docToLayer(A, x, y); return [q.x, q.y]; }), true);
+    mg.fill();
+  }
+  const d = mg.getImageData(0, 0, w, h).data;
+  let a = new Float32Array(w * h);
+  for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3] / 255;
+  const f = clamp(Number(st.popt.feather) || 0, 0, 200) * (cropOf(A).w / A.w);
+  if (f >= 1) { const r = Math.max(1, Math.round(f / 2)); for (let i = 0; i < 3; i++) a = boxBlur(a, w, h, r); }
+  return a;
+}
 // 塗りつぶし(fill)/ 線を描画。どちらも新しいレイヤー(パスの図形)として追加する(あとから移動・色の変更ができる)
 function pathShape(fill) {
-  const P = (st.path?.pts || []).map(ptOf);
-  if (P.length < (fill ? 3 : 2)) { ctx.notify(T(fill ? "点を 3 つ以上置いてください" : "点を 2 つ以上置いてください"), "info"); return; }
+  const need = fill ? 3 : 2;
+  // 足した範囲(閉じたパス)と今のパス。範囲ごとに 1 つのレイヤーにする
+  const regs = [...(st.extra || []).map((q) => ({ pts: q.pts, closed: true })), { pts: st.path?.pts || [], closed: !!st.path?.closed }]
+    .map((r) => ({ P: r.pts.map(ptOf), closed: r.closed })).filter((r) => r.P.length >= need);
+  if (!regs.length) { ctx.notify(T(fill ? "点を 3 つ以上置いてください" : "点を 2 つ以上置いてください"), "info"); return; }
   const o = st.popt, a = clamp(Number(o.alpha ?? 1), 0, 1);
-  const all = P.flatMap((q) => [[q.x, q.y], ...["hi", "ho"].filter((sd) => q[sd]).map((sd) => [q.x + q[sd][0], q.y + q[sd][1]])]);
-  const xs = all.map((q) => q[0]), ys = all.map((q) => q[1]);
-  const x0 = Math.min(...xs), y0 = Math.min(...ys), w = Math.max(1, Math.max(...xs) - x0), h = Math.max(1, Math.max(...ys) - y0);
   endBg();
   pushUndo(true);
   pathAct();
   // 点はレイヤーの枠の中の割合 [x, y, 入るハンドル x, y, 出るハンドル x, y](ハンドルも割合。無ければ null)
   const nz = (v, s2) => (v == null ? null : r3(v / s2));
-  st.layers.push({
-    id: tuid++, kind: "shape", shape: "path", cx: x0 + w / 2, cy: y0 + h / 2, w, h, rot: 0, opacity: fill ? 1 : a, hidden: false,
-    closed: fill || !!st.path.closed, fill: o.color || "#ff3b30", fillA: fill ? a : 0, stroke: o.color || "#ff3b30",
-    strokeW: fill ? 0 : Math.max(0.5, Number(o.width) || 4),
-    pts: P.map((q) => [r3((q.x - x0) / w), r3((q.y - y0) / h), nz(q.hi?.[0], w), nz(q.hi?.[1], h), nz(q.ho?.[0], w), nz(q.ho?.[1], h)]),
-  });
+  for (const { P, closed } of regs) {
+    const all = P.flatMap((q) => [[q.x, q.y], ...["hi", "ho"].filter((sd) => q[sd]).map((sd) => [q.x + q[sd][0], q.y + q[sd][1]])]);
+    const xs = all.map((q) => q[0]), ys = all.map((q) => q[1]);
+    const x0 = Math.min(...xs), y0 = Math.min(...ys), w = Math.max(1, Math.max(...xs) - x0), h = Math.max(1, Math.max(...ys) - y0);
+    st.layers.push({
+      id: tuid++, kind: "shape", shape: "path", cx: x0 + w / 2, cy: y0 + h / 2, w, h, rot: 0, opacity: fill ? 1 : a, hidden: false,
+      closed: fill || closed, fill: o.color || "#ff3b30", fillA: fill ? a : 0, stroke: o.color || "#ff3b30",
+      strokeW: fill ? 0 : Math.max(0.5, Number(o.width) || 4),
+      pts: P.map((q) => [r3((q.x - x0) / w), r3((q.y - y0) / h), nz(q.hi?.[0], w), nz(q.hi?.[1], h), nz(q.ho?.[0], w), nz(q.ho?.[1], h)]),
+    });
+  }
   st.dirty = true;
   refresh();
   ctx.notify(T(fill ? "塗りつぶしを新しいレイヤーとして追加しました" : "線を新しいレイヤーとして追加しました"), "info");
@@ -3331,6 +3465,7 @@ function strokeBegin() {
     st._origData = st.orig.getContext("2d").getImageData(0, 0, w, h);
   }
   if (st.tool === "mosaic") st.stroke.src = mosaicData(st.img, st.mzmode, st.mzsize);
+  st.stroke.pxv0 = st.pxv;
 }
 function strokeApply() {
   const S = st.stroke, E = S?.eng;
@@ -3413,6 +3548,8 @@ function wandAt(px, py) {
   const w = st.img.width, h = st.img.height;
   const x0 = Math.floor(px), y0 = Math.floor(py);
   if (x0 < 0 || y0 < 0 || x0 >= w || y0 >= h) return false;
+  const rg = rangeAlpha(); // 範囲を囲んでいるときは、その内側だけ
+  if (rg && rg[y0 * w + x0] <= 0) { ctx.notify(T("囲った範囲の中をクリックしてください"), "info"); return false; }
   const g = st.img.getContext("2d");
   const img = g.getImageData(0, 0, w, h);
   const d = img.data;
@@ -3422,7 +3559,7 @@ function wandAt(px, py) {
   const near = (i) => { const dr = d[i] - r0, dg = d[i + 1] - g0, db = d[i + 2] - b0; return dr * dr + dg * dg + db * db <= tol2; };
   pushUndo();
   if (!st.contig) {
-    for (let i = 0; i < d.length; i += 4) if (d[i + 3] && near(i)) d[i + 3] = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] && near(i)) d[i + 3] = rg ? Math.round(d[i + 3] * (1 - rg[i / 4])) : 0;
   } else {
     const seen = new Uint8Array(w * h);
     const stack = [y0 * w + x0];
@@ -3430,10 +3567,11 @@ function wandAt(px, py) {
       const q = stack.pop();
       if (seen[q]) continue;
       seen[q] = 1;
+      if (rg && rg[q] <= 0) continue;
       const i = q * 4;
       if (!d[i + 3] && q !== y0 * w + x0) continue;
       if (!near(i)) continue;
-      d[i + 3] = 0;
+      d[i + 3] = rg ? Math.round(d[i + 3] * (1 - rg[q])) : 0;
       const x = q % w, y = (q - x) / w;
       if (x > 0) stack.push(q - 1);
       if (x < w - 1) stack.push(q + 1);
@@ -3612,6 +3750,7 @@ async function autoBg(btn) {
     return;
   }
   const model = models.find((m) => /birefnet/i.test(m)) || models[0];
+  const rg = rangeAlpha(); // 範囲を囲んでいるときは、その内側だけ消す
   // ファイルを確かめている間も「処理中」にする(その間にほかの操作をさせない)
   const job = jobStart("bg", T("背景を消しています(AI)"));
   const bad = await brokenItems([{ label: "背景を消すモデル", name: model, kind: "background_removal" }]);
@@ -3642,10 +3781,10 @@ async function autoBg(btn) {
     const mask = new Float32Array(w * h);
     for (let i = 0; i < w * h; i++) mask[i] = rd[i * 4 + 3] / 255;
     pushUndo();
-    st.bg = { base: copyCanvas(st.img), mask, w, h };
+    st.bg = { base: copyCanvas(st.img), mask, w, h, rg };
     applyBg();
     refresh();
-    ctx.notify("背景を消しました。数値で縁を調整できます", "info", btn, { toast: false });
+    ctx.notify(rg ? "囲った範囲の中だけ、背景を消しました。数値で縁を調整できます" : "背景を消しました。数値で縁を調整できます", "info", btn, { toast: false });
     ok = true;
   } catch (e) {
     jobFail(e, "背景を消せませんでした", btn);
@@ -3692,17 +3831,35 @@ function boxBlur(a, w, h, r) {
   pass(t, o, h, w, w, 1);
   return o;
 }
+// しきい値(0〜100)→ 実際に使う値。AI の値は 0 か 1 に寄っていて、そのまま使うと終わりのほうでしか変わらない。
+// そこで、「どちらとも言えない画素(0.01〜0.99)」の中の、下から thr % の位置の値にする(0 で変えない。100 でその画素をすべて消す)
+function bgThr(bg, thr) {
+  const N = 1024;
+  if (!bg.hist) {
+    const hist = new Uint32Array(N);
+    let n = 0;
+    for (let i = 0; i < bg.mask.length; i++) { const v = bg.mask[i]; if (v > 0.01 && v < 0.99) { hist[Math.min(N - 1, Math.floor(((v - 0.01) / 0.98) * N))]++; n++; } }
+    bg.hist = hist; bg.nsoft = n;
+  }
+  const x = clamp(thr / 100, 0, 1);
+  if (bg.nsoft < 64) return Math.min(0.99, x); // ほぼ 0 と 1 だけのときは、そのまま
+  const need = bg.nsoft * x;
+  let acc = 0;
+  for (let b = 0; b < N; b++) { acc += bg.hist[b]; if (acc >= need) return 0.01 + ((b + 1) / N) * 0.98; }
+  return 0.99;
+}
 function applyBg() {
-  const { base, mask, w, h } = st.bg;
+  const { base, mask, w, h, rg } = st.bg;
   const { thr, grow, feather } = st.bgp;
   let a = new Float32Array(mask);
   if (thr > 0) {
-    const t = thr / 100;
+    const t = bgThr(st.bg, thr);
     for (let i = 0; i < a.length; i++) a[i] = a[i] < t ? 0 : t >= 1 ? 1 : (a[i] - t) / (1 - t);
   }
   if (grow > 0) a = morph(a, w, h, grow, true);
   else if (grow < 0) a = morph(a, w, h, -grow, false);
   if (feather > 0) { a = boxBlur(a, w, h, Math.ceil(feather / 2)); a = boxBlur(a, w, h, Math.ceil(feather / 2)); }
+  if (rg && rg.length === a.length) for (let i = 0; i < a.length; i++) a[i] = 1 - rg[i] * (1 - a[i]); // 囲った範囲の外は、そのまま残す
   const src = base.getContext("2d").getImageData(0, 0, w, h);
   const d = src.data;
   for (let i = 0; i < w * h; i++) d[i * 4 + 3] = Math.round(d[i * 4 + 3] * Math.max(0, Math.min(1, a[i])));
@@ -3812,6 +3969,7 @@ function refreshRmMethod() {
   const lama = st.rmMethod === "lama";
   $('[data-c="rmmethod"]').value = st.rmMethod;
   $('[data-c="rmlama"]').hidden = !lama;
+  $('[data-c="rmoncebox"]').hidden = !lama;
   $('[data-c="rmset"]').hidden = lama;
   $('[data-c="rmnote"]').textContent = lama
     ? "「オブジェクト除去(塗る)」で消したい部分を塗り、「塗った所を消す」を押します。LaMa で、塗った所をまわりに合わせて埋めます(軽くて速い。CPU でも数秒)。塗った所の外は元のままです。"
@@ -3928,6 +4086,16 @@ async function runLama(btn) {
   } catch (e) {
     jobFail(e, "オブジェクトを除去できませんでした", btn);
   } finally { tempCleanup(out); jobEnd(ok); busy(""); refresh(); }
+}
+// 1筆ごとに反映: 筆を離したら、そのまま消す。消せたときは、1 回の Ctrl+Z でその筆を塗る前に戻る
+async function removeOnce() {
+  if (!paintBox()) return;
+  await runRemove($('[data-c="rm"]'));
+  const u = st.undo, top = u.at(-1), below = u.at(-2);
+  if (paintBox() || !top || top.paintOnly || !below?.paintOnly) return; // 消せなかった(塗りが残っている)ときは、そのまま
+  const lp = top.layers.find((l) => l.id === top.aimg);
+  if (lp?.paint) { lp.paint = canvasOf(lp.paint.width, lp.paint.height); lp.paint._dirty = true; }
+  u.splice(u.length - 2, 1);
 }
 function clearPaint() {
   if (!st.img) return;
@@ -4185,7 +4353,7 @@ function bind() {
     refresh();
     ctx.notify(T("透明なレイヤーを追加しました(ここに描きます)"), "info");
   };
-  pair("mzsize", (v) => { st.mzsize = clamp(v, 2, 200); });
+  pair("mzsize", (v) => { st.mzsize = clamp(v, 2, 200); mzRefresh(); });
   // パスツール
   pair("palpha", (v) => { st.popt.alpha = clamp(v, 1, 100) / 100; });
   pair("pwidth", (v) => { st.popt.width = clamp(v, 1, 200); });
@@ -4195,19 +4363,34 @@ function bind() {
   $('[data-c="pathcut"]').onclick = () => pathCut(true);
   $('[data-c="pathcopy"]').onclick = () => pathCut(false);
   $('[data-c="pathout"]').onclick = () => pathErase(false);
+  $('[data-c="pathmzin"]').onclick = () => pathMosaic(true);
+  $('[data-c="pathmzout"]').onclick = () => pathMosaic(false);
   $('[data-c="pathselin"]').onclick = () => pathSelect("in");
   $('[data-c="pathselout"]').onclick = () => pathSelect("out");
   $('[data-c="pathfill"]').onclick = () => pathShape(true);
   $('[data-c="pathline"]').onclick = () => pathShape(false);
   $('[data-c="pathback"]').onclick = () => pathBack();
-  $('[data-c="pathclear"]').onclick = () => { pathSnap(); st.path = null; draw(); };
-  $('[data-c="mzmode"]').onchange = (e) => { st.mzmode = e.target.value === "blur" ? "blur" : "pixel"; refreshTool(); };
-  pair("tol", (v) => { st.tol = v; });
+  $('[data-c="pathclear"]').onclick = () => { pathSnap(); st.path = null; st.extra = []; draw(); };
+  $('[data-c="mzmode"]').onchange = (e) => { st.mzmode = e.target.value === "blur" ? "blur" : "pixel"; refreshTool(); mzRefresh(); };
+  // 「色で抜く」の設定は 2 か所にあるので、どちらを変えても同じ値にする
+  const wandBoxes = $$("[data-wand]");
+  const setTol = (v) => {
+    st.tol = v;
+    for (const b of wandBoxes) for (const e of [b.querySelector('[data-c="tol"]'), b.querySelector('[data-n="tol"]')]) if (e !== document.activeElement) e.value = v;
+  };
+  for (const b of wandBoxes) {
+    const r = b.querySelector('[data-c="tol"]'), n = b.querySelector('[data-n="tol"]');
+    r.oninput = () => { n.value = r.value; setTol(Number(r.value)); };
+    n.oninput = () => { if (n.value === "" || Number.isNaN(Number(n.value))) return; r.value = n.value; setTol(Number(n.value)); };
+    b.querySelector('[data-c="contig"]').onchange = (e) => {
+      st.contig = e.target.checked;
+      for (const o of wandBoxes) o.querySelector('[data-c="contig"]').checked = st.contig;
+    };
+  }
   for (const k of ["thr", "grow", "feather"]) pair(k, (v) => { st.bgp[k] = v; scheduleBg(); });
   for (const k of ["rmstr", "rmsteps", "rmcfg", "rmmp", "rmgrow", "rmfeather", "rmcolor"]) pair(k, () => rmSave());
   for (const k of ["rmseed", "rmarea"]) $(`[data-c="${k}"]`).onchange = () => rmSave();
   rmLoad();
-  $('[data-c="contig"]').onchange = (e) => { st.contig = e.target.checked; };
   $('[data-c="bg"]').onclick = (e) => autoBg(e.currentTarget);
   $('[data-c="wm"]').onclick = (e) => addWatermark(e.currentTarget);
   $('[data-c="snap"]').onclick = () => setSnap(!st.snap);
@@ -4271,6 +4454,12 @@ function bind() {
     refreshRmMethod();
   };
   $('[data-c="lamamodel"]').addEventListener("change", (e) => { e.target.dataset.user = "1"; });
+  try { st.rmOnce = localStorage.getItem("cca_generator.imgedit.rmonce") === "1"; } catch { st.rmOnce = false; }
+  $('[data-c="rmonce"]').checked = !!st.rmOnce;
+  $('[data-c="rmonce"]').onchange = (e) => {
+    st.rmOnce = e.target.checked;
+    try { localStorage.setItem("cca_generator.imgedit.rmonce", st.rmOnce ? "1" : "0"); } catch { /* 覚えられなくても使える */ }
+  };
   for (const k of ["lamagrow", "lamafeather", "lamacolor", "lamaside"]) pair(k, () => rmSave());
   refreshRmMethod();
   // 塗りを消す(元に戻せる)
@@ -4303,7 +4492,7 @@ function bind() {
     if (e.button !== 0 && !st._penTip) return;
     if (st.lcrop) return;
     if (st.tool === "path") { pathDown(p, e); draw(); return; }
-    if (st.tool === "msrect" || st.tool === "msell") { marqDown(p); draw(); return; }
+    if (st.tool === "msrect" || st.tool === "msell") { marqDown(p, e); draw(); return; }
     if (st.tool === "shape") { startShapeDraw(p); draw(); return; }
     if (st.tool === "select") {
       // 押したレイヤーを選んで、そのまま動かす(何も無い所なら選ぶのをやめる)
@@ -4400,16 +4589,21 @@ function bind() {
     draw();
   });
   const end = () => {
+    const once = st.drag?.mode === "brush" && st.tool === "remove" && st.rmMethod === "lama" && st.rmOnce; // 1筆ごとに反映
     if (st.drag?.mode === "brush") {
       if (st.drag.raw && st.stroke?.eng) strokeTo(st.stroke.eng, st.drag.last, st.drag.ctrl || st.drag.last, st.drag.raw, st.drag.lp ?? 1, st.drag.rawP ?? 1); // 離した所まで描く
       if (st.tool === "paint" && st.stroke?.eng && !st.stroke.erase) finishStroke(st.stroke.eng); // 水彩など: 離したあとににじむ
-      strokeApply(); st.stroke = null; refresh();
+      strokeApply();
+      const S = st.stroke;
+      if (st.tool === "mosaic" && S?.eng?.buf && st.pxv !== S.pxv0) st.lastMz = { img: st.img, w: st.img.width, h: st.img.height, base: S.base, cov: S.eng.buf, pxv: st.pxv }; // 設定を変えたら、この場所に掛け直す
+      st.stroke = null; refresh();
     }
     if (st.drag?.mode === "shape") endShapeDraw();
     if (st.drag?.mode === "marq" && st.path && st.path.pts.every((q) => Math.abs(q.x - st.path.pts[0].x) < 2 && Math.abs(q.y - st.path.pts[0].y) < 2)) st.path = null; // クリックだけ: 選ぶのをやめる
     st.drag = null;
     refreshTool();
     draw();
+    if (once) removeOnce();
   };
   cv.addEventListener("pointerup", end);
   // パスツール: 閉じていないパスは、ダブルクリックで最初の点までつないで閉じる
@@ -4494,7 +4688,7 @@ function bind() {
       e.preventDefault();
       if (st.tedit != null) endTextEdit();
       else if (inField) t.blur();
-      if (st.tool === "path" && pathUndoRedo(!(k === "z" && !e.shiftKey))) return; // パスを描いている間は、パスを 1 手ずつ
+      if (SEL_TOOLS.includes(st.tool) && pathUndoRedo(!(k === "z" && !e.shiftKey))) return; // パス・四角・円で範囲を選んでいる間は、範囲を 1 手ずつ(解除したあとも戻せる)
       if (k === "z" && !e.shiftKey) undo(); else redo();
       return;
     }
@@ -4534,7 +4728,7 @@ function bind() {
     }
     else if (st.tool === "path" && st.path && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); pathBack(); }
     else if (st.tool === "path" && st.path?.pts.length >= 3 && !st.path.closed && e.key === "Enter") { e.preventDefault(); pathSnap(); st.path.closed = true; draw(); }
-    else if (SEL_TOOLS.includes(st.tool) && st.path && e.key === "Escape") { e.preventDefault(); pathSnap(); st.path = null; draw(); }
+    else if (SEL_TOOLS.includes(st.tool) && (st.path || st.extra?.length) && e.key === "Escape") { e.preventDefault(); pathSnap(); st.path = null; st.extra = []; draw(); }
     else if ((st.tool === "msrect" || st.tool === "msell") && st.path && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); pathErase(true); }
     else if ((e.key === "Delete" || e.key === "Backspace") && isMulti() && st.tool === "select") { e.preventDefault(); deleteSel(); }
     else if ((e.key === "Delete" || e.key === "Backspace") && ["text", "select"].includes(st.tool) && selText()) { e.preventDefault(); textAction("del"); }

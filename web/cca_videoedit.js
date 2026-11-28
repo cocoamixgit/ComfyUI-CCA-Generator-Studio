@@ -11,7 +11,7 @@ import { T, confirm, prompt } from "./cca_i18n.js";
 import { setFontPreview } from "./cca_theme.js";
 import { blendOf, blendOptions, viewBg, setViewBg, attachDroppers, pickColor, selectKey } from "./cca_text.js";
 import { isPdf, pdfToImages, pdfKey, PDF_ACCEPT } from "./cca_pdf.js";
-import { adjOn, adjSig, adjustCanvas, adjStats, adjPanelHtml, adjPanelCss, bindAdjPanel, lerpAdj, syncAdjPanel, syncAdjAll, adjActive, selSig, flattenPath } from "./cca_adjust.js";
+import { adjOn, adjSig, adjustCanvas, adjStats, adjPanelHtml, adjPanelCss, bindAdjPanel, lerpAdj, syncAdjPanel, syncAdjAll, adjActive, selSig, selOn, keepOutsideSel, flattenPath } from "./cca_adjust.js";
 import { openWatermark, watermarkKey } from "./cca_watermark.js";
 import { hoverPreview, hidePreview } from "./cca_hoverpv.js";
 import { frameHlHtml, frameHlCss, bindFrameHl, frameHlPad } from "./cca_framehl.js";
@@ -1031,7 +1031,8 @@ async function addOverlay(kind, value, opt = {}) {
   } else if (kind === "mosaic") {
     // モザイク: 画面の真ん中に正方形(画面の高さの 25%)。置いた所の下の段を加工する
     const [W, H] = P().size;
-    const h = 0.25, w = r3((h * H) / W);
+    const h = opt.h ?? 0.25, w = opt.w ?? r3((h * H) / W);
+    if (opt.mask) o.mask = opt.mask; // パスの形(内側 / 外側)
     Object.assign(o, { name: T("モザイク"), x: r3(opt.x ?? 0.5), y: r3(opt.y ?? 0.5), w, h, rot: 0, mosaic: "pixel", block: 0.03, shape: "rect", color: "#000000" });
   } else {
     const [nw, nh] = await natSize(kind, value);
@@ -1399,7 +1400,7 @@ function placeMain(at = P().clips.length ? clipAt(st.t) : null) {
   const chroma = c.key?.mode === "chroma", adj = adjActive(cadj, casel), viaK = chroma || adj;
   v.style.opacity = viaK ? 0 : 1;
   kc.style.display = viaK ? "" : "none";
-  if (chroma) drawKeyed(kc, v, cr, c.key, w, h); else if (adj) drawPlain(kc, v, cr, w, h);
+  if (chroma) drawKeyed(kc, v, cr, c.key, w, h, casel); else if (adj) drawPlain(kc, v, cr, w, h);
   if (adj) adjustCanvas(kc, cadj, casel); // 色・明るさの補正(コマごとに)
   $('[data-c="aibadge"]').hidden = !(c.key?.mode === "ai" || P().overlays.some((o) => o.key?.mode === "ai" && st.t >= o.start && st.t < o.end));
 }
@@ -1437,6 +1438,23 @@ function featherMask(el, f, mw, mh, px = 0, py = 0) {
   Object.assign(el.style, { maskImage: img, webkitMaskImage: img, maskComposite: "intersect", webkitMaskComposite: "source-in",
     maskSize: `${mw}px ${mh}px`, webkitMaskSize: `${mw}px ${mh}px`, maskPosition: `${px}px ${py}px`, webkitMaskPosition: `${px}px ${py}px`,
     maskRepeat: "no-repeat", webkitMaskRepeat: "no-repeat" });
+}
+// モザイクのプレビュー用: パスの形の図形マスクを、CSS のマスクにする(同じ形・大きさの間は作り直さない)
+const maskUrls = new Map();
+function shapeMaskCss(els, mk, w, h) {
+  const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h)), key = JSON.stringify([mk, W, H]);
+  let url = maskUrls.get(key);
+  if (!url) {
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const g = cv.getContext("2d");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
+    applyShapeMask(cv, mk, 0);
+    url = `url(${cv.toDataURL()})`;
+    maskUrls.set(key, url);
+    if (maskUrls.size > 12) maskUrls.delete(maskUrls.keys().next().value);
+  }
+  for (const x of els) Object.assign(x.style, { maskImage: url, webkitMaskImage: url, maskSize: "100% 100%", webkitMaskSize: "100% 100%", maskRepeat: "no-repeat", webkitMaskRepeat: "no-repeat" });
 }
 // モザイクのプレビュー: 土台の動画と、下の段の画像・動画を小さな canvas に描いて(1 マス = 1 画素)、拡大する。
 // 下の段の文字はプレビューには入らない(書き出しには入る)
@@ -1541,15 +1559,19 @@ function drawPlain(cv, src, cr, w, h) {
   g.clearRect(0, 0, kw, kh);
   try { g.drawImage(src, cr[0], cr[1], cr[2], cr[3], 0, 0, kw, kh); } catch { /* まだ読めていない */ }
 }
-function drawKeyed(cv, src, cr, key, w, h) {
+function drawKeyed(cv, src, cr, key, w, h, sel = null) {
   const kw = Math.max(2, Math.min(640, Math.round(w))), kh = Math.max(2, Math.round(kw * h / Math.max(1, w)));
   if (cv.width !== kw || cv.height !== kh) { cv.width = kw; cv.height = kh; }
   const g = cv.getContext("2d", { willReadFrequently: true });
   try { g.drawImage(src, cr[0], cr[1], cr[2], cr[3], 0, 0, kw, kh); } catch { return; }
   let im;
   try { im = g.getImageData(0, 0, kw, kh); } catch { return; }
+  const area = key.area && selOn(sel); // 「範囲を選ぶ」の内側だけ消す(外はそのまま)
+  let orig = null;
+  if (area) { orig = document.createElement("canvas"); orig.width = kw; orig.height = kh; orig.getContext("2d").drawImage(cv, 0, 0); }
   keyPixels(im.data, key);
   g.putImageData(im, 0, 0);
+  if (orig) keepOutsideSel(cv, orig, sel);
 }
 function keyPixels(d, key) {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(key.color || "#00ff00") || [0, "00", "ff", "00"];
@@ -1775,8 +1797,11 @@ function startPathDraw(target = null) {
   if (st.playing) togglePlay();
   const cur = st.sel?.type === "ov" ? findSel() : null; // 選んでいた画像・動画(内側 / 外側を削除する相手)
   const tg = target ?? (cur && (cur.kind === "image" || cur.kind === "video") ? cur.id : null);
-  st.sel = null; st.msel = []; st.pathPrev = null;
-  st.pathDraw = { pts: [], closed: false, target: tg, undo: [], redo: [] };
+  const keep = target == null ? st.pathKeep : null; // 選択ツールに変えたあとも、描いたパスは残す
+  const tg2 = tg ?? (keep?.target != null && P().overlays.some((o) => o.id === keep.target) ? keep.target : null);
+  if (!(target == null && cur && tg != null && tg === cur.id)) st.sel = null; // 選んでいた画像・動画は、選んだまま(右の欄に、パスの欄と一緒に出す)
+  st.msel = []; st.pathPrev = null;
+  st.pathDraw = { pts: keep?.pts || [], closed: !!keep?.closed, extra: keep?.extra || [], target: tg2, undo: (keep?.undo || []).filter((q) => q.t === "p"), redo: [] };
   const so = tg == null ? null : P().overlays.find((o) => o.id === tg);
   if (so && so.kind === "shape" && so.shape === "path" && so.pts?.length) {
     const [W, H] = P().size, a = curAnim(so, "ov"), bw = Math.max(1, a.w * W), bh = Math.max(1, a.h * H), r = ((a.rot || 0) * Math.PI) / 180;
@@ -1790,6 +1815,12 @@ function startPathDraw(target = null) {
   refresh();
   renderInspector();
 }
+// パスを描いている間に、使う相手の画像・動画のレイヤーを選んでいるとき、そのレイヤー
+function pathLayer() {
+  if (!st.pathDraw || st.sel?.type !== "ov") return null;
+  const s = findSel();
+  return s && (s.kind === "image" || s.kind === "video") && s.id === st.pathDraw.target ? s : null;
+}
 function pathTarget() {
   const id = st.pathDraw?.target;
   return id == null ? null : P().overlays.find((o) => o.id === id) || null;
@@ -1799,7 +1830,7 @@ function pathTarget() {
 function pathSnapV() {
   const pd = st.pathDraw;
   if (!pd) return;
-  const s = JSON.stringify([pd.pts, pd.closed]), last = pd.undo.at(-1);
+  const s = JSON.stringify([pd.pts, pd.closed, pd.extra || []]), last = pd.undo.at(-1);
   if (!(last && last.t === "p" && last.s === s)) pd.undo.push({ t: "p", s });
   if (pd.undo.length > 300) pd.undo.shift();
   pd.redo = [];
@@ -1808,13 +1839,14 @@ function pathActV() { const pd = st.pathDraw; if (pd) { pd.undo.push({ t: "a" })
 function pathUndoRedoV(again) {
   const pd = st.pathDraw;
   if (!pd) return false;
-  const from = again ? pd.redo : pd.undo, to = again ? pd.undo : pd.redo, cur = JSON.stringify([pd.pts, pd.closed]);
+  const from = again ? pd.redo : pd.undo, to = again ? pd.undo : pd.redo, cur = JSON.stringify([pd.pts, pd.closed, pd.extra || []]);
   while (from.length && from.at(-1).t === "p" && from.at(-1).s === cur) from.pop(); // 変わらなかった手は飛ばす
   if (!from.length) return false;
   const e = from.pop();
   if (e.t === "a") { to.push(e); if (again) redo(); else undo(); renderPathCv(); renderInspector(); return true; }
   to.push({ t: "p", s: cur });
-  [pd.pts, pd.closed] = JSON.parse(e.s);
+  [pd.pts, pd.closed, pd.extra] = JSON.parse(e.s);
+  pd.extra = pd.extra || [];
   pd.sel = [];
   renderPathCv();
   return true;
@@ -1828,7 +1860,7 @@ function pathCvXY(e) {
 function pathPanelHtml() {
   const tg = pathTarget(), media = tg && (tg.kind === "image" || tg.kind === "video"), o = st.popt;
   return `<h4>✒ ${esc(T("パスツール"))}</h4>
-    <div class="note">${esc(T("プレビューをクリックして点を置きます(点はドラッグで移動)。最初の点のクリック・ダブルクリック・Enter でパスを閉じます。Alt + クリックで点を曲線にし(もう一度で角に戻す)、出てきたハンドルをドラッグで曲がり方を変えます(Alt を押しながらで片側だけ)。Backspace で最後の点を削除、Esc でクリア、Ctrl+Z / Ctrl+Y で 1 手ずつ戻す / やり直す。点をクリックで選び(Shift + クリックで複数)、ドラッグか矢印キー(Shift で 10 ずつ)で動かします。線をつかむとパス全体を動かします。処理の後もパスは残り、元に戻すと処理の前に戻ります。"))}</div>
+    <div class="note">${esc(T("プレビューをクリックして点を置きます(点はドラッグで移動)。最初の点のクリック・ダブルクリック・Enter でパスを閉じます。Alt + クリックで点を曲線にし(もう一度で角に戻す)、出てきたハンドルをドラッグで曲がり方を変えます(Alt を押しながらで片側だけ)。Backspace で最後の点を削除、Esc でクリア、Ctrl+Z / Ctrl+Y で 1 手ずつ戻す / やり直す。点をクリックで選び(Shift + クリックで複数)、ドラッグか矢印キー(Shift で 10 ずつ)で動かします。線をつかむとパス全体を動かします。処理の後もパスは残り、元に戻すと処理の前に戻ります。 Shift を押しながら閉じたパスの外を押すと、ほかの場所にも範囲を足せます(削除・モザイク・選ぶ・塗りつぶし・線は、足した範囲すべてに掛かります。塗りつぶし・線は範囲ごとに別のレイヤーになります)。Ctrl または Alt を押しながら前のパスの点か線をクリックすると、そのパスをもう一度編集できます。タイムラインで画像・動画を押すと、パスはそのままで、使う相手が切り替わります。"))}</div>
     <label class="fl">${esc(T("色"))}<input type="color" data-pb="color" value="${esc(o.color)}"></label>
     <label class="fl">${esc(T("不透明度(%)"))}<input type="number" data-pb="alpha" min="0" max="100" step="1" value="${o.alpha}"></label>
     <label class="fl">${esc(T("線の太さ(%)"))}<input type="number" data-pb="width" min="0.1" max="20" step="0.1" value="${o.width}"></label>
@@ -1837,6 +1869,8 @@ function pathPanelHtml() {
       <button data-pa="out" ${media ? "" : "disabled"} title="${esc(T("パスの外側を、選んでいた画像・動画のレイヤーから消します(パスの形の図形マスク)"))}">✂ ${esc(T("外側を削除"))}</button></div>
     <div class="row" style="margin-top:4px"><button data-pa="selin" ${media ? "" : "disabled"} title="${esc(T("パスの内側を、選んでいた画像・動画のレイヤーの「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)"))}">${esc(T("内側を選ぶ"))}</button>
       <button data-pa="selout" ${media ? "" : "disabled"} title="${esc(T("パスの外側を、選んでいた画像・動画のレイヤーの「範囲を選ぶ」に入れます(色・明るさの補正を、その範囲だけに掛けます)"))}">${esc(T("外側を選ぶ"))}</button></div>
+    <div class="row" style="margin-top:4px"><button data-pa="mzin" title="${esc(T("パスの内側を、モザイクのレイヤーとして足します"))}">▦ ${esc(T("内側をモザイク"))}</button>
+      <button data-pa="mzout" title="${esc(T("パスの外側を、モザイクのレイヤーとして足します"))}">▦ ${esc(T("外側をモザイク"))}</button></div>
     <div class="row" style="margin-top:4px"><button data-pa="fill" title="${esc(T("パスの内側を塗りつぶした図形のレイヤーにします"))}">■ ${esc(T("塗りつぶし"))}</button>
       <button data-pa="line" title="${esc(T("パスに沿った線の図形のレイヤーにします"))}">〰 ${esc(T("線を描画"))}</button></div>
     <div class="row" style="margin-top:4px"><button data-pa="back" title="Backspace">${esc(T("最後の点を削除"))}</button><button data-pa="clear" title="Esc">${esc(T("パスをクリア"))}</button>
@@ -1854,6 +1888,8 @@ function toSelectTool() {
   endPathDraw();
 }
 function endPathDraw() {
+  const pd = st.pathDraw;
+  st.pathKeep = pd && (pd.pts.length || pd.extra?.length) ? pd : null;
   st.pathDraw = null;
   renderPathCv();
   refresh();
@@ -1867,7 +1903,13 @@ function renderPathCv() {
   const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1, [W] = P().size, k = (r.width / W) * dpr;
   cv.width = Math.max(1, Math.round(r.width * dpr)); cv.height = Math.max(1, Math.round(r.height * dpr));
   const g = cv.getContext("2d");
-  const S = pd.pts.map((q) => ({ x: q.x * k, y: q.y * k, hi: q.hi && [q.hi[0] * k, q.hi[1] * k], ho: q.ho && [q.ho[0] * k, q.ho[1] * k] }));
+  const sc = (q) => ({ x: q.x * k, y: q.y * k, hi: q.hi && [q.hi[0] * k, q.hi[1] * k], ho: q.ho && [q.ho[0] * k, q.ho[1] * k] });
+  for (const q of pd.extra || []) { // 足した範囲(線だけ)
+    tracePath(g, q.pts.map(sc), true);
+    g.strokeStyle = "rgba(0,0,0,0.8)"; g.lineWidth = 3 * dpr; g.stroke();
+    g.strokeStyle = ovc("path", "#ffd24d"); g.lineWidth = 1.5 * dpr; g.setLineDash([6 * dpr, 4 * dpr]); g.stroke(); g.setLineDash([]);
+  }
+  const S = pd.pts.map(sc);
   if (S.length > 1) {
     tracePath(g, S, pd.closed);
     g.strokeStyle = "rgba(0,0,0,0.8)"; g.lineWidth = 3 * dpr; g.stroke();
@@ -1895,10 +1937,23 @@ function bindPathCv() {
     if (!pd || e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
     pathSnapV();
+    pd.extra = pd.extra || [];
     const p = pathCvXY(e), near = (x, y) => Math.hypot((x - p.x) * p.k, (y - p.y) * p.k) <= PATH_HIT;
     let drag = null;
     for (let i = 0; i < pd.pts.length && !drag; i++) {
       for (const sd of ["hi", "ho"]) { const q = pd.pts[i], h = q[sd]; if (h && near(q.x + h[0], q.y + h[1])) { drag = { i, sd }; break; } }
+    }
+    // Ctrl / Alt + クリックで、Shift で足した前のパスの点・線をつかむと、そのパスを今のパスにして編集できる
+    if (!drag && (e.ctrlKey || e.metaKey || e.altKey) && !pd.pts.some((q) => near(q.x, q.y)) && !nearPathLine(pd.pts, pd.closed, p.x, p.y, PATH_HIT / p.k)) {
+      for (let j = pd.extra.length - 1; j >= 0 && !drag; j--) {
+        const Q = pd.extra[j].pts, qi = Q.findIndex((q) => near(q.x, q.y));
+        if (qi < 0 && !nearPathLine(Q, true, p.x, p.y, PATH_HIT / p.k)) continue;
+        pd.extra.splice(j, 1);
+        if (pd.pts.length >= 3) pd.extra.push({ pts: pd.pts, closed: true }); // 今のパスは足した範囲に回す
+        pd.pts = Q; pd.closed = true;
+        pd.sel = qi >= 0 ? [qi] : Q.map((_, n) => n);
+        drag = { many: true, x0: p.x, y0: p.y, org: pd.sel.map((n) => [n, Q[n].x, Q[n].y]) };
+      }
     }
     if (!drag) {
       const i = pd.pts.findIndex((q) => near(q.x, q.y));
@@ -1911,7 +1966,10 @@ function bindPathCv() {
       } else if (nearPathLine(pd.pts, pd.closed, p.x, p.y, PATH_HIT / p.k)) pd.sel = pd.pts.map((_, j) => j); // 線をつかむと、パス全体
       else if (pd.closed && (e.ctrlKey || e.metaKey)) { pd.sel = []; renderPathCv(); return; } // 閉じたパスで Ctrl+クリック: 新しく作らず、未選択にする
       else {
-        if (pd.closed) { pd.pts = []; pd.closed = false; } // 閉じた後に外を押すと、新しいパス
+        if (pd.closed) { // 閉じた後に外を押すと、新しいパス(Shift を押しながらなら、今の範囲を残して足す)
+          if (e.shiftKey && pd.pts.length >= 3) pd.extra.push({ pts: pd.pts, closed: true }); else if (!e.shiftKey) pd.extra = [];
+          pd.pts = []; pd.closed = false;
+        }
         pd.pts.push({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }); pd.sel = [pd.pts.length - 1];
       }
       drag = { many: true, x0: p.x, y0: p.y, org: pd.sel.map((j) => [j, pd.pts[j].x, pd.pts[j].y]) };
@@ -1952,7 +2010,7 @@ function bindPathCv() {
     const a = e.target.closest("[data-pa]")?.dataset.pa;
     if (!a || !st.pathDraw) return;
     if (a === "back") { pathSnapV(); st.pathDraw.pts.pop(); if (!st.pathDraw.pts.length) st.pathDraw.closed = false; renderPathCv(); }
-    else if (a === "clear") { pathSnapV(); st.pathDraw.pts = []; st.pathDraw.closed = false; renderPathCv(); }
+    else if (a === "clear") { pathSnapV(); st.pathDraw.pts = []; st.pathDraw.closed = false; st.pathDraw.extra = []; renderPathCv(); }
     else if (a === "quit") endPathDraw();
     else finishPathDraw(a);
   });
@@ -1971,43 +2029,67 @@ async function finishPathDraw(how = "fill") {
   const pd = st.pathDraw;
   if (!pd) return;
   const need = how === "line" ? 2 : 3;
-  if (pd.pts.length < need) { ctx.notify(T(need === 3 ? "点を 3 つ以上置いてください" : "点を 2 つ以上置いてください"), "error"); return; }
+  const items = [...(pd.extra || []).filter((q) => q.pts.length >= 3).map((q) => ({ pts: q.pts, closed: true })), ...(pd.pts.length >= need ? [{ pts: pd.pts, closed: pd.closed }] : [])];
+  if (!items.length) { ctx.notify(T(need === 3 ? "点を 3 つ以上置いてください" : "点を 2 つ以上置いてください"), "error"); return; }
+  const cur = items.at(-1), more = items.slice(0, -1); // 足した範囲も、まとめて使う
   const [W, H] = P().size, o = st.popt, tg = pathTarget();
   if (how === "selin" || how === "selout") {
     // パスの内側 / 外側を「範囲を選ぶ」に(レイヤーの枠の中の割合。曲線は折れ線に)
     if (!tg || (tg.kind !== "image" && tg.kind !== "video")) return;
     const a = curAnim(tg, "ov");
-    const path = flattenPath(pathToBox(pd.pts, a.x * W, a.y * H, Math.max(1, a.w * W), Math.max(1, a.h * H), a.rot || 0)
+    const fl = (pts) => flattenPath(pathToBox(pts, a.x * W, a.y * H, Math.max(1, a.w * W), Math.max(1, a.h * H), a.rot || 0)
       .map((q) => ({ x: q[0], y: q[1], hi: q[2] != null ? [q[2], q[3]] : null, ho: q[4] != null ? [q[4], q[5]] : null })));
-    change(() => { tg.asel = { ...(tg.asel || {}), on: true, path, pmode: how === "selin" ? "in" : "out" }; });
+    const path = fl(cur.pts), more2 = more.map((q) => fl(q.pts));
+    change(() => { tg.asel = { ...(tg.asel || {}), on: true, path, more: more2, pmode: how === "selin" ? "in" : "out" }; });
     pathActV();
     refresh();
     renderInspector();
     ctx.notify(T(how === "selin" ? "パスの内側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)" : "パスの外側を選びました(「色・明るさの補正」の「範囲を選ぶ」で使います)"), "info");
     return;
   }
+  if (how === "mzin" || how === "mzout") { // モザイクのレイヤーを足す(画面いっぱい。パスの形の図形マスクで、内側 / 外側だけに掛ける)
+    const box = (q) => pathToBox(q, W / 2, H / 2, W, H, 0);
+    const mask = { ...MASK_DEF, shape: "path", pts: box(cur.pts), ...(more.length ? { more: more.map((q) => box(q.pts)) } : {}), closed: true, fit: "fill", size: 1, x: 0, y: 0, rot: 0,
+      feather: r3(clamp(o.feather, 0, 50) / 100), invert: how === "mzout" };
+    pathActV();
+    const sel0 = st.sel;
+    await addOverlay("mosaic", null, { x: 0.5, y: 0.5, w: 1, h: 1, mask });
+    st.sel = sel0;
+    refresh();
+    renderInspector();
+    return;
+  }
   if (how === "in" || how === "out") {
     if (!tg || (tg.kind !== "image" && tg.kind !== "video")) return;
     const a = curAnim(tg, "ov");
-    const pts = pathToBox(pd.pts, a.x * W, a.y * H, Math.max(1, a.w * W), Math.max(1, a.h * H), a.rot || 0);
-    change(() => { tg.mask = { ...MASK_DEF, shape: "path", pts, closed: true, fit: "fill", size: 1, x: 0, y: 0, rot: 0, feather: r3(clamp(o.feather, 0, 50) / 100), invert: how === "in" }; });
+    const box = (q) => pathToBox(q, a.x * W, a.y * H, Math.max(1, a.w * W), Math.max(1, a.h * H), a.rot || 0);
+    const pts = box(cur.pts), mo = more.map((q) => box(q.pts));
+    change(() => { tg.mask = { ...MASK_DEF, shape: "path", pts, ...(mo.length ? { more: mo } : {}), closed: true, fit: "fill", size: 1, x: 0, y: 0, rot: 0, feather: r3(clamp(o.feather, 0, 50) / 100), invert: how === "in" }; });
     pathActV();
     refresh();
     renderInspector();
     ctx.notify(T(how === "in" ? "パスの内側を削除しました(図形マスク。元に戻せます)" : "パスの外側を削除しました(図形マスク。元に戻せます)"), "info");
     return;
   }
-  const closed = how === "fill" ? true : pd.closed;
-  const all = pd.pts.flatMap((q) => [[q.x, q.y], ...["hi", "ho"].filter((sd) => q[sd]).map((sd) => [q.x + q[sd][0], q.y + q[sd][1]])]);
-  const x0 = Math.min(...all.map((q) => q[0])), y0 = Math.min(...all.map((q) => q[1]));
-  const bw = Math.max(2, Math.max(...all.map((q) => q[0])) - x0), bh = Math.max(2, Math.max(...all.map((q) => q[1])) - y0);
-  const pts = pathToBox(pd.pts, x0 + bw / 2, y0 + bh / 2, bw, bh, 0);
-  const geo = { x: r3((x0 + bw / 2) / W), y: r3((y0 + bh / 2) / H), w: r3(bw / W), h: r3(bh / H), rot: 0, shape: "path", pts, closed,
-    noFill: how === "line", fill: o.color, fillA: r3(clamp(o.alpha, 0, 100) / 100), strokeW: how === "line" ? r3(clamp(o.width, 0.1, 20) / 100) : 0 };
+  const geoOf = (it) => {
+    const closed = how === "fill" ? true : it.closed;
+    const all = it.pts.flatMap((q) => [[q.x, q.y], ...["hi", "ho"].filter((sd) => q[sd]).map((sd) => [q.x + q[sd][0], q.y + q[sd][1]])]);
+    const x0 = Math.min(...all.map((q) => q[0])), y0 = Math.min(...all.map((q) => q[1]));
+    const bw = Math.max(2, Math.max(...all.map((q) => q[0])) - x0), bh = Math.max(2, Math.max(...all.map((q) => q[1])) - y0);
+    const pts = pathToBox(it.pts, x0 + bw / 2, y0 + bh / 2, bw, bh, 0);
+    return { x: r3((x0 + bw / 2) / W), y: r3((y0 + bh / 2) / H), w: r3(bw / W), h: r3(bh / H), rot: 0, shape: "path", pts, closed,
+      noFill: how === "line", fill: o.color, fillA: r3(clamp(o.alpha, 0, 100) / 100), strokeW: how === "line" ? r3(clamp(o.width, 0.1, 20) / 100) : 0 };
+  };
   pathActV();
-  const sel = st.sel;
-  if (tg && tg.kind === "shape") change(() => { Object.assign(tg, geo); tg.kf = []; });
-  else await addOverlay("shape", null, geo);
+  const sel = st.sel, before = snapshot();
+  st.batch = true; // 範囲が複数でも、1 回で戻せるようにする
+  try {
+    for (let n = 0; n < items.length; n++) {
+      const geo = geoOf(items[n]);
+      if (n === 0 && tg && tg.kind === "shape") { Object.assign(tg, geo); tg.kf = []; }
+      else await addOverlay("shape", null, geo);
+    }
+  } finally { st.batch = false; commit(before); }
   st.sel = sel; // パスを描いている間は、右の欄はパスの欄のまま
   refresh();
   renderInspector();
@@ -2141,6 +2223,7 @@ function renderOverlays() {
         Object.assign(x.style, { opacity: clamp(stt.opacity, 0, 1), clipPath: cp, borderRadius: o.shape === "ellipse" ? "50%" : "", filter: fx });
         featherMask(x, ef, w, h);
       }
+      if (o.mask?.shape === "path" && o.mask.pts?.length > 2) shapeMaskCss([mzb, mz], o.mask, w, h); // パスの形(内側 / 外側)
       mzb.style.background = mode === "fill" ? (o.color || "#000000") : "";
       mzb.style.backdropFilter = mzb.style.webkitBackdropFilter = mode === "blur" ? `blur(${blk.toFixed(1)}px)` : "";
       mz.style.display = mode === "pixel" ? "" : "none";
@@ -2189,10 +2272,10 @@ function renderOverlays() {
       if (viaKc && on) {
         const nw = o.kind === "image" ? m.naturalWidth : o.kind === "shape" ? m.width : m.videoWidth, nh = o.kind === "image" ? m.naturalHeight : o.kind === "shape" ? m.height : m.videoHeight;
         const eg0 = edgeOf(o), ef0 = eg0?.mode === "feather" ? clamp(Number(eg0.size ?? 0.15), 0, 0.5) * Math.min(w, h) : 0;
-        const sig = `${JSON.stringify(o.key)}|${url}|${Math.round(w)}x${Math.round(h)}${ol || oli ? `|${JSON.stringify(o.ol)}|${Math.round(r.fh)}|${Math.round(ef0)}` : ""}|${adj ? adjSig(oadj) + selSig(osel) : ""}`;
+        const sig = `${JSON.stringify(o.key)}|${url}|${Math.round(w)}x${Math.round(h)}${ol || oli ? `|${JSON.stringify(o.ol)}|${Math.round(r.fh)}|${Math.round(ef0)}` : ""}|${adj ? adjSig(oadj) + selSig(osel) : ""}|${chroma && o.key?.area ? selSig(osel) : ""}`;
         if (nw && (o.kind === "video" || shp || clipB || kc._sig !== sig)) {
           const src = o.kind === "video" && o.crop ? o.crop : [0, 0, nw, nh];
-          if (chroma) drawKeyed(kc, m, src, o.key, w, h); else drawPlain(kc, m, src, w, h);
+          if (chroma) drawKeyed(kc, m, src, o.key, w, h, osel); else drawPlain(kc, m, src, w, h);
           if (adj) adjustCanvas(kc, oadj, osel);
           if (shp) applyShapeMask(kc, shp, tl);
           // ふち取り(書き出しと同じく、下のレイヤーで切り抜く前の形のまわりに作り、縁も一緒に抜く)
@@ -3510,6 +3593,8 @@ function keySec(s, type) {
       <div class="note">プレビューでもその場で抜けます。抜けすぎるときは「抜く範囲」を小さく、残るときは大きくします。</div>`;
   } else if (k.mode === "ai") h += `<div class="note">背景を消すモデル(BiRefNet、画像編集の「背景を自動で消す」と同じファイル)で、書き出すときにコマごとに消します。プレビューでは消えません。時間がかかります。</div>`;
   else if (k.mode === "alpha") h += `<div class="note">透明な部分のある動画(VP9 の WebM など)の透明度をそのまま使います。</div>`;
+  if (k.mode === "chroma" || k.mode === "ai") h += `${chk("key.area", "「範囲を選ぶ」で選んだ範囲の内側だけ消す", !!k.area)}
+    <div class="note">囲む範囲は、「色・明るさの補正」の「範囲を選ぶ」に入れます(パスを描いて「内側を選ぶ」)。範囲の外は、そのまま残ります。</div>`;
   h += `<div class="note">背景を透明にしたものは、下の段や背景(書き出しの「背景」)が透けて見えます。透明のまま書き出すには、書き出す形式を WebM・WebP・GIF にして、背景を「透明」にします。</div>`;
   return sec("key", `背景を透明にする${k.mode ? " ●" : ""}`, h, false);
 }
@@ -3546,7 +3631,9 @@ function tplSelect(s) {
 function renderInspector() {
   const box = $('[data-c="insp"]');
   markTools();
-  if (st.pathDraw) { box.innerHTML = pathPanelHtml(); return; }
+  const pl = st.pathDraw ? pathLayer() : null;
+  if (st.pathDraw && !pl) { box.innerHTML = pathPanelHtml(); delete box.dataset.for; return; }
+  const ph = st.pathDraw ? pathPanelHtml() : ""; // パスの欄の下に、選んだ画像・動画の欄も出す(色・明るさの補正など)
   const s = findSel();
   if (!s) {
     box.innerHTML = `<h4>選んだもの</h4><div class="note">タイムラインの動画・文字・画像・音声を押すと、ここで細かく変えられます。</div>`;
@@ -3555,14 +3642,14 @@ function renderInspector() {
     return;
   }
   const type = st.sel.type;
-  if (box.contains(document.activeElement) && box.dataset.for === `${type}${s.id}`) {
+  if (box.contains(document.activeElement) && box.dataset.for === `${type}${s.id}${ph ? "p" : ""}`) {
     // 入力中は書き換えない(値だけ合わせる)。色・明るさの補正の欄も、値・ボタン・強さを今の状態に合わせる(元に戻したときも表示がずれないように)
     for (const el of box.querySelectorAll("[data-k]")) if (el !== document.activeElement) setField(el, s);
     const as = box.querySelector('[data-sec="adj"]');
     if (as && adjSel() === s) syncAdjAll(as, adjView(s), !st.adjBefore);
     return;
   }
-  box.dataset.for = `${type}${s.id}`;
+  box.dataset.for = `${type}${s.id}${ph ? "p" : ""}`;
   let h = "";
   if (type === "clip") {
     const cr = s.crop || [0, 0, s.w, s.h];
@@ -3645,7 +3732,7 @@ function renderInspector() {
     h += posSec(s, type, timeRows(s)) + adjSec(s) + edgeSec(s) + maskSec(s) + clipSec(s) + olSec(s) + keySec(s, type) + kfSec(s, type) + transSec(s) + loopSec(s);
   }
   if (type === "ov" && s.gid) h = h.replace("</h4>", `</h4>${grpSec(s)}`); // グループの動き
-  box.innerHTML = h;
+  box.innerHTML = ph + h;
   for (const d of box.querySelectorAll("details.sec")) d.addEventListener("toggle", () => { st.secOpen[d.dataset.sec] = d.open; });
   st.secs?.side.apply(); // 見出しを作り直したので、折りたたみのつまみを付け直す
   st.secs?.insp.rerendered();
@@ -4048,7 +4135,7 @@ function refresh(keepInspector = false) {
     const hs = selOvs(), hb = $('[data-c="hide"]');
     hb.disabled = !hs.length;
     hb.textContent = T(hs.length && hs.every((x) => x.hidden) ? "表示する" : "非表示");
-    $('[data-c="insp"]').classList.toggle("locked", ls.some((x) => x.locked) && !st.pathDraw);
+    $('[data-c="insp"]').classList.toggle("locked", ls.some((x) => x.locked) && !(st.pathDraw && !pathLayer()));
   }
   for (const k of ["format", "bg"]) { const el = $(`[data-p="${k}"]`); if (el !== document.activeElement) el.value = P()[k] || (k === "bg" ? "black" : "mp4"); }
   renderExportOpts();
@@ -4465,7 +4552,10 @@ function bind() {
   $('[data-c="add-image"]').onclick = guard(async () => { const v = await pick("image"); if (v) await addOverlay("image", v); });
   $('[data-c="add-video"]').onclick = guard(async () => { const v = await pick("video"); if (!v) return; if (P().overlays.length) await addOverlay("video", v); else await addClip(v); });
   $('[data-c="tool-sel"]').onclick = () => toSelectTool();
-  $('[data-c="tl"]').addEventListener("pointerdown", () => toSelectTool(), true); // パスの間にタイムラインを押すと選択に変わる
+  $('[data-c="tl"]').addEventListener("pointerdown", (e) => { // パスの間にタイムラインを押すと選択に変わる(画像・動画のレイヤーを押したときは、パスのまま、使う相手だけ切り替える)
+    const pd = st.pathDraw, b = e.target.closest?.(".blk"), o = pd && b?.dataset.type === "ov" ? P().overlays.find((x) => x.id === Number(b.dataset.id)) : null;
+    if (o && (o.kind === "image" || o.kind === "video")) { pd.target = o.id; setTimeout(() => { if (st.pathDraw) renderInspector(); }, 0); } else toSelectTool();
+  }, true);
   $('[data-c="add-mosaic"]').onclick = guard(async () => { await addOverlay("mosaic"); });
   $('[data-c="add-shape"]').onclick = guard(async () => { await addOverlay("shape"); });
   $('[data-c="add-path"]').onclick = guard(async () => { startPathDraw(null); });
@@ -4716,7 +4806,7 @@ function bind() {
       const pd = st.pathDraw;
       if (e.key === "Enter") { if (pd.pts.length >= 3 && !pd.closed) { pathSnapV(); pd.closed = true; } }
       else if (e.key === "Escape") {
-        if (pd.pts.length) { pathSnapV(); pd.pts = []; pd.closed = false; } // 点があればクリア、無ければやめる
+        if (pd.pts.length || pd.extra?.length) { pathSnapV(); pd.pts = []; pd.closed = false; pd.extra = []; } // 点があればクリア、無ければやめる
         else endPathDraw();
       } else { pathSnapV(); pd.pts.pop(); if (!pd.pts.length) pd.closed = false; }
       renderPathCv();

@@ -368,11 +368,11 @@ function glAdjust(cv, a, P) {
 
 // ---------------------------------------------------------------- 範囲を選ぶ(色・パス)
 // sel = { on(選んだ範囲だけに掛ける), col(色で選ぶ), color, thr(しきい値 0〜1), soft(ぼかし: 短い辺に対して 0〜0.2),
-//   path: [[u, v], …](パスの形。0〜1、曲線は折れ線にしたもの), pmode: "in" | "out", act: "adj"(補正する)| "cut"(消す)}
+//   path: [[u, v], …](パスの形。0〜1、曲線は折れ線にしたもの), more: [path, …](足した範囲。無くてもよい), pmode: "in" | "out", act: "adj"(補正する)| "cut"(消す)}
 // 色とパスの両方を使うときは、両方に入る所(パスの中の、その色の所)。書き出し adjust.py の sel_mask と同じ
 export const selOn = (s) => !!s?.on && (!!s.col || (s.path?.length >= 3 && (s.pmode === "in" || s.pmode === "out")));
 export const adjActive = (a, s) => adjOn(a) || (selOn(s) && s.act === "cut");
-export const selSig = (s) => (selOn(s) ? JSON.stringify([s.col ? [s.color, s.thr] : 0, s.soft, s.pmode, s.path, s.act]) : "");
+export const selSig = (s) => (selOn(s) ? JSON.stringify([s.col ? [s.color, s.thr] : 0, s.soft, s.pmode, s.path, s.more || 0, s.act]) : "");
 // パスの点 [{ x, y, hi?, ho? }](hi / ho: 入る / 出る側の曲線のハンドル [dx, dy])を、閉じた折れ線 [[x, y], …] にする
 export function flattenPath(P) {
   const out = [], n = P.length;
@@ -400,10 +400,19 @@ function selMaskCanvas(src, W, H, s) {
     g.putImageData(im, 0, 0);
   } else { g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); }
   if ((s.pmode === "in" || s.pmode === "out") && s.path?.length >= 3) {
+    // パス(と、足した範囲 more)をまとめて 1 枚の板に白く塗ってから、内側 / 外側を使う
+    const pm = document.createElement("canvas");
+    pm.width = W; pm.height = H;
+    const pg = pm.getContext("2d");
+    pg.fillStyle = "#fff";
+    for (const poly of [s.path, ...(s.more || [])]) {
+      if (!(poly?.length >= 3)) continue;
+      pg.beginPath();
+      poly.forEach(([u, v], i) => (i ? pg.lineTo(u * W, v * H) : pg.moveTo(u * W, v * H)));
+      pg.closePath(); pg.fill();
+    }
     g.globalCompositeOperation = s.pmode === "out" ? "destination-out" : "destination-in";
-    g.beginPath();
-    s.path.forEach(([u, v], i) => (i ? g.lineTo(u * W, v * H) : g.moveTo(u * W, v * H)));
-    g.closePath(); g.fillStyle = "#fff"; g.fill();
+    g.drawImage(pm, 0, 0);
   }
   const sg = clamp(Number(s.soft ?? 0), 0, 0.2) * Math.min(W, H);
   if (sg <= 0.3) return c;
@@ -413,6 +422,20 @@ function selMaskCanvas(src, W, H, s) {
   gb.filter = `blur(${sg}px)`;
   gb.drawImage(c, 0, 0);
   return b;
+}
+// 背景を消した絵 cv の、選んだ所の外を元の絵 orig に戻す(選んだ範囲の内側だけ消す。書き出し videoedit.py の to_rgba と同じ)
+export function keepOutsideSel(cv, orig, s) {
+  if (!selOn(s) || !cv.width || !cv.height) return;
+  const W = cv.width, H = cv.height, m = selMaskCanvas(orig, W, H, s), g = cv.getContext("2d");
+  const t = document.createElement("canvas");
+  t.width = W; t.height = H;
+  const tg = t.getContext("2d");
+  tg.drawImage(cv, 0, 0); tg.globalCompositeOperation = "destination-in"; tg.drawImage(m, 0, 0);
+  g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.filter = "none";
+  g.globalCompositeOperation = "copy"; g.drawImage(orig, 0, 0);
+  g.globalCompositeOperation = "destination-out"; g.drawImage(m, 0, 0);
+  g.globalCompositeOperation = "lighter"; g.drawImage(t, 0, 0);
+  g.restore();
 }
 // canvas の絵に補正を掛ける(その場で書き換える)。s: 範囲を選ぶ(選んだ所だけ補正する・消す)
 export function adjustCanvas(cv, a, s = null) {
@@ -725,7 +748,7 @@ function selPanelHtml(s) {
     <label class="fl">${esc(T("パス"))}<select data-asel="pmode" ${hasPath ? "" : "disabled"}><option value="">${esc(T("使わない"))}</option>
       <option value="in" ${s.pmode === "in" ? "selected" : ""}>${esc(T("パスの内側"))}</option><option value="out" ${s.pmode === "out" ? "selected" : ""}>${esc(T("パスの外側"))}</option></select></label>
     <label class="fl">${esc(T("選んだ所を"))}<select data-asel="act"><option value="adj">${esc(T("色・明るさを補正する"))}</option><option value="cut" ${s.act === "cut" ? "selected" : ""}>${esc(T("消す(透明にする)"))}</option></select></label>
-    <div class="note">${esc(T("色とパスの両方を使うと、パスの中のその色の所を選びます。パスは、パスツールで作って「内側を選ぶ」「外側を選ぶ」で入れます。"))}</div></details>`;
+    <div class="note">${esc(T("色とパスの両方を使うと、パスの中のその色の所を選びます。パスは、「パスを編集」で作って「内側を選ぶ」「外側を選ぶ」で入れます。"))}</div></details>`;
 }
 export function adjPanelCss(scope) {
   return `

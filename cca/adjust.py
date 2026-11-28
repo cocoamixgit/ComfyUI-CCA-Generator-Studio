@@ -210,7 +210,10 @@ def sel_mask(rgba, s):
     pts = s.get("path") or []
     if s.get("pmode") in ("in", "out") and len(pts) >= 3:
         pm = Image.new("L", (Ww, Hh), 0)
-        ImageDraw.Draw(pm).polygon([(_f(p[0]) * Ww, _f(p[1]) * Hh) for p in pts], fill=255)
+        dr = ImageDraw.Draw(pm)
+        for poly in [pts, *(s.get("more") or [])]:  # 足した範囲もまとめて塗る
+            if len(poly or []) >= 3:
+                dr.polygon([(_f(p[0]) * Ww, _f(p[1]) * Hh) for p in poly], fill=255)
         pmv = np.asarray(pm, dtype=np.float32) / 255.0
         m *= pmv if s.get("pmode") == "in" else 1.0 - pmv
     sg = min(0.2, max(0.0, _f(s.get("soft"), 0.0))) * min(Ww, Hh)

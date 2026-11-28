@@ -212,6 +212,7 @@ export function shapeMaskCanvas(sh, w, h) {
   shapePath(g, { ...sh, x: pad, y: pad, w, h });
   g.fillStyle = "#fff";
   g.fill();
+  if (sh.shape === "path") for (const m of sh.more || []) { tracePath(g, decodePath(m, pad, pad, w, h), sh.closed !== false); g.fill(); } // 足した範囲(動画のパスの図形マスク)
   if (pad) {
     const img = g.getImageData(0, 0, cw, ch), d = img.data;
     let a = new Float32Array(cw * ch);
@@ -252,7 +253,7 @@ function baseMask(mk, bw, bh, b = {}) {
   const asp = Math.round((bw / Math.max(1e-6, bh)) * 100) / 100, L = Math.min(1024, Math.max(64, Math.ceil(Math.max(bw, bh) / 128) * 128));
   const w = asp >= 1 ? L : Math.max(1, Math.round(L * asp)), h = asp >= 1 ? Math.max(1, Math.round(L / asp)) : L;
   const ir = Math.round(num(b.itemRot, 0) * 10) / 10, ik = Math.round(num(b.itemK, 1) * 1000) / 1000;
-  const key = JSON.stringify([mk.shape, mk.radius, mk.points, mk.feather, mk.fit, mk.pts, mk.closed, ...PAT_KEYS.map((k) => mk[k]), w, h, ir, ik]);
+  const key = JSON.stringify([mk.shape, mk.radius, mk.points, mk.feather, mk.fit, mk.pts, mk.more, mk.closed, ...PAT_KEYS.map((k) => mk[k]), w, h, ir, ik]);
   let cv = maskCache.get(key);
   if (!cv) {
     cv = shapeMaskCanvas({ ...mk, itemRot: ir, itemK: ik, center: true, uniform: mk.fit !== "fill" }, w, h);

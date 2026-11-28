@@ -13,7 +13,7 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 
 ## Contents
 
-- [Easy Installation](#easy-installation)
+- [Easy Installation](#easy-installation-over-comfyui-0450)
   - [Prerequisites](#prerequisites)
 - [Normal Installation](#normal-installation)
   - [Prerequisites](#prerequisites-1)

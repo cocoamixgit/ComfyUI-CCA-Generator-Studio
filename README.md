@@ -13,7 +13,8 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 
 ## Contents
 
-- [Installation](#installation)
+- [Easy Installation](#easy-installation)
+- [Normal Installation](#normal-installation)
   - [Prerequisites](#prerequisites)
   - [Installing Git](#installing-git)
   - [Step 1: Install ComfyUI Manager V3.42](#step-1-install-comfyui-manager-v342)
@@ -30,7 +31,10 @@ CCA Generator is a ComfyUI custom node for everything after generation. Running 
 - [More of what CCA Generator does](#more-of-what-cca-generator-does)
 - [Models](#models)
 - [Usage](#usage)
+- [Changelog](#changelog)
 - [License](#license)
+  - [This node](#this-node)
+  - [Model licenses](#model-licenses)
 - [Support](#support)
 - [Other projects](#other-projects)
 
